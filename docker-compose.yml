@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=mysql://bachata_user:bachata_password@db:3306/bachata_db
+      - NODE_ENV=production
+    depends_on:
+      - db
+    volumes:
+      - ./public/music:/app/public/music
+      - ./public/audio:/app/public/audio
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=bachata_db
+      - MYSQL_USER=bachata_user
+      - MYSQL_PASSWORD=bachata_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
+

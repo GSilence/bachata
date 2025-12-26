@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Track {
+  id          Int      @id @default(autoincrement())
+  title       String
+  artist      String?
+  filename    String   // путь к файлу в /public/music или S3
+  bpm         Int      // ударов в минуту (текущее значение, может быть изменено)
+  offset      Float    // смещение первого бита (сек) (текущее значение, может быть изменено)
+  baseBpm     Int?     // базовое значение BPM (определено автоматически или при загрузке)
+  baseOffset  Float?   // базовое значение Offset (определено автоматически или при загрузке)
+  isFree      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  
+  // Поля для Demucs (если null, значит трек не разложен)
+  pathOriginal String?  // путь к оригинальному файлу в /public/uploads/raw/
+  pathVocals   String?  // путь к vocals.wav в /public/uploads/stems/
+  pathDrums    String?  // путь к drums.wav
+  pathBass     String?  // путь к bass.wav
+  pathOther    String?  // путь к other.wav
+  isProcessed  Boolean @default(false) // обработан ли трек через Demucs
+}
+
+// Задел на будущее (пока не используется в MVP)
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
