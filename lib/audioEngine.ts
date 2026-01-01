@@ -1,5 +1,6 @@
 import { Howl, Howler } from "howler";
-import type { Track, GridMap } from "@/types";
+import type { Track, GridMap, Beat } from "@/types";
+import { generateFallbackBeatGrid } from "./beatGrid";
 
 export class AudioEngine {
   // Singleton instance
@@ -21,7 +22,7 @@ export class AudioEngine {
     other: null,
   };
 
-  // Текущий трек (сохраняется для возможного использования в будущем: отладка, метаданные и т.д.)
+  // Текущий трек
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private currentTrack: Track | null = null;
 
@@ -29,7 +30,7 @@ export class AudioEngine {
   private musicVolume: number = 100;
 
   // Stems настройки
-  private isStemsMode: boolean = false; // По умолчанию цельный файл
+  private isStemsMode: boolean = false;
   private stemsEnabled: {
     vocals: boolean;
     drums: boolean;
@@ -55,20 +56,45 @@ export class AudioEngine {
 
   // Callbacks
   private onTrackEnd: (() => void) | null = null;
+  // NEW: Callback для обновления прогресс-бара UI синхронно с движком
+  private onTimeUpdate: ((currentTime: number) => void) | null = null;
+
   private trackEndFired: boolean = false;
 
-  // Beat tracking (cursor-based approach)
-  private beatMap: number[] = []; // Array of beat timestamps in seconds
+  // Internal State
+  // NEW: Явный флаг состояния, чтобы избежать гонки (race condition) с Howler
+  private _isPlaying: boolean = false;
+
+  // Beat tracking
+  private beatMap: number[] = [];
+  private beatGrid: Beat[] = [];
   private currentBeatIndex: number = 0;
   private updateAnimationFrameId: number | null = null;
 
+  // Voice count files
+  private voiceFiles: Map<number, Howl> = new Map();
+  private voiceVolume: number = 100;
+
   private constructor() {
-    // Private constructor to enforce Singleton pattern
+    this.preloadVoiceFiles();
   }
 
-  /**
-   * Get the singleton instance of AudioEngine
-   */
+  private preloadVoiceFiles() {
+    for (let i = 1; i <= 8; i++) {
+      const voicePath = `/audio/voice/${i}.mp3`;
+      const howl = new Howl({
+        src: [voicePath],
+        html5: true,
+        preload: true,
+        volume: this.voiceVolume / 100,
+        onloaderror: (id, error) => {
+          console.warn(`Failed to load voice file ${voicePath}:`, error);
+        },
+      });
+      this.voiceFiles.set(i, howl);
+    }
+  }
+
   static getInstance(): AudioEngine {
     if (!AudioEngine.instance) {
       AudioEngine.instance = new AudioEngine();
@@ -76,16 +102,6 @@ export class AudioEngine {
     return AudioEngine.instance;
   }
 
-  /**
-   * Загружает трек в плеер
-   * Важно: полностью выгружает старый трек перед созданием нового
-   * CRITICAL: Calls stop() and unloadTrack() FIRST to simulate user pressing Stop button
-   *
-   * @param track - Трек для загрузки
-   * @param isStemsMode - Использовать ли стемы (4 дорожки) или цельный файл
-   * @param stemsEnabled - Какие стемы включены
-   * @param stemsVolume - Громкость каждого стема
-   */
   loadTrack(
     track: Track,
     isStemsMode?: boolean,
@@ -97,73 +113,56 @@ export class AudioEngine {
     },
     stemsVolume?: { vocals: number; drums: number; bass: number; other: number }
   ) {
-    // Early return if track path is missing
     if (!track.pathOriginal) {
       console.warn("Cannot load track: pathOriginal is missing");
-      return; // Трек без пути не может быть загружен
+      return;
     }
 
-    // CRITICAL STEP 1: Stop playback (simulates user pressing Stop button)
+    // 1. Сброс состояния
     this.stop();
-
-    // CRITICAL STEP 2: Unload track (includes Howler.unload() to kill all zombies)
     this.unloadTrack();
 
-    // STEP 3: Update stems settings if provided
-    if (isStemsMode !== undefined) {
-      this.isStemsMode = isStemsMode;
-    }
-    if (stemsEnabled) {
+    // 2. Применение настроек
+    if (isStemsMode !== undefined) this.isStemsMode = isStemsMode;
+    if (stemsEnabled)
       this.stemsEnabled = { ...this.stemsEnabled, ...stemsEnabled };
-    }
-    if (stemsVolume) {
-      this.stemsVolume = { ...this.stemsVolume, ...stemsVolume };
-    }
+    if (stemsVolume) this.stemsVolume = { ...this.stemsVolume, ...stemsVolume };
 
-    // STEP 4: Reset state for new track
     this.currentTrack = track;
     this.trackEndFired = false;
     this.currentBeatIndex = 0;
+    this._isPlaying = false; // Reset playing state
 
-    // STEP 5: Build beatMap from gridMap if available
+    // 3. Beat Grid
+    if (track.beatGrid && track.beatGrid.length > 0) {
+      this.beatGrid = track.beatGrid;
+    } else {
+      const estimatedDuration = 180;
+      const bpm = track.bpm || 120;
+      const offset = track.offset || 0;
+      this.beatGrid = generateFallbackBeatGrid(bpm, offset, estimatedDuration);
+    }
+
     this.buildBeatMap(track);
 
-    // STEP 6: Load track based on mode
+    // 4. Загрузка аудио
     if (this.isStemsMode && track.isProcessed) {
-      // Stems Mode: загружаем 4 дорожки
       this.loadStems(track);
     } else {
-      // Full File Mode: загружаем цельный файл
       this.loadFullFile(track);
     }
   }
 
-  /**
-   * Загружает цельный файл
-   */
   private loadFullFile(track: Track) {
-    if (!track.pathOriginal) {
-      console.warn("Cannot load full file: pathOriginal is missing");
-      return;
-    }
+    if (!track.pathOriginal) return;
 
-    // CRITICAL: Only create after all cleanup is complete
     this.musicTrack = new Howl({
       src: [track.pathOriginal],
       html5: true,
       preload: true,
       volume: this.musicVolume / 100,
-      onload: () => {
-        // Safe callback - track is loaded
-      },
       onend: () => {
-        if (this.onTrackEnd && !this.trackEndFired) {
-          this.trackEndFired = true;
-          this.onTrackEnd();
-        }
-      },
-      onplay: () => {
-        // Safe callback - track started playing
+        this.handleTrackEnd();
       },
       onloaderror: (id, error) => {
         console.error("Howl load error:", error);
@@ -171,9 +170,6 @@ export class AudioEngine {
     });
   }
 
-  /**
-   * Загружает стемы (4 дорожки)
-   */
   private loadStems(track: Track) {
     if (
       !track.pathVocals ||
@@ -181,14 +177,11 @@ export class AudioEngine {
       !track.pathBass ||
       !track.pathOther
     ) {
-      console.warn(
-        "Cannot load stems: some stem paths are missing, falling back to full file"
-      );
+      console.warn("Missing stem paths, falling back to full file");
       this.loadFullFile(track);
       return;
     }
 
-    // Создаём 4 Howl инстанса для стемов
     const createStem = (
       src: string,
       volume: number,
@@ -205,7 +198,6 @@ export class AudioEngine {
       });
     };
 
-    // TypeScript теперь знает, что пути не null благодаря проверке выше
     this.stemsTracks.vocals = createStem(
       track.pathVocals!,
       this.stemsVolume.vocals,
@@ -227,80 +219,57 @@ export class AudioEngine {
       this.stemsEnabled.other
     );
 
-    // Устанавливаем onend callback на все стемы (используем vocals как основной)
+    // Используем vocals как мастер для события окончания
     if (this.stemsTracks.vocals) {
       this.stemsTracks.vocals.on("end", () => {
-        if (this.onTrackEnd && !this.trackEndFired) {
-          this.trackEndFired = true;
-          this.onTrackEnd();
-        }
+        this.handleTrackEnd();
       });
     }
   }
 
-  /**
-   * Строит beatMap из gridMap трека (cursor-based approach)
-   * Если gridMap отсутствует, создает простую карту на основе BPM
-   */
+  // Централизованный обработчик окончания трека
+  private handleTrackEnd() {
+    this._isPlaying = false;
+    this.stopUpdate(); // Останавливаем цикл
+    if (this.onTrackEnd && !this.trackEndFired) {
+      this.trackEndFired = true;
+      this.onTrackEnd();
+    }
+  }
+
   private buildBeatMap(track: Track) {
     this.beatMap = [];
-
     if (track.gridMap && track.gridMap.grid) {
-      // Используем gridMap для точной карты битов
       for (const section of track.gridMap.grid) {
-        const beatsPerSecond = (track.gridMap.bpm / 60) * 4; // 4 beats per measure
+        const beatsPerSecond = (track.gridMap.bpm / 60) * 4;
         const beatInterval = 1 / beatsPerSecond;
-
         for (let i = 0; i < section.beats; i++) {
-          const beatTime = section.start + i * beatInterval;
-          this.beatMap.push(beatTime);
+          this.beatMap.push(section.start + i * beatInterval);
         }
       }
     } else {
-      // Fallback: создаем простую карту на основе BPM и offset
       const bpm = track.bpm || 120;
       const offset = track.offset || 0;
-      const beatsPerSecond = (bpm / 60) * 4; // 4 beats per measure
+      const beatsPerSecond = (bpm / 60) * 4;
       const beatInterval = 1 / beatsPerSecond;
-
-      // Создаем биты на основе длительности трека (будет обновлено после загрузки)
-      const estimatedDuration = 180; // 3 минуты по умолчанию
+      const estimatedDuration = 180;
       const totalBeats = Math.ceil(estimatedDuration * beatsPerSecond);
-
       for (let i = 0; i < totalBeats; i++) {
         this.beatMap.push(offset + i * beatInterval);
       }
     }
   }
 
-  /**
-   * Выгружает текущий трек
-   * Важно: полностью останавливает и очищает все ресурсы
-   * Критически важно для предотвращения исчерпания пула HTML5 Audio
-   * CRITICAL: Calls Howler.unload() to kill ALL zombie instances
-   */
   unloadTrack() {
-    // Останавливаем update loop
     this.stopUpdate();
+    this._isPlaying = false;
 
-    // Выгружаем цельный файл
     if (this.musicTrack) {
-      const oldTrack = this.musicTrack;
+      this.musicTrack.stop();
+      this.musicTrack.unload();
       this.musicTrack = null;
-
-      try {
-        if (oldTrack.playing && oldTrack.playing()) {
-          oldTrack.stop();
-        }
-        oldTrack.seek(0);
-        oldTrack.off();
-        oldTrack.unload();
-      } catch (e) {
-        // Игнорируем ошибки
-      }
     }
 
-    // Выгружаем стемы
     const stemKeys: Array<keyof typeof this.stemsTracks> = [
       "vocals",
       "drums",
@@ -309,44 +278,31 @@ export class AudioEngine {
     ];
     for (const key of stemKeys) {
       if (this.stemsTracks[key]) {
-        const oldStem = this.stemsTracks[key];
+        this.stemsTracks[key]?.stop();
+        this.stemsTracks[key]?.unload();
         this.stemsTracks[key] = null;
-
-        try {
-          if (oldStem && oldStem.playing && oldStem.playing()) {
-            oldStem.stop();
-          }
-          if (oldStem) {
-            oldStem.seek(0);
-            oldStem.off();
-            oldStem.unload();
-          }
-        } catch (e) {
-          // Игнорируем ошибки
-        }
       }
     }
 
-    // CRITICAL: Global unload to kill ALL zombie instances
     try {
       Howler.unload();
     } catch (e) {
-      console.warn("Error calling Howler.unload() in unloadTrack:", e);
+      console.warn("Error calling Howler.unload():", e);
     }
 
-    // Очищаем состояние
     this.currentTrack = null;
     this.trackEndFired = false;
     this.beatMap = [];
+    this.beatGrid = [];
     this.currentBeatIndex = 0;
   }
 
-  /**
-   * Воспроизведение - продолжает с текущей позиции
-   */
   play() {
+    // 1. Set INTENT to play immediately (fixes UI race condition)
+    this._isPlaying = true;
+
+    // 2. Trigger audio playback
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Воспроизводим стемы
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
         "drums",
@@ -355,26 +311,36 @@ export class AudioEngine {
       ];
       for (const key of stemKeys) {
         if (this.stemsTracks[key] && this.stemsEnabled[key]) {
-          try {
-            this.stemsTracks[key]?.play();
-          } catch (e) {
-            console.warn(`Error playing stem ${key}:`, e);
-          }
+          this.stemsTracks[key]?.play();
         }
       }
     } else if (this.musicTrack) {
-      // Воспроизводим цельный файл
       this.musicTrack.play();
     }
+
+    // 3. Sync and Start Loop
+    const currentTime = this.getCurrentTime();
+
+    // Sync cursor
+    const immediateBeatIndex = this.syncBeatCursor(currentTime);
+
+    // Play immediate beat logic
+    if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
+      const beat = this.beatGrid[immediateBeatIndex];
+      if (beat) {
+        this.playVoiceCount(beat.number);
+        this.currentBeatIndex = immediateBeatIndex + 1;
+      }
+    }
+
+    // 4. Start update loop (it will now stay alive because _isPlaying is true)
     this.startUpdate();
   }
 
-  /**
-   * Пауза - останавливает, но сохраняет позицию
-   */
   pause() {
+    this._isPlaying = false; // Set INTENT to pause
+
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Пауза стемов
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
         "drums",
@@ -382,28 +348,18 @@ export class AudioEngine {
         "other",
       ];
       for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
-          try {
-            this.stemsTracks[key]?.pause();
-          } catch (e) {
-            console.warn(`Error pausing stem ${key}:`, e);
-          }
-        }
+        this.stemsTracks[key]?.pause();
       }
     } else if (this.musicTrack) {
-      // Пауза цельного файла
       this.musicTrack.pause();
     }
     this.stopUpdate();
   }
 
-  /**
-   * Стоп - останавливает и сбрасывает в начало
-   * Also resets currentBeatIndex to 0
-   */
   stop() {
+    this._isPlaying = false;
+
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Стоп стемов
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
         "drums",
@@ -412,74 +368,43 @@ export class AudioEngine {
       ];
       for (const key of stemKeys) {
         if (this.stemsTracks[key]) {
-          try {
-            this.stemsTracks[key]?.stop();
-            this.stemsTracks[key]?.seek(0);
-          } catch (e) {
-            console.warn(`Error stopping stem ${key}:`, e);
-          }
+          this.stemsTracks[key]?.stop();
+          this.stemsTracks[key]?.seek(0);
         }
       }
     } else if (this.musicTrack) {
-      // Стоп цельного файла
-      try {
-        this.musicTrack.stop();
-        this.musicTrack.seek(0);
-      } catch (e) {
-        console.warn("Error stopping track:", e);
-      }
+      this.musicTrack.stop();
+      this.musicTrack.seek(0);
     }
     this.trackEndFired = false;
-    this.currentBeatIndex = 0; // Reset beat index
+    this.currentBeatIndex = 0;
     this.stopUpdate();
+
+    // Notify UI of reset to 0
+    if (this.onTimeUpdate) this.onTimeUpdate(0);
   }
 
   /**
-   * Проверяет, играет ли трек
+   * Исправлено: теперь возвращает явный флаг _isPlaying.
+   * Это предотвращает "мигание" состояния UI при старте, когда Howler еще думает.
    */
   isPlaying(): boolean {
-    if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Проверяем хотя бы один активный стем
-      const stemKeys: Array<keyof typeof this.stemsTracks> = [
-        "vocals",
-        "drums",
-        "bass",
-        "other",
-      ];
-      for (const key of stemKeys) {
-        if (this.stemsTracks[key] && this.stemsEnabled[key]) {
-          if (this.stemsTracks[key]?.playing()) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } else if (this.musicTrack) {
-      return this.musicTrack.playing();
-    }
-    return false;
+    return this._isPlaying;
   }
 
-  /**
-   * Получает текущее время воспроизведения
-   * Просто возвращает время из Howler - это легкая операция
-   */
   getCurrentTime(): number {
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Используем vocals как основной источник времени (все стемы синхронизированы)
-      if (this.stemsTracks.vocals) {
+      if (this.stemsTracks.vocals)
         return this.stemsTracks.vocals.seek() as number;
-      }
-      // Fallback на другие стемы
+
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "drums",
         "bass",
         "other",
       ];
       for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
+        if (this.stemsTracks[key])
           return this.stemsTracks[key]?.seek() as number;
-        }
       }
       return 0;
     } else if (this.musicTrack) {
@@ -488,79 +413,27 @@ export class AudioEngine {
     return 0;
   }
 
-  /**
-   * Получает длительность трека
-   */
   getDuration(): number {
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Используем vocals как основной источник длительности
-      if (this.stemsTracks.vocals) {
-        return this.stemsTracks.vocals.duration();
-      }
-      // Fallback на другие стемы
-      const stemKeys: Array<keyof typeof this.stemsTracks> = [
-        "drums",
-        "bass",
-        "other",
-      ];
-      for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
-          const dur = this.stemsTracks[key]?.duration();
-          if (dur && dur > 0) return dur;
-        }
-      }
-      return 0;
+      if (this.stemsTracks.vocals) return this.stemsTracks.vocals.duration();
+      // fallback...
     } else if (this.musicTrack) {
       return this.musicTrack.duration();
     }
     return 0;
   }
 
-  /**
-   * Проверяет, загружен ли трек (длительность доступна)
-   */
-  isTrackLoaded(): boolean {
-    if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Проверяем хотя бы один стем загружен
-      const stemKeys: Array<keyof typeof this.stemsTracks> = [
-        "vocals",
-        "drums",
-        "bass",
-        "other",
-      ];
-      for (const key of stemKeys) {
-        if (this.stemsTracks[key] && this.stemsEnabled[key]) {
-          const dur = this.stemsTracks[key]?.duration();
-          if (dur && dur > 0 && isFinite(dur)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } else if (this.musicTrack) {
-      const dur = this.musicTrack.duration();
-      return dur > 0 && isFinite(dur);
-    }
-    return false;
-  }
-
-  /**
-   * Перемещается к указанной позиции
-   * Важно: Howler.js сам обрабатывает seek без наслоения звука
-   * Если трек играет, он продолжит играть с новой позиции
-   */
   seek(time: number) {
     const dur = this.getDuration();
-    if (dur === 0 || !isFinite(dur)) {
-      console.warn("Cannot seek: track not fully loaded yet");
-      return;
-    }
+    if (dur === 0) return;
 
-    // Ограничиваем время в пределах длительности
+    // Сохраняем намерение воспроизведения, а не физическое состояние Howler
+    const wasPlaying = this._isPlaying;
+
+    this.stopUpdate();
     const clampedTime = Math.max(0, Math.min(time, dur));
 
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Seek для всех стемов (синхронизированно)
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
         "drums",
@@ -568,122 +441,34 @@ export class AudioEngine {
         "other",
       ];
       for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
-          try {
-            this.stemsTracks[key]?.seek(clampedTime);
-          } catch (e) {
-            console.warn(`Error seeking stem ${key}:`, e);
-          }
-        }
+        this.stemsTracks[key]?.seek(clampedTime);
       }
     } else if (this.musicTrack) {
-      // Seek для цельного файла
-      try {
-        this.musicTrack.seek(clampedTime);
-      } catch (e) {
-        console.error("Error during seek:", e);
+      this.musicTrack.seek(clampedTime);
+    }
+
+    const immediateBeatIndex = this.syncBeatCursor(clampedTime);
+    if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
+      const beat = this.beatGrid[immediateBeatIndex];
+      if (beat) {
+        this.playVoiceCount(beat.number);
+        this.currentBeatIndex = immediateBeatIndex + 1;
       }
     }
 
-    // Reset beat index to match the seek position (cursor-based approach)
-    this.currentBeatIndex = 0;
-    for (let i = 0; i < this.beatMap.length; i++) {
-      if (this.beatMap[i] <= clampedTime) {
-        this.currentBeatIndex = i;
-      } else {
-        break;
-      }
+    // Notify UI immediately (smooth scrubbing)
+    if (this.onTimeUpdate) this.onTimeUpdate(clampedTime);
+
+    if (wasPlaying) {
+      this.startUpdate();
     }
   }
 
-  // === Управление громкостью ===
+  // === Setters ===
 
   setMusicVolume(volume: number) {
     this.musicVolume = volume;
-    if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      // Обновляем громкость всех стемов
-      const stemKeys: Array<keyof typeof this.stemsTracks> = [
-        "vocals",
-        "drums",
-        "bass",
-        "other",
-      ];
-      for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
-          const finalVolume =
-            (volume / 100) *
-            (this.stemsVolume[key] / 100) *
-            (this.stemsEnabled[key] ? 1 : 0);
-          this.stemsTracks[key]?.volume(finalVolume);
-        }
-      }
-    } else if (this.musicTrack) {
-      // Обновляем громкость цельного файла
-      this.musicTrack.volume(volume / 100);
-    }
-  }
-
-  // === Управление стемами ===
-
-  setStemsMode(enabled: boolean) {
-    if (this.isStemsMode === enabled) return; // Нет изменений
-
-    this.isStemsMode = enabled;
-
-    // Если режим изменился и трек загружен, нужно перезагрузить трек
-    if (this.currentTrack) {
-      // Сохраняем текущую позицию и состояние
-      const currentTime = this.getCurrentTime();
-      const wasPlaying = this.isPlaying();
-
-      // loadTrack сам вызовет stop() и unloadTrack(), поэтому просто вызываем его
-      this.loadTrack(
-        this.currentTrack,
-        this.isStemsMode,
-        this.stemsEnabled,
-        this.stemsVolume
-      );
-
-      // Восстанавливаем позицию и состояние воспроизведения после загрузки
-      if (currentTime > 0) {
-        setTimeout(() => {
-          this.seek(currentTime);
-          if (wasPlaying) {
-            this.play();
-          }
-        }, 150); // Немного больше времени для загрузки стемов
-      }
-    }
-  }
-
-  setStemsEnabled(
-    stems: Partial<{
-      vocals: boolean;
-      drums: boolean;
-      bass: boolean;
-      other: boolean;
-    }>
-  ) {
-    this.stemsEnabled = { ...this.stemsEnabled, ...stems };
-
-    // Обновляем громкость стемов (включенные/выключенные)
-    if (this.isStemsMode && this.currentTrack?.isProcessed) {
-      const stemKeys: Array<keyof typeof this.stemsTracks> = [
-        "vocals",
-        "drums",
-        "bass",
-        "other",
-      ];
-      for (const key of stemKeys) {
-        if (this.stemsTracks[key]) {
-          const finalVolume =
-            (this.musicVolume / 100) *
-            (this.stemsVolume[key] / 100) *
-            (this.stemsEnabled[key] ? 1 : 0);
-          this.stemsTracks[key]?.volume(finalVolume);
-        }
-      }
-    }
+    this.applyVolume();
   }
 
   setStemsVolume(
@@ -695,8 +480,23 @@ export class AudioEngine {
     }>
   ) {
     this.stemsVolume = { ...this.stemsVolume, ...stems };
+    this.applyVolume();
+  }
 
-    // Обновляем громкость стемов
+  setStemsEnabled(
+    stems: Partial<{
+      vocals: boolean;
+      drums: boolean;
+      bass: boolean;
+      other: boolean;
+    }>
+  ) {
+    this.stemsEnabled = { ...this.stemsEnabled, ...stems };
+    this.applyVolume();
+  }
+
+  // Helper to DRY volume logic
+  private applyVolume() {
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
@@ -713,7 +513,37 @@ export class AudioEngine {
           this.stemsTracks[key]?.volume(finalVolume);
         }
       }
+    } else if (this.musicTrack) {
+      this.musicTrack.volume(this.musicVolume / 100);
     }
+  }
+
+  setStemsMode(enabled: boolean) {
+    if (this.isStemsMode === enabled) return;
+    this.isStemsMode = enabled;
+    if (this.currentTrack) {
+      const currentTime = this.getCurrentTime();
+      const wasPlaying = this._isPlaying;
+
+      this.loadTrack(
+        this.currentTrack,
+        this.isStemsMode,
+        this.stemsEnabled,
+        this.stemsVolume
+      );
+
+      if (currentTime > 0) {
+        setTimeout(() => {
+          this.seek(currentTime);
+          if (wasPlaying) this.play();
+        }, 150);
+      }
+    }
+  }
+
+  setVoiceVolume(volume: number) {
+    this.voiceVolume = Math.max(0, Math.min(100, volume));
+    this.voiceFiles.forEach((howl) => howl.volume(this.voiceVolume / 100));
   }
 
   // === Callbacks ===
@@ -723,45 +553,98 @@ export class AudioEngine {
   }
 
   /**
-   * Update method - cursor-based approach using beatMap
-   * This method is called via requestAnimationFrame during playback
+   * Устанавливает callback для получения текущего времени.
+   * Позволяет UI синхронизироваться с AudioEngine без лишних интервалов.
    */
-  private update() {
-    // Проверяем, играет ли что-то (цельный файл или стемы)
-    const isPlaying = this.isPlaying();
-    if (!isPlaying) {
-      this.stopUpdate();
-      return;
+  setOnTimeUpdate(callback: ((time: number) => void) | null) {
+    this.onTimeUpdate = callback;
+  }
+
+  // === Internal Logic ===
+
+  private syncBeatCursor(time: number): number {
+    if (!this.beatGrid || this.beatGrid.length === 0) {
+      this.currentBeatIndex = 0;
+      return -1;
     }
+    const nextBeatIndex = this.beatGrid.findIndex((beat) => beat.time > time);
+    if (nextBeatIndex === -1) {
+      this.currentBeatIndex = this.beatGrid.length;
+      return -1;
+    } else {
+      this.currentBeatIndex = nextBeatIndex;
+    }
+    const nextBeat = this.beatGrid[this.currentBeatIndex];
+    if (nextBeat && nextBeat.time <= time + 0.1) {
+      return this.currentBeatIndex;
+    }
+    return -1;
+  }
+
+  private update() {
+    // CRITICAL FIX: Не проверяем isPlaying() здесь жестко для остановки цикла.
+    // Если этот метод вызван, значит мы планировали обновление.
+    // Проверка isPlaying нужна только чтобы не двигать логику, если мы на паузе (но update по идее остановлен там).
 
     const currentTime = this.getCurrentTime();
 
-    // Update currentBeatIndex based on current time
-    // Find the closest beat index that hasn't been passed yet
-    while (
-      this.currentBeatIndex < this.beatMap.length &&
-      this.beatMap[this.currentBeatIndex] <= currentTime
-    ) {
-      this.currentBeatIndex++;
+    // 1. Уведомляем UI (для прогресс-бара)
+    if (this.onTimeUpdate) {
+      this.onTimeUpdate(currentTime);
     }
 
-    // Continue the update loop
+    // 2. Обработка битов (Voice Counting)
+    if (this.beatGrid.length > 0) {
+      while (
+        this.currentBeatIndex < this.beatGrid.length &&
+        this.beatGrid[this.currentBeatIndex].time <= currentTime
+      ) {
+        const beat = this.beatGrid[this.currentBeatIndex];
+        if (currentTime - beat.time < 0.25) {
+          this.playVoiceCount(beat.number);
+        }
+        this.currentBeatIndex++;
+      }
+
+      // Check next beat "very soon" logic
+      if (
+        this.currentBeatIndex < this.beatGrid.length &&
+        this.beatGrid[this.currentBeatIndex].time > currentTime &&
+        this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
+      ) {
+        const beat = this.beatGrid[this.currentBeatIndex];
+        this.playVoiceCount(beat.number);
+        this.currentBeatIndex++;
+      }
+    } else {
+      // Legacy beatMap
+      while (
+        this.currentBeatIndex < this.beatMap.length &&
+        this.beatMap[this.currentBeatIndex] <= currentTime
+      ) {
+        this.currentBeatIndex++;
+      }
+    }
+
+    // Continue loop
     this.updateAnimationFrameId = requestAnimationFrame(() => this.update());
   }
 
-  /**
-   * Start the update loop
-   */
+  private playVoiceCount(beatNumber: number) {
+    if (beatNumber < 1 || beatNumber > 8) return;
+    const voiceFile = this.voiceFiles.get(beatNumber);
+    if (voiceFile) {
+      // Опционально: не прерывать, если голос тот же, но здесь лучше прерывать для четкости
+      voiceFile.stop();
+      voiceFile.play();
+    }
+  }
+
   private startUpdate() {
-    if (this.updateAnimationFrameId !== null) {
-      return; // Already running
-    }
+    if (this.updateAnimationFrameId !== null) return;
     this.updateAnimationFrameId = requestAnimationFrame(() => this.update());
   }
 
-  /**
-   * Stop the update loop
-   */
   private stopUpdate() {
     if (this.updateAnimationFrameId !== null) {
       cancelAnimationFrame(this.updateAnimationFrameId);
@@ -769,30 +652,12 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Get current beat index (for external use)
-   */
-  getCurrentBeatIndex(): number {
-    return this.currentBeatIndex;
-  }
-
-  /**
-   * Get beat map (for external use)
-   */
-  getBeatMap(): number[] {
-    return [...this.beatMap]; // Return a copy
-  }
-
-  // === Cleanup ===
-
   destroy() {
     this.stop();
     this.unloadTrack();
-    this.stopUpdate();
-
     this.onTrackEnd = null;
+    this.onTimeUpdate = null;
   }
 }
 
-// Export singleton instance
 export const audioEngine = AudioEngine.getInstance();

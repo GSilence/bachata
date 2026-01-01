@@ -14,6 +14,12 @@ export interface GridMap {
   grid: GridSection[];
 }
 
+export interface Beat {
+  time: number;    // Timestamp in seconds
+  number: number;  // The beat number (1-8) to speak
+  hasVoice: boolean; // Should we play voice? (Breaks/Bridges might have logic)
+}
+
 export interface Track {
   id: number;
   title: string;
@@ -33,6 +39,7 @@ export interface Track {
   pathOther: string | null;
   isProcessed: boolean;
   gridMap: GridMap | null; // сложная структура с grid (verse/bridge секции) от madmom анализа
+  beatGrid: Beat[] | null; // Pre-calculated beat grid for rhythm counting
 }
 
 export interface PlayerState {

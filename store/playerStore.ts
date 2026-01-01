@@ -92,11 +92,12 @@ export const usePlayerStore = create<PlayerState>()(
         audioEngine.stop();
 
         // STEP 3: Load the new track with stems settings
-        const { isStemsMode, stemsEnabled, stemsVolume, musicVolume } = get();
+        const { isStemsMode, stemsEnabled, stemsVolume, musicVolume, voiceVolume } = get();
         audioEngine.loadTrack(track, isStemsMode, stemsEnabled, stemsVolume);
 
         // STEP 4: Set volume from store
         audioEngine.setMusicVolume(musicVolume);
+        audioEngine.setVoiceVolume(voiceVolume);
       },
       setTracks: (tracks) => set({ tracks }),
       setIsPlaying: (isPlaying) => {
@@ -123,7 +124,8 @@ export const usePlayerStore = create<PlayerState>()(
       setVoiceVolume: (volume) => {
         const clampedVolume = Math.max(0, Math.min(100, volume));
         set({ voiceVolume: clampedVolume });
-        // Убран вызов audioEngine.setVoiceVolume - упрощенный плеер
+        // Sync with AudioEngine
+        audioEngine.setVoiceVolume(clampedVolume);
       },
       setStemsMode: (enabled) => {
         set({ isStemsMode: enabled });
@@ -368,8 +370,19 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
   if (typeof window === "undefined" || tracks.length === 0) return null;
 
   try {
-    const stored = localStorage.getItem("player-storage");
+    const stored = trackStorage.getItem("player-storage");
     if (!stored) return null;
+
+    // Проверяем, что это валидная JSON строка, а не [object Object]
+    if (typeof stored !== 'string' || stored === '[object Object]') {
+      console.warn("localStorage содержит невалидные данные, очищаем...");
+      try {
+        trackStorage.removeItem("player-storage");
+      } catch (clearError) {
+        console.error("Failed to clear corrupted localStorage:", clearError);
+      }
+      return null;
+    }
 
     let parsed;
     try {
@@ -381,13 +394,14 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
         parseError
       );
       try {
-        localStorage.removeItem("player-storage");
+        trackStorage.removeItem("player-storage");
       } catch (clearError) {
         console.error("Failed to clear corrupted localStorage:", clearError);
       }
       return null;
     }
 
+    // Zustand persist сохраняет данные в формате { state: { ... }, version: ... }
     const savedTrackId = parsed?.state?.savedTrackId;
 
     if (savedTrackId) {
@@ -398,7 +412,7 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
     console.warn("Failed to restore track from storage:", error);
     // If any other error occurs, try to clear the corrupted data
     try {
-      localStorage.removeItem("player-storage");
+      trackStorage.removeItem("player-storage");
     } catch (clearError) {
       console.error("Failed to clear corrupted localStorage:", clearError);
     }

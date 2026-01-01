@@ -103,40 +103,73 @@ export default function PlaybackPage() {
         if (Array.isArray(data)) {
           setTracks(data);
 
-          // Всегда пытаемся восстановить трек из localStorage или выбрать первый
-          if (data.length > 0) {
-            // Используем restoreTrackFromStorage для безопасного восстановления
-            // Эта функция автоматически очистит corrupted localStorage
-            const restoredTrack = restoreTrackFromStorage(data);
+          // Получаем текущий трек из store для проверки
+          const { currentTrack: currentTrackState } = usePlayerStore.getState();
 
-            // Определяем, какой трек выбрать
-            const trackToLoad: Track | null = restoredTrack || data[0];
-
-            // Загружаем трек, если он отличается от текущего
-            if (
-              trackToLoad &&
-              (!currentTrack || currentTrack.id !== trackToLoad.id)
-            ) {
-              console.log("Loading initial track:", trackToLoad.title);
-              // Используем loadTrack, который автоматически загрузит трек в AudioEngine
-              loadTrack(trackToLoad);
+          // Если список треков пустой, очищаем currentTrack
+          if (data.length === 0) {
+            if (currentTrackState) {
+              console.log("Clearing currentTrack: no tracks available");
+              setCurrentTrack(null);
             }
+            return;
+          }
+
+          // Проверяем, существует ли текущий трек в новом списке
+          if (
+            currentTrackState &&
+            !data.find((t) => t.id === currentTrackState.id)
+          ) {
+            console.log("Current track not found in list, clearing it");
+            setCurrentTrack(null);
+          }
+
+          // Всегда пытаемся восстановить трек из localStorage или выбрать первый
+          // Используем restoreTrackFromStorage для безопасного восстановления
+          // Эта функция автоматически очистит corrupted localStorage
+          const restoredTrack = restoreTrackFromStorage(data);
+
+          // Определяем, какой трек выбрать
+          const trackToLoad: Track | null = restoredTrack || data[0];
+
+          // Получаем актуальный currentTrack после возможной очистки
+          const { currentTrack: updatedCurrentTrack } =
+            usePlayerStore.getState();
+
+          // Загружаем трек, если он отличается от текущего
+          if (
+            trackToLoad &&
+            (!updatedCurrentTrack || updatedCurrentTrack.id !== trackToLoad.id)
+          ) {
+            console.log("Loading initial track:", trackToLoad.title);
+            // Используем loadTrack, который автоматически загрузит трек в AudioEngine
+            loadTrack(trackToLoad);
           }
         } else {
           console.warn("API returned non-array data:", data);
           setTracks([]);
+          // Очищаем currentTrack при ошибке
+          const { currentTrack: currentTrackState } = usePlayerStore.getState();
+          if (currentTrackState) {
+            setCurrentTrack(null);
+          }
         }
       })
       .catch((error) => {
         if (cancelled) return;
         console.error("Error loading tracks:", error);
         setTracks([]);
+        // Очищаем currentTrack при ошибке
+        const { currentTrack: currentTrackState } = usePlayerStore.getState();
+        if (currentTrackState) {
+          setCurrentTrack(null);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isClient, setTracks, setCurrentTrack]);
+  }, [isClient, setTracks, setCurrentTrack, loadTrack]);
 
   // UI Update Loop moved to PlayerControls.tsx to avoid duplication
 

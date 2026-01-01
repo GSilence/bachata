@@ -1,9 +1,66 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { existsSync, readdirSync, statSync } from 'fs'
+import { existsSync, readdirSync, statSync, readFileSync } from 'fs'
 import { join } from 'path'
 
 const execAsync = promisify(exec)
+
+// Загружаем переменные из .env.local (для надежности)
+function loadEnvLocal() {
+  const envPath = join(process.cwd(), '.env.local')
+  
+  // В Next.js переменные из .env.local загружаются автоматически,
+  // но мы перезагружаем их вручную для надежности
+  if (existsSync(envPath)) {
+    try {
+      const content = readFileSync(envPath, 'utf-8')
+      const lines = content.split(/\r?\n/) // Поддержка Windows и Unix окончаний строк
+      
+      for (const line of lines) {
+        const trimmed = line.trim()
+        // Пропускаем пустые строки и комментарии
+        if (!trimmed || trimmed.startsWith('#')) {
+          continue
+        }
+        
+        // Разделяем на ключ и значение
+        const equalIndex = trimmed.indexOf('=')
+        if (equalIndex === -1) {
+          continue // Нет знака равенства
+        }
+        
+        const key = trimmed.substring(0, equalIndex).trim()
+        const value = trimmed.substring(equalIndex + 1).trim()
+        
+        if (key && value) {
+          // Убираем кавычки, если есть
+          const cleanValue = value.replace(/^["']|["']$/g, '')
+          process.env[key] = cleanValue
+          
+          if (key === 'DEMUCS_PYTHON_PATH') {
+            console.log(`[Demucs] ✅ Загружен DEMUCS_PYTHON_PATH из .env.local: ${cleanValue}`)
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('[Demucs] ❌ Ошибка при чтении .env.local:', error.message || error)
+    }
+  } else {
+    console.warn(`[Demucs] ⚠️ .env.local не найден: ${envPath}`)
+    console.warn(`[Demucs] Текущая рабочая директория: ${process.cwd()}`)
+  }
+  
+  // Логируем текущее значение переменной (из process.env, который может быть загружен Next.js)
+  const currentPath = process.env.DEMUCS_PYTHON_PATH
+  if (currentPath) {
+    console.log(`[Demucs] ✅ DEMUCS_PYTHON_PATH установлен: ${currentPath}`)
+  } else {
+    console.warn(`[Demucs] ⚠️ DEMUCS_PYTHON_PATH не установлен`)
+  }
+}
+
+// Загружаем переменные при импорте модуля
+loadEnvLocal()
 
 export interface DemucsResult {
   vocals: string | null
@@ -17,14 +74,26 @@ export interface DemucsResult {
  * Пробует разные варианты: прямой вызов, через python -m, через venv
  */
 export async function checkDemucsInstalled(): Promise<boolean> {
+  // Перезагружаем переменные окружения на всякий случай
+  loadEnvLocal()
+  
   // Если указан путь к Python из venv, пробуем его первым
   const pythonPath = process.env.DEMUCS_PYTHON_PATH
-  if (pythonPath && existsSync(pythonPath)) {
-    try {
-      await execAsync(`"${pythonPath}" -m demucs.separate --help`)
-      return true
-    } catch (error) {
-      // Продолжаем проверку другими способами
+  if (pythonPath) {
+    // Нормализуем путь (убираем кавычки, если есть)
+    const normalizedPath = pythonPath.trim().replace(/^["']|["']$/g, '')
+    
+    if (existsSync(normalizedPath)) {
+      try {
+        await execAsync(`"${normalizedPath}" -m demucs.separate --help`)
+        console.log(`✅ Demucs найден через DEMUCS_PYTHON_PATH: ${normalizedPath}`)
+        return true
+      } catch (error) {
+        console.warn(`Проверка через DEMUCS_PYTHON_PATH не прошла: ${normalizedPath}`, error)
+        // Продолжаем проверку другими способами
+      }
+    } else {
+      console.warn(`DEMUCS_PYTHON_PATH указан, но файл не найден: ${normalizedPath}`)
     }
   }
 
@@ -52,19 +121,40 @@ export async function checkDemucsInstalled(): Promise<boolean> {
  * Пробует найти рабочую команду
  */
 async function getDemucsCommand(): Promise<string> {
+  // Перезагружаем переменные окружения на всякий случай
+  loadEnvLocal()
+  
   // Если указан путь к Python из venv, используем его в первую очередь
   const pythonPath = process.env.DEMUCS_PYTHON_PATH
-  if (pythonPath && existsSync(pythonPath)) {
-    // Пробуем проверить, работает ли команда
-    try {
-      await execAsync(`"${pythonPath}" -m demucs.separate --help`)
-      return `"${pythonPath}" -m demucs.separate`
-    } catch (error) {
-      // Если проверка не прошла, все равно используем этот путь,
-      // так как он указан явно и файл существует
-      console.warn('Проверка DEMUCS_PYTHON_PATH не прошла, но используем указанный путь')
-      return `"${pythonPath}" -m demucs.separate`
+  console.log(`[Demucs] getDemucsCommand: pythonPath = ${pythonPath || 'не установлен'}`)
+  
+  if (pythonPath) {
+    // Нормализуем путь (убираем кавычки, если есть)
+    const normalizedPath = pythonPath.trim().replace(/^["']|["']$/g, '')
+    console.log(`[Demucs] Нормализованный путь: ${normalizedPath}`)
+    
+    if (existsSync(normalizedPath)) {
+      console.log(`[Demucs] Файл существует, проверяем команду...`)
+      // Пробуем проверить, работает ли команда
+      try {
+        const testCommand = `"${normalizedPath}" -m demucs.separate --help`
+        console.log(`[Demucs] Выполняем проверку: ${testCommand}`)
+        await execAsync(testCommand)
+        console.log(`✅ Используем DEMUCS_PYTHON_PATH: ${normalizedPath}`)
+        return `"${normalizedPath}" -m demucs.separate`
+      } catch (error: any) {
+        // Если проверка не прошла, все равно используем этот путь,
+        // так как он указан явно и файл существует
+        console.warn(`⚠️ Проверка DEMUCS_PYTHON_PATH не прошла, но используем указанный путь: ${normalizedPath}`)
+        console.warn(`Ошибка:`, error.message || error)
+        return `"${normalizedPath}" -m demucs.separate`
+      }
+    } else {
+      console.warn(`⚠️ DEMUCS_PYTHON_PATH указан, но файл не найден: ${normalizedPath}`)
+      console.warn(`Текущая рабочая директория: ${process.cwd()}`)
     }
+  } else {
+    console.log(`[Demucs] DEMUCS_PYTHON_PATH не установлен, пробуем стандартные команды...`)
   }
 
   // Если DEMUCS_PYTHON_PATH не указан, пробуем другие варианты
@@ -74,20 +164,43 @@ async function getDemucsCommand(): Promise<string> {
     'demucs',
   ]
 
+  console.log(`[Demucs] Пробуем стандартные команды: ${commands.join(', ')}`)
   for (const cmd of commands) {
     try {
+      console.log(`[Demucs] Проверяем: ${cmd} --help`)
       await execAsync(`${cmd} --help`)
+      console.log(`✅ Найдена рабочая команда: ${cmd}`)
       return cmd
-    } catch (error) {
+    } catch (error: any) {
+      console.log(`[Demucs] Команда ${cmd} не работает:`, error.message || error)
       continue
     }
   }
 
-  // Если ничего не работает и DEMUCS_PYTHON_PATH не указан, выбрасываем ошибку
-  throw new Error(
-    'Demucs не найден. Установите его: pip install demucs\n' +
-    'Или укажите DEMUCS_PYTHON_PATH в .env.local (например: DEMUCS_PYTHON_PATH=D:\\Sites\\bachata\\venv\\Scripts\\python.exe)'
-  )
+  // Если ничего не работает, выбрасываем ошибку с подробной информацией
+  // Используем уже объявленную переменную pythonPath из начала функции
+  const normalizedPath = pythonPath ? pythonPath.trim().replace(/^["']|["']$/g, '') : null
+  const fileExists = normalizedPath ? existsSync(normalizedPath) : false
+  
+  let errorMessage: string
+  if (pythonPath) {
+    errorMessage = `Demucs не найден. DEMUCS_PYTHON_PATH указан как: ${pythonPath}\n` +
+      `Нормализованный путь: ${normalizedPath}\n` +
+      `Файл существует: ${fileExists ? 'да' : 'нет'}\n` +
+      `\nПроверьте:\n` +
+      `1. Существует ли файл: ${normalizedPath}\n` +
+      `2. Установлен ли demucs в этом окружении: "${normalizedPath}" -m pip list | findstr demucs\n` +
+      `3. Работает ли команда: "${normalizedPath}" -m demucs.separate --help\n` +
+      `4. Проверьте логи выше для деталей`
+  } else {
+    errorMessage = 'Demucs не найден. Установите его: pip install demucs\n' +
+      'Или укажите DEMUCS_PYTHON_PATH в .env.local (например: DEMUCS_PYTHON_PATH=D:\\Sites\\bachata\\venv\\Scripts\\python.exe)\n' +
+      `\nТекущая рабочая директория: ${process.cwd()}\n` +
+      `Путь к .env.local: ${join(process.cwd(), '.env.local')}`
+  }
+  
+  console.error('❌ Demucs не найден:', errorMessage)
+  throw new Error(errorMessage)
 }
 
 /**

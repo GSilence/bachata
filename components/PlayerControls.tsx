@@ -38,19 +38,18 @@ export default function PlayerControls({
     const updateLoop = () => {
       const state = usePlayerStore.getState();
 
-      // CRITICAL: Only update if NOT dragging, NOT interacting, AND playing
+      // Always update duration (even when paused) so progress bar is visible
+      const dur = audioEngine.getDuration();
+      if (dur > 0 && dur !== state.duration) {
+        usePlayerStore.setState({ duration: dur });
+      }
+
+      // CRITICAL: Only update currentTime if NOT dragging, NOT interacting, AND playing
       // This ensures the engine never overwrites the UI during user interactions
       if (!isDragging && !isInteractingRef.current && state.isPlaying) {
         const time = audioEngine.getCurrentTime();
-        const dur = audioEngine.getDuration();
-
         // Update store directly to drive UI
         state.setCurrentTime(time);
-
-        // Sync duration ONLY if valid (> 0) and changed
-        if (dur > 0 && dur !== state.duration) {
-          usePlayerStore.setState({ duration: dur });
-        }
       }
 
       rafId = requestAnimationFrame(updateLoop);
