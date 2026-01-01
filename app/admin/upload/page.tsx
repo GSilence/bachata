@@ -18,6 +18,8 @@ export default function AdminUploadPage() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
+    // Обновляем только если файл действительно выбран
+    // Если пользователь закрыл диалог без выбора, files будет пустым
     if (selectedFile) {
       setFile(selectedFile)
       // Автоматически заполняем название из имени файла
@@ -26,6 +28,7 @@ export default function AdminUploadPage() {
         setTitle(nameWithoutExt)
       }
     }
+    // НЕ сбрасываем file, если selectedFile === undefined (пользователь закрыл диалог)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

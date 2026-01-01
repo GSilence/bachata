@@ -1,0 +1,14 @@
+# Python dependencies for Bachata Beat Counter
+
+# Audio analysis
+madmom>=0.16.1
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Legacy dependencies (для обратной совместимости)
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Demucs для разделения на стемы
+demucs>=4.0.0
+

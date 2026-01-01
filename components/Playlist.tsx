@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef } from 'react'
 import { usePlayerStore } from '@/store/playerStore'
 import type { Track } from '@/types'
 
@@ -10,11 +11,15 @@ interface PlaylistProps {
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const {
     tracks,
+    currentTrack,
     playlistFilter,
     searchQuery,
     setPlaylistFilter,
     setSearchQuery,
   } = usePlayerStore()
+  
+  const activeTrackRef = useRef<HTMLButtonElement | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
   // Фильтрация треков
   const filteredTracks = (Array.isArray(tracks) ? tracks : []).filter((track) => {
@@ -34,6 +39,35 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
     return true
   })
+
+  // Автоматическая прокрутка к активному треку
+  useEffect(() => {
+    if (activeTrackRef.current && containerRef.current) {
+      const container = containerRef.current
+      const activeElement = activeTrackRef.current
+      
+      // Вычисляем позицию активного элемента относительно контейнера
+      const containerTop = container.scrollTop
+      const containerBottom = containerTop + container.clientHeight
+      const elementTop = activeElement.offsetTop
+      const elementBottom = elementTop + activeElement.offsetHeight
+      
+      // Прокручиваем только если элемент не виден
+      if (elementTop < containerTop) {
+        // Элемент выше видимой области
+        container.scrollTo({
+          top: elementTop - 10, // Небольшой отступ сверху
+          behavior: 'smooth'
+        })
+      } else if (elementBottom > containerBottom) {
+        // Элемент ниже видимой области
+        container.scrollTo({
+          top: elementBottom - container.clientHeight + 10, // Небольшой отступ снизу
+          behavior: 'smooth'
+        })
+      }
+    }
+  }, [currentTrack, filteredTracks])
 
   return (
     <div className="space-y-4">
@@ -77,25 +111,45 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       />
 
       {/* Список треков */}
-      <div className="space-y-2 max-h-96 overflow-y-auto">
-        {filteredTracks.length === 0 ? (
+      <div 
+        ref={containerRef}
+        className="space-y-2 max-h-96 overflow-y-auto"
+      >
+        {tracks.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-400 mb-2">Плейлист пуст</p>
+            <p className="text-sm text-gray-500">Загрузите треки в разделе "Медиатека"</p>
+          </div>
+        ) : filteredTracks.length === 0 ? (
           <p className="text-gray-400 text-center py-4">Треки не найдены</p>
         ) : (
-          filteredTracks.map((track) => (
-            <button
-              key={track.id}
-              onClick={() => onTrackSelect(track)}
-              className="w-full text-left px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg hover:bg-gray-600 hover:border-purple-600 transition-colors"
-            >
-              <div className="font-medium text-white">{track.title}</div>
-              {track.artist && (
-                <div className="text-sm text-gray-400">{track.artist}</div>
-              )}
-              <div className="text-xs text-gray-500 mt-1">
-                BPM: {track.bpm} • {track.isFree ? 'Free' : 'Pro'}
-              </div>
-            </button>
-          ))
+          filteredTracks.map((track) => {
+            const isActive = currentTrack?.id === track.id
+            return (
+              <button
+                key={track.id}
+                ref={isActive ? activeTrackRef : null}
+                onClick={() => onTrackSelect(track)}
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
+                  isActive
+                    ? 'bg-purple-600 border-2 border-purple-400 hover:bg-purple-700'
+                    : 'bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600'
+                }`}
+              >
+                <div className={`font-medium ${isActive ? 'text-white' : 'text-white'}`}>
+                  {track.title}
+                </div>
+                {track.artist && (
+                  <div className={`text-sm ${isActive ? 'text-purple-100' : 'text-gray-400'}`}>
+                    {track.artist}
+                  </div>
+                )}
+                <div className={`text-xs mt-1 ${isActive ? 'text-purple-200' : 'text-gray-500'}`}>
+                  BPM: {track.bpm} • {track.isFree ? 'Free' : 'Pro'}
+                </div>
+              </button>
+            )
+          })
         )}
       </div>
     </div>

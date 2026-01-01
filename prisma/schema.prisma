@@ -29,6 +29,7 @@ model Track {
   pathBass     String?  // путь к bass.wav
   pathOther    String?  // путь к other.wav
   isProcessed  Boolean @default(false) // обработан ли трек через Demucs
+  gridMap      Json?    // сложная структура с grid (verse/bridge секции) от madmom анализа
 }
 
 // Задел на будущее (пока не используется в MVP)

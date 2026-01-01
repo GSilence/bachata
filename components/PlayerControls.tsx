@@ -1,18 +1,22 @@
-'use client'
+"use client";
 
-import { usePlayerStore } from '@/store/playerStore'
-import { useEffect, useRef, useState } from 'react'
-
-import { AudioEngine } from '@/lib/audioEngine'
+import { usePlayerStore } from "@/store/playerStore";
+import { audioEngine } from "@/lib/audioEngine";
+import { useEffect, useRef, useState } from "react";
 
 interface PlayerControlsProps {
-  audioEngine: AudioEngine | null
-  onPlay: () => void
-  onPause: () => void
+  onPlay: () => void;
+  onPause: () => void;
+  onStop: () => void;
 }
 
-export default function PlayerControls({ audioEngine, onPlay, onPause }: PlayerControlsProps) {
+export default function PlayerControls({
+  onPlay,
+  onPause,
+  onStop,
+}: PlayerControlsProps) {
   const {
+    currentTrack,
     isPlaying,
     currentTime,
     duration,
@@ -21,106 +25,119 @@ export default function PlayerControls({ audioEngine, onPlay, onPause }: PlayerC
     setCurrentTime,
     setMusicVolume,
     setVoiceVolume,
-  } = usePlayerStore()
+  } = usePlayerStore();
 
-  const [isDragging] = useState(false)
-  const progressRef = useRef<HTMLDivElement>(null)
+  const [isDragging, setIsDragging] = useState(false);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const isInteractingRef = useRef(false); // Interaction lock to prevent race conditions
 
-  // Обновляем время воспроизведения
+  // Smart Update Loop - Only updates when NOT interacting
   useEffect(() => {
-    if (!audioEngine) return
+    let rafId: number;
 
-    const interval = setInterval(() => {
-      if (!audioEngine) return
-      
-      const time = audioEngine.getCurrentTime()
-      const dur = audioEngine.getDuration()
-      
-      // Обновляем время только если не перетаскиваем
-      if (!isDragging && time >= 0) {
-        setCurrentTime(time)
+    const updateLoop = () => {
+      const state = usePlayerStore.getState();
+
+      // CRITICAL: Only update if NOT dragging, NOT interacting, AND playing
+      // This ensures the engine never overwrites the UI during user interactions
+      if (!isDragging && !isInteractingRef.current && state.isPlaying) {
+        const time = audioEngine.getCurrentTime();
+        const dur = audioEngine.getDuration();
+
+        // Update store directly to drive UI
+        state.setCurrentTime(time);
+
+        // Sync duration ONLY if valid (> 0) and changed
+        if (dur > 0 && dur !== state.duration) {
+          usePlayerStore.setState({ duration: dur });
+        }
       }
-      
-      // Обновляем длительность, если она изменилась
-      if (dur > 0 && dur !== duration) {
-        usePlayerStore.getState().setDuration(dur)
-      }
-    }, 100)
 
-    return () => clearInterval(interval)
-  }, [isPlaying, audioEngine, isDragging, setCurrentTime, duration])
+      rafId = requestAnimationFrame(updateLoop);
+    };
 
-  // Обновляем длительность при загрузке трека и во время воспроизведения
-  useEffect(() => {
-    if (!audioEngine) return
-
-    const updateDuration = () => {
-      const dur = audioEngine.getDuration()
-      if (dur > 0 && dur !== duration) {
-        usePlayerStore.getState().setDuration(dur)
-      }
-    }
-
-    // Обновляем сразу
-    updateDuration()
-
-    // И периодически проверяем (на случай, если трек еще загружается)
-    const interval = setInterval(updateDuration, 500)
-
-    return () => clearInterval(interval)
-  }, [audioEngine, duration])
+    rafId = requestAnimationFrame(updateLoop);
+    return () => cancelAnimationFrame(rafId);
+  }, [isDragging]);
 
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!progressRef.current || !audioEngine) return
+    if (!progressRef.current || !currentTrack || duration === 0) return;
 
-    const rect = progressRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const width = rect.width
-    const percentage = Math.max(0, Math.min(1, x / width))
-    
-    // Если длительность еще не загружена, пытаемся получить ее
-    let currentDuration = duration
-    if (currentDuration === 0) {
-      currentDuration = audioEngine.getDuration()
-      if (currentDuration > 0) {
-        usePlayerStore.getState().setDuration(currentDuration)
-      }
-    }
+    // STEP 1: Set interaction lock to prevent updateLoop from overwriting
+    isInteractingRef.current = true;
 
-    if (currentDuration === 0) return
+    // STEP 2: Calculate new time from click position
+    const rect = progressRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const width = rect.width;
+    const percentage = Math.max(0, Math.min(1, x / width));
+    const newTime = percentage * duration;
 
-    const newTime = percentage * currentDuration
+    // STEP 3: Optimistically update store (instant visual feedback)
+    setCurrentTime(newTime);
 
-    setCurrentTime(newTime)
-    audioEngine.seek(newTime)
-  }
+    // STEP 4: Command the engine to seek
+    audioEngine.seek(newTime);
+
+    // STEP 5: Release interaction lock after cooldown (200ms immunity)
+    // This allows AudioEngine enough time to physically process the seek
+    setTimeout(() => {
+      isInteractingRef.current = false;
+    }, 200);
+  };
 
   const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
 
-  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0
+  // Simple render: Use currentTime directly from store
+  // No local state conflicts - single source of truth
+  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <div className="space-y-6">
-      {/* Play/Pause Button */}
-      <div className="flex justify-center">
+      {/* Play/Pause/Stop Buttons */}
+      <div className="flex justify-center items-center gap-4">
         <button
           onClick={isPlaying ? onPause : onPlay}
-          className="w-20 h-20 rounded-full bg-purple-600 text-white flex items-center justify-center hover:bg-purple-700 transition-colors shadow-lg"
-          aria-label={isPlaying ? 'Pause' : 'Play'}
+          disabled={!currentTrack}
+          className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+            !currentTrack
+              ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+              : "bg-purple-600 text-white hover:bg-purple-700"
+          }`}
+          aria-label={isPlaying ? "Pause" : "Play"}
         >
           {isPlaying ? (
-            <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 20 20">
+            <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
               <path d="M6 4h4v12H6V4zm4 0h4v12h-4V4z" />
             </svg>
           ) : (
-            <svg className="w-10 h-10 ml-1" fill="currentColor" viewBox="0 0 20 20">
+            <svg
+              className="w-8 h-8 ml-1"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
               <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
             </svg>
           )}
+        </button>
+
+        <button
+          onClick={onStop}
+          disabled={!currentTrack}
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+            !currentTrack
+              ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+              : "bg-red-600 text-white hover:bg-red-700"
+          }`}
+          aria-label="Stop"
+        >
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M4 4h12v12H4V4z" />
+          </svg>
         </button>
       </div>
 
@@ -148,38 +165,45 @@ export default function PlayerControls({ audioEngine, onPlay, onPause }: PlayerC
           <label className="block text-sm font-medium text-gray-400 mb-2">
             Music Volume: {musicVolume}%
           </label>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={musicVolume}
-            onChange={(e) => {
-              const vol = parseInt(e.target.value)
-              setMusicVolume(vol)
-              audioEngine?.setMusicVolume(vol)
-            }}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-          />
+          <div className="relative">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={musicVolume}
+              onChange={(e) => {
+                const vol = parseInt(e.target.value);
+                setMusicVolume(vol); // Store method handles audioEngine sync
+              }}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              style={{
+                background: `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${musicVolume}%, rgb(55, 65, 81) ${musicVolume}%, rgb(55, 65, 81) 100%)`,
+              }}
+            />
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-400 mb-2">
             Voice Volume: {voiceVolume}%
           </label>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={voiceVolume}
-            onChange={(e) => {
-              const vol = parseInt(e.target.value)
-              setVoiceVolume(vol)
-              audioEngine?.setVoiceVolume(vol)
-            }}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-          />
+          <div className="relative">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={voiceVolume}
+              onChange={(e) => {
+                const vol = parseInt(e.target.value);
+                setVoiceVolume(vol);
+              }}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              style={{
+                background: `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${voiceVolume}%, rgb(55, 65, 81) ${voiceVolume}%, rgb(55, 65, 81) 100%)`,
+              }}
+            />
+          </div>
         </div>
       </div>
     </div>
-  )
+  );
 }
-

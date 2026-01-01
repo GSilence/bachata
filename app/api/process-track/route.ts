@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { runDemucs } from '@/lib/demucs'
-import { analyzeBpmOffset } from '@/lib/analyzeAudio'
+import { analyzeTrack, analyzeBpmOffset } from '@/lib/analyzeAudio'
 
 // Настройки для работы с большими файлами и долгими операциями
 export const runtime = 'nodejs'
@@ -66,10 +67,12 @@ export async function POST(request: NextRequest) {
       await mkdir(stemsDir, { recursive: true })
     }
 
-    // Генерируем уникальное имя файла
-    const timestamp = Date.now()
+    // Генерируем уникальный идентификатор для трека
+    // Используем UUID для гарантированной уникальности
+    const uniqueId = randomUUID()
     const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-    const fileName = `${timestamp}_${safeFileName}`
+    const fileExtension = safeFileName.split('.').pop() || 'mp3'
+    const fileName = `${uniqueId}.${fileExtension}`
     const filePath = join(uploadsDir, fileName)
     
     console.log(`Processing track: ${title} by ${artist || 'Unknown'}`)
@@ -83,58 +86,56 @@ export async function POST(request: NextRequest) {
     console.log(`File saved: ${filePath}`)
 
     // Запускаем Demucs
-    const trackName = title.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()
-    const stemsResult = await runDemucs(filePath, stemsDir, trackName)
+    // Используем uniqueId вместо названия трека для уникальности папки
+    const stemsResult = await runDemucs(filePath, stemsDir, uniqueId)
 
     // Определяем BPM и Offset
     let finalBpm = bpm ? parseInt(bpm) : 120
     let finalOffset = offset ? parseFloat(offset) : 0
     let baseBpm: number | null = null
     let baseOffset: number | null = null
+    let gridMap: any = null
 
-    // Если нужно автоматическое определение, анализируем аудио
-    if (autoBpm || autoOffset) {
-      try {
-        console.log('Starting audio analysis for BPM and Offset...')
-        
-        // Используем дорожку drums для более точного анализа (если доступна)
-        const drumsPath = stemsResult.drums 
-          ? join(process.cwd(), 'public', stemsResult.drums)
-          : undefined
+    // ВСЕГДА анализируем аудио для получения gridMap (даже если BPM/Offset введены вручную)
+    // gridMap нужен для корректного отслеживания битов с учетом мостиков
+    try {
+      console.log('Starting audio analysis for GridMap (and BPM/Offset if needed)...')
+      
+      // Используем новый скрипт analyze-track.py с madmom для полного анализа
+      const analysisResult = await analyzeTrack(filePath, true)
 
-        const analysisResult = await analyzeBpmOffset(
-          filePath,
-          drumsPath
-        )
-
-        // Обновляем только те значения, которые нужно определить автоматически
-        if (autoBpm) {
-          finalBpm = analysisResult.bpm
-          baseBpm = analysisResult.bpm // Сохраняем как базовое
-          console.log(`Auto-detected BPM: ${finalBpm}`)
-        } else {
-          // Если BPM введен вручную, сохраняем его как базовое
-          baseBpm = finalBpm
-        }
-        
-        if (autoOffset) {
-          finalOffset = analysisResult.offset
-          baseOffset = analysisResult.offset // Сохраняем как базовое
-          console.log(`Auto-detected Offset: ${finalOffset}s`)
-        } else {
-          // Если Offset введен вручную, сохраняем его как базовое
-          baseOffset = finalOffset
-        }
-      } catch (error: any) {
-        console.warn('Audio analysis failed, using provided/default values:', error.message)
-        // Если анализ не удался, используем введенные значения как базовые
+      // Обновляем только те значения, которые нужно определить автоматически
+      if (autoBpm) {
+        finalBpm = analysisResult.bpm
+        baseBpm = analysisResult.bpm // Сохраняем как базовое
+        console.log(`Auto-detected BPM: ${finalBpm}`)
+      } else {
+        // Если BPM введен вручную, сохраняем его как базовое
         baseBpm = finalBpm
+      }
+      
+      if (autoOffset) {
+        finalOffset = analysisResult.offset
+        baseOffset = analysisResult.offset // Сохраняем как базовое
+        console.log(`Auto-detected Offset: ${finalOffset}s`)
+      } else {
+        // Если Offset введен вручную, сохраняем его как базовое
         baseOffset = finalOffset
       }
-    } else {
-      // Если все введено вручную, сохраняем как базовые значения
+
+      // ВСЕГДА сохраняем gridMap (если доступен) - он нужен для beat tracking
+      if (analysisResult.gridMap) {
+        gridMap = analysisResult.gridMap
+        console.log(`Detected gridMap with ${analysisResult.gridMap.grid.length} sections`)
+      } else {
+        console.warn('GridMap not available in analysis result')
+      }
+    } catch (error: any) {
+      console.warn('Audio analysis failed, using provided/default values:', error.message)
+      // Если анализ не удался, используем введенные значения как базовые
       baseBpm = finalBpm
       baseOffset = finalOffset
+      // gridMap останется null - будет использован линейный beat tracking
     }
 
     // Импортируем Prisma динамически
@@ -164,6 +165,7 @@ export async function POST(request: NextRequest) {
         pathBass: stemsResult.bass,
         pathOther: stemsResult.other,
         isProcessed: true,
+        gridMap: gridMap ? JSON.parse(JSON.stringify(gridMap)) : null, // Преобразуем в JSON для Prisma
       },
     })
 

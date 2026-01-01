@@ -1,18 +1,21 @@
-'use client'
+"use client";
 
-import { useEffect, useRef, useState } from 'react'
-import { usePlayerStore } from '@/store/playerStore'
-import BeatCounter from '@/components/BeatCounter'
-import PlayerControls from '@/components/PlayerControls'
-import SettingsPanel from '@/components/SettingsPanel'
-import StemsControl from '@/components/StemsControl'
-import TrackInfo from '@/components/TrackInfo'
-import Playlist from '@/components/Playlist'
-import type { Track } from '@/types'
+import { useEffect, useRef, useState } from "react";
+import { usePlayerStore } from "@/store/playerStore";
+// Убран BeatCounter - упрощенный плеер без beat tracking
+import PlayerControls from "@/components/PlayerControls";
+import SettingsPanel from "@/components/SettingsPanel";
+import StemsControl from "@/components/StemsControl";
+import TrackInfo from "@/components/TrackInfo";
+import Playlist from "@/components/Playlist";
+import { audioEngine } from "@/lib/audioEngine";
+import { restoreTrackFromStorage } from "@/store/playerStore";
+import type { Track } from "@/types";
 
 export default function PlaybackPage() {
   const {
     currentTrack,
+    tracks,
     voiceFilter,
     stemsEnabled,
     stemsVolume,
@@ -20,142 +23,195 @@ export default function PlaybackPage() {
     setTracks,
     setIsPlaying,
     playNext,
-  } = usePlayerStore()
+    loadTrack,
+    setAudioEngine,
+    play,
+    pause,
+    stop,
+  } = usePlayerStore();
 
-  const [currentBeat, setCurrentBeat] = useState(0)
-  const [isClient, setIsClient] = useState(false)
-  const audioEngineRef = useRef<any>(null)
+  // Убран currentBeat - упрощенный плеер без beat tracking
+  const [isClient, setIsClient] = useState(false);
 
   // Проверяем, что мы на клиенте
   useEffect(() => {
-    setIsClient(true)
-  }, [])
+    setIsClient(true);
+  }, []);
 
   // Инициализация аудио-движка (только на клиенте)
+  // Store-Driven: Subscribe to onTrackEnd ONCE on mount
   useEffect(() => {
-    if (!isClient || typeof window === 'undefined') return
+    if (!isClient || typeof window === "undefined") return;
 
-    import('@/lib/audioEngine').then((module) => {
-      try {
-        audioEngineRef.current = new module.AudioEngine()
-        audioEngineRef.current.setOnBeatChange((beat: number) => {
-          setCurrentBeat(beat)
-        })
-        audioEngineRef.current.setOnTrackEnd(() => {
-          setIsPlaying(false)
-          playNext()
-        })
-      } catch (error) {
-        console.error('Failed to initialize AudioEngine:', error)
-      }
-    }).catch((error) => {
-      console.error('Failed to load AudioEngine:', error)
-    })
+    try {
+      // Subscribe to onTrackEnd ONCE - store will handle playNext
+      audioEngine.setOnTrackEnd(() => {
+        const { playNext } = usePlayerStore.getState();
+        playNext();
+      });
 
-    return () => {
-      if (audioEngineRef.current) {
-        try {
-          audioEngineRef.current?.destroy()
-        } catch (error) {
-          console.error('Error destroying AudioEngine:', error)
-        }
+      // Save AudioEngine reference in store (for compatibility)
+      setAudioEngine(audioEngine);
+
+      // If track already exists in store, load it via store
+      const { currentTrack: existingTrack, tracks } = usePlayerStore.getState();
+      if (existingTrack) {
+        console.log(
+          "Loading existing track after AudioEngine init:",
+          existingTrack.title
+        );
+        loadTrack(existingTrack);
+      } else if (!existingTrack && tracks.length > 0) {
+        // If no track, load first track
+        console.log("No current track, loading first track:", tracks[0].title);
+        loadTrack(tracks[0]);
       }
+    } catch (error) {
+      console.error("Failed to initialize AudioEngine:", error);
     }
-  }, [isClient, setIsPlaying, playNext])
+
+    // Cleanup: clear callback
+    return () => {
+      try {
+        audioEngine.setOnTrackEnd(null);
+      } catch (error) {
+        console.error("Error cleaning up AudioEngine callback:", error);
+      }
+    };
+  }, [isClient, setAudioEngine, loadTrack]);
 
   // Загрузка треков при монтировании
   useEffect(() => {
-    if (!isClient) return
+    if (!isClient) return;
 
-    let cancelled = false
+    let cancelled = false;
 
-    fetch('/api/tracks')
+    fetch("/api/tracks")
       .then((res) => {
         if (!res.ok) {
           if (res.status === 500) {
-            console.warn('Server returned 500, but continuing...')
-            return res.json().catch(() => [])
+            console.warn("Server returned 500, but continuing...");
+            return res.json().catch(() => []);
           }
-          throw new Error(`HTTP error! status: ${res.status}`)
+          throw new Error(`HTTP error! status: ${res.status}`);
         }
-        return res.json()
+        return res.json();
       })
       .then((data) => {
-        if (cancelled) return
+        if (cancelled) return;
 
         if (Array.isArray(data)) {
-          setTracks(data)
-          if (data.length > 0 && !currentTrack) {
-            setCurrentTrack(data[0])
+          setTracks(data);
+
+          // Всегда пытаемся восстановить трек из localStorage или выбрать первый
+          if (data.length > 0) {
+            // Используем restoreTrackFromStorage для безопасного восстановления
+            // Эта функция автоматически очистит corrupted localStorage
+            const restoredTrack = restoreTrackFromStorage(data);
+
+            // Определяем, какой трек выбрать
+            const trackToLoad: Track | null = restoredTrack || data[0];
+
+            // Загружаем трек, если он отличается от текущего
+            if (
+              trackToLoad &&
+              (!currentTrack || currentTrack.id !== trackToLoad.id)
+            ) {
+              console.log("Loading initial track:", trackToLoad.title);
+              // Используем loadTrack, который автоматически загрузит трек в AudioEngine
+              loadTrack(trackToLoad);
+            }
           }
         } else {
-          console.warn('API returned non-array data:', data)
-          setTracks([])
+          console.warn("API returned non-array data:", data);
+          setTracks([]);
         }
       })
       .catch((error) => {
-        if (cancelled) return
-        console.error('Error loading tracks:', error)
-        setTracks([])
-      })
+        if (cancelled) return;
+        console.error("Error loading tracks:", error);
+        setTracks([]);
+      });
 
     return () => {
-      cancelled = true
-    }
-  }, [isClient, setTracks, setCurrentTrack, currentTrack])
+      cancelled = true;
+    };
+  }, [isClient, setTracks, setCurrentTrack]);
 
-  // Загрузка трека в аудио-движок
-  useEffect(() => {
-    if (currentTrack && audioEngineRef.current) {
-      audioEngineRef.current.loadTrack(currentTrack)
-      audioEngineRef.current.setVoiceFilter(voiceFilter)
-      if (currentTrack.isProcessed) {
-        audioEngineRef.current.setStemsEnabled(stemsEnabled)
-        audioEngineRef.current.setStemsVolume(stemsVolume)
-      }
-    }
-  }, [currentTrack, stemsEnabled, stemsVolume, voiceFilter])
+  // UI Update Loop moved to PlayerControls.tsx to avoid duplication
 
-  // Обновление voice filter
-  useEffect(() => {
-    if (audioEngineRef.current) {
-      audioEngineRef.current.setVoiceFilter(voiceFilter)
-    }
-  }, [voiceFilter])
-
-  // Синхронизация состояния дорожек
-  useEffect(() => {
-    if (audioEngineRef.current && currentTrack?.isProcessed) {
-      audioEngineRef.current.setStemsEnabled(stemsEnabled)
-      audioEngineRef.current.setStemsVolume(stemsVolume)
-    }
-  }, [stemsEnabled, stemsVolume, currentTrack])
+  // Убраны эффекты для voice filter и stems - упрощенный плеер
 
   const handlePlay = () => {
-    console.log('Play clicked', { audioEngine: !!audioEngineRef.current, currentTrack })
-    if (audioEngineRef.current && currentTrack) {
-      console.log('Calling audioEngine.play()')
-      audioEngineRef.current.play()
-      setIsPlaying(true)
+    console.log("Play clicked", {
+      currentTrack,
+    });
+    if (currentTrack) {
+      console.log("Calling play() from store");
+      play(); // Используем метод из store (он сам обновит isPlaying)
     } else {
-      console.warn('Cannot play: audioEngine or currentTrack missing')
+      console.warn("Cannot play: currentTrack missing");
     }
-  }
+  };
 
   const handlePause = () => {
-    if (audioEngineRef.current) {
-      audioEngineRef.current.pause()
-      setIsPlaying(false)
-    }
-  }
+    pause(); // Используем метод из store (он сам обновит isPlaying)
+  };
+
+  const handleStop = () => {
+    stop(); // Используем метод из store (он сам обновит isPlaying и currentTime)
+  };
 
   const handleTrackSelect = (track: Track) => {
-    setCurrentTrack(track)
-    setIsPlaying(false)
-    if (audioEngineRef.current) {
-      audioEngineRef.current.stop()
+    // Use store's loadTrack which includes mandatory Stop logic
+    loadTrack(track);
+    stop(); // Stop playback when manually selecting track
+    // Сохраняем выбранный трек в localStorage (только ID, не весь объект)
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("player-storage");
+        let parsed: { state?: { savedTrackId?: number } } = { state: {} };
+
+        if (stored) {
+          try {
+            parsed = JSON.parse(stored);
+          } catch (parseError) {
+            // localStorage corruption detected - clear it and start fresh
+            console.error(
+              "localStorage corruption in handleTrackSelect, clearing:",
+              parseError
+            );
+            try {
+              localStorage.removeItem("player-storage");
+            } catch (clearError) {
+              console.error(
+                "Failed to clear corrupted localStorage:",
+                clearError
+              );
+            }
+            parsed = { state: {} };
+          }
+        }
+
+        // Ensure state object exists
+        if (!parsed.state) {
+          parsed.state = {};
+        }
+
+        // Save only the track ID (not the entire track object)
+        parsed.state.savedTrackId = track.id;
+        localStorage.setItem("player-storage", JSON.stringify(parsed));
+      } catch (e) {
+        console.warn("Failed to save track to storage:", e);
+        // Try to clear corrupted storage
+        try {
+          localStorage.removeItem("player-storage");
+        } catch (clearError) {
+          console.error("Failed to clear corrupted localStorage:", clearError);
+        }
+      }
     }
-  }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 p-8">
@@ -166,23 +222,25 @@ export default function PlaybackPage() {
           {/* Основная секция - слева */}
           <div className="lg:col-span-2 space-y-6">
             {/* Информация о треке */}
-            <TrackInfo audioEngine={audioEngineRef.current} />
+            <TrackInfo />
 
             {/* Визуализация счета */}
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-              <BeatCounter currentBeat={currentBeat} />
+              {/* Убран BeatCounter - упрощенный плеер без beat tracking */}
             </div>
 
             {/* Управление воспроизведением */}
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               {isClient ? (
                 <PlayerControls
-                  audioEngine={audioEngineRef.current}
                   onPlay={handlePlay}
                   onPause={handlePause}
+                  onStop={handleStop}
                 />
               ) : (
-                <div className="text-center py-8 text-gray-400">Загрузка...</div>
+                <div className="text-center py-8 text-gray-400">
+                  Загрузка...
+                </div>
               )}
             </div>
 
@@ -194,7 +252,7 @@ export default function PlaybackPage() {
             {/* Управление дорожками (только для обработанных треков) */}
             {isClient && currentTrack?.isProcessed && (
               <div className="bg-gray-800 rounded-lg border border-gray-700">
-                <StemsControl audioEngine={audioEngineRef.current} />
+                <StemsControl />
               </div>
             )}
           </div>
@@ -213,6 +271,5 @@ export default function PlaybackPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
-
