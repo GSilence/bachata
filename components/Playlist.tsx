@@ -146,6 +146,11 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                 )}
                 <div className={`text-xs mt-1 ${isActive ? 'text-purple-200' : 'text-gray-500'}`}>
                   BPM: {track.bpm} • {track.isFree ? 'Free' : 'Pro'}
+                  {track.isProcessed && (
+                    <span className="ml-2 text-green-400" title="Stems обработаны">
+                      🎵
+                    </span>
+                  )}
                 </div>
               </button>
             )

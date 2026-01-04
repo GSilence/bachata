@@ -1,6 +1,9 @@
 import { Howl, Howler } from "howler";
 import type { Track, GridMap, Beat } from "@/types";
-import { generateFallbackBeatGrid } from "./beatGrid";
+import {
+  generateFallbackBeatGrid,
+  generateBeatGridFromDownbeats,
+} from "./beatGrid";
 
 export class AudioEngine {
   // Singleton instance
@@ -58,6 +61,8 @@ export class AudioEngine {
   private onTrackEnd: (() => void) | null = null;
   // NEW: Callback для обновления прогресс-бара UI синхронно с движком
   private onTimeUpdate: ((currentTime: number) => void) | null = null;
+  // Callback для обновления текущего бита в UI
+  private onBeatUpdate: ((beatNumber: number) => void) | null = null;
 
   private trackEndFired: boolean = false;
 
@@ -70,6 +75,11 @@ export class AudioEngine {
   private beatGrid: Beat[] = [];
   private currentBeatIndex: number = 0;
   private updateAnimationFrameId: number | null = null;
+  private updateIntervalId: NodeJS.Timeout | null = null; // Для работы в фоне (неактивная вкладка)
+  private lastSectionCheckTime: number = -1; // Для отслеживания проверки секций
+
+  // Voice filter для управления воспроизведением голоса
+  private voiceFilter: "mute" | "on1" | "on1and5" | "full" = "full";
 
   // Voice count files
   private voiceFiles: Map<number, Howl> = new Map();
@@ -80,6 +90,11 @@ export class AudioEngine {
   }
 
   private preloadVoiceFiles() {
+    // Пропускаем загрузку на сервере (SSR) - Howl.js работает только в браузере
+    if (typeof window === "undefined") {
+      return;
+    }
+
     for (let i = 1; i <= 8; i++) {
       const voicePath = `/audio/voice/${i}.mp3`;
       const howl = new Howl({
@@ -133,14 +148,33 @@ export class AudioEngine {
     this.currentBeatIndex = 0;
     this._isPlaying = false; // Reset playing state
 
-    // 3. Beat Grid
-    if (track.beatGrid && track.beatGrid.length > 0) {
+    // 3. Beat Grid - генерируем из gridMap если есть, иначе используем fallback
+    if (track.gridMap && track.gridMap.grid && track.gridMap.grid.length > 0) {
+      // Используем gridMap для генерации точного beatGrid с учетом мостиков
+      // Получаем длительность трека (будет обновлена после загрузки аудио)
+      const estimatedDuration = 180; // Временная оценка, будет обновлена после загрузки
+      this.beatGrid = generateBeatGridFromDownbeats(
+        track.gridMap,
+        estimatedDuration
+      );
+      console.log(
+        `[AudioEngine] Generated beatGrid from gridMap: ${this.beatGrid.length} beats, ${track.gridMap.grid.length} sections`
+      );
+    } else if (track.beatGrid && track.beatGrid.length > 0) {
+      // Используем предварительно сгенерированный beatGrid (если есть)
       this.beatGrid = track.beatGrid;
+      console.log(
+        `[AudioEngine] Using pre-generated beatGrid: ${this.beatGrid.length} beats`
+      );
     } else {
+      // Fallback: генерируем простой beatGrid без учета мостиков
       const estimatedDuration = 180;
       const bpm = track.bpm || 120;
       const offset = track.offset || 0;
       this.beatGrid = generateFallbackBeatGrid(bpm, offset, estimatedDuration);
+      console.log(
+        `[AudioEngine] Using fallback beatGrid: ${this.beatGrid.length} beats`
+      );
     }
 
     this.buildBeatMap(track);
@@ -171,6 +205,33 @@ export class AudioEngine {
   }
 
   private loadStems(track: Track) {
+    // После загрузки стемов обновляем beatGrid с правильной длительностью
+    const updateBeatGridAfterLoad = () => {
+      if (this.currentTrack?.gridMap) {
+        // Используем длительность из vocals (или другого доступного стема)
+        let duration = 0;
+        if (this.stemsTracks.vocals) {
+          duration = this.stemsTracks.vocals.duration();
+        } else if (this.stemsTracks.drums) {
+          duration = this.stemsTracks.drums.duration();
+        } else if (this.stemsTracks.bass) {
+          duration = this.stemsTracks.bass.duration();
+        } else if (this.stemsTracks.other) {
+          duration = this.stemsTracks.other.duration();
+        }
+
+        if (duration && duration > 0) {
+          // Регенерируем beatGrid с правильной длительностью
+          this.beatGrid = generateBeatGridFromDownbeats(
+            this.currentTrack.gridMap,
+            duration
+          );
+          console.log(
+            `[AudioEngine] Updated beatGrid with actual duration from stems: ${duration}s, ${this.beatGrid.length} beats`
+          );
+        }
+      }
+    };
     if (
       !track.pathVocals ||
       !track.pathDrums ||
@@ -182,6 +243,9 @@ export class AudioEngine {
       return;
     }
 
+    let loadedStemsCount = 0;
+    const totalStems = 4;
+
     const createStem = (
       src: string,
       volume: number,
@@ -192,6 +256,13 @@ export class AudioEngine {
         html5: true,
         preload: true,
         volume: (this.musicVolume / 100) * (volume / 100) * (enabled ? 1 : 0),
+        onload: () => {
+          loadedStemsCount++;
+          // После загрузки всех стемов обновляем beatGrid
+          if (loadedStemsCount === totalStems) {
+            updateBeatGridAfterLoad();
+          }
+        },
         onloaderror: (id, error) => {
           console.error(`Howl load error for stem ${src}:`, error);
         },
@@ -423,6 +494,46 @@ export class AudioEngine {
     return 0;
   }
 
+  isTrackLoaded(): boolean {
+    if (!this.currentTrack) return false;
+
+    if (this.isStemsMode && this.currentTrack.isProcessed) {
+      // Проверяем, что все стемы загружены
+      return !!(
+        this.stemsTracks.vocals &&
+        this.stemsTracks.drums &&
+        this.stemsTracks.bass &&
+        this.stemsTracks.other
+      );
+    } else {
+      // Проверяем, что основной трек загружен
+      return !!this.musicTrack;
+    }
+  }
+
+  /**
+   * Получает текущий номер бита (1-8) для отображения в UI
+   * Возвращает номер бита из beatGrid на основе текущего времени
+   */
+  getCurrentBeat(): number {
+    if (this.beatGrid.length === 0) {
+      return 1; // По умолчанию
+    }
+
+    const currentTime = this.getCurrentTime();
+
+    // Находим ближайший прошедший бит
+    for (let i = this.beatGrid.length - 1; i >= 0; i--) {
+      const beat = this.beatGrid[i];
+      if (beat.time <= currentTime) {
+        return beat.number;
+      }
+    }
+
+    // Если не нашли, возвращаем первый бит
+    return this.beatGrid[0]?.number || 1;
+  }
+
   seek(time: number) {
     const dur = this.getDuration();
     if (dur === 0) return;
@@ -546,6 +657,10 @@ export class AudioEngine {
     this.voiceFiles.forEach((howl) => howl.volume(this.voiceVolume / 100));
   }
 
+  setVoiceFilter(filter: "mute" | "on1" | "on1and5" | "full") {
+    this.voiceFilter = filter;
+  }
+
   // === Callbacks ===
 
   setOnTrackEnd(callback: (() => void) | null) {
@@ -558,6 +673,14 @@ export class AudioEngine {
    */
   setOnTimeUpdate(callback: ((time: number) => void) | null) {
     this.onTimeUpdate = callback;
+  }
+
+  /**
+   * Устанавливает callback для обновления текущего бита.
+   * Вызывается при каждом новом бите для синхронизации UI счетчика.
+   */
+  setOnBeatUpdate(callback: ((beatNumber: number) => void) | null) {
+    this.onBeatUpdate = callback;
   }
 
   // === Internal Logic ===
@@ -593,7 +716,14 @@ export class AudioEngine {
       this.onTimeUpdate(currentTime);
     }
 
-    // 2. Обработка битов (Voice Counting)
+    // 2. Проверка секций (Bridge/Verse) для корректировки счетчика
+    // Проверяем каждые 0.5 секунды, чтобы не перегружать систему
+    if (currentTime - this.lastSectionCheckTime > 0.5) {
+      this.checkAndCorrectSectionAlignment(currentTime);
+      this.lastSectionCheckTime = currentTime;
+    }
+
+    // 3. Обработка битов (Voice Counting)
     if (this.beatGrid.length > 0) {
       while (
         this.currentBeatIndex < this.beatGrid.length &&
@@ -602,6 +732,10 @@ export class AudioEngine {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
           this.playVoiceCount(beat.number);
+          // Уведомляем UI о новом бите
+          if (this.onBeatUpdate) {
+            this.onBeatUpdate(beat.number);
+          }
         }
         this.currentBeatIndex++;
       }
@@ -614,6 +748,10 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         this.playVoiceCount(beat.number);
+        // Уведомляем UI о новом бите
+        if (this.onBeatUpdate) {
+          this.onBeatUpdate(beat.number);
+        }
         this.currentBeatIndex++;
       }
     } else {
@@ -626,12 +764,123 @@ export class AudioEngine {
       }
     }
 
-    // Continue loop
-    this.updateAnimationFrameId = requestAnimationFrame(() => this.update());
+    // Continue loop - setInterval уже запущен в startUpdate()
+    // Не нужно создавать новый интервал здесь
+  }
+
+  /**
+   * Проверяет и корректирует выравнивание счетчика на границах секций
+   * Это ключевая функция для "неубиваемого" счетчика
+   *
+   * Логика:
+   * - Если мы находимся в начале новой секции (Verse/Bridge)
+   * - И текущий счетчик показывает не "1"
+   * - То корректируем счетчик на "1"
+   * - НО только если секция достаточно длинная (минимум 4-8 beats)
+   *
+   * IMPORTANT: Works with ANY number of sections and ANY BPM values.
+   * No hardcoded assumptions about specific track characteristics.
+   *
+   * FIX: Игнорируем микро-секции (короче 4 beats) - они не должны вызывать коррекцию,
+   * так как это либо ошибка анализа, либо короткая сбивка, а не реальная граница фразы.
+   */
+  private checkAndCorrectSectionAlignment(currentTime: number) {
+    if (!this.currentTrack?.gridMap?.grid || this.beatGrid.length === 0) {
+      return; // Нет данных о секциях
+    }
+
+    const sections = this.currentTrack.gridMap.grid;
+    const bpm = this.currentTrack.gridMap.bpm || this.currentTrack.bpm || 120;
+    const beatInterval = 60 / bpm;
+
+    // Минимальная длина секции для коррекции (в beats)
+    // В бачате секция не может быть короче 4 beats (минимум один такт)
+    // Обычно секции кратны 8 beats (полный цикл танца)
+    const MIN_SECTION_BEATS_FOR_CORRECTION = 4;
+
+    // Проверяем каждую секцию
+    for (const section of sections) {
+      const sectionStart = section.start;
+      const tolerance = 0.2; // Допуск 0.2 секунды
+
+      // ПРОПУСКАЕМ микро-секции - они не должны вызывать коррекцию
+      if (section.beats < MIN_SECTION_BEATS_FOR_CORRECTION) {
+        // Это микро-секция, игнорируем её для коррекции
+        continue;
+      }
+
+      // Если мы находимся в начале секции (в пределах tolerance)
+      if (Math.abs(currentTime - sectionStart) < tolerance) {
+        // Находим текущий beat в beatGrid
+        const currentBeat = this.beatGrid[this.currentBeatIndex];
+
+        if (currentBeat && currentBeat.number !== 1) {
+          // Секция должна начинаться с "1", но счетчик показывает другое число
+          // Это реальная граница фразы (секция достаточно длинная)
+          console.log(
+            `[Section Correction] ${section.type} section starts at ${sectionStart}s ` +
+              `(${section.beats} beats), counter shows ${currentBeat.number}. Correcting to 1.`
+          );
+
+          // Находим ближайший beat к началу секции и корректируем его
+          let corrected = false;
+          for (let i = 0; i < this.beatGrid.length; i++) {
+            const beat = this.beatGrid[i];
+            if (Math.abs(beat.time - sectionStart) < tolerance) {
+              // Корректируем этот beat и последующие beats в секции
+              const sectionEnd = sectionStart + section.beats * beatInterval;
+              let beatNum = 1;
+
+              for (let j = i; j < this.beatGrid.length; j++) {
+                const secBeat = this.beatGrid[j];
+                if (
+                  secBeat.time >= sectionStart &&
+                  secBeat.time <= sectionEnd
+                ) {
+                  secBeat.number = beatNum;
+                  beatNum = (beatNum % 8) + 1;
+                } else if (secBeat.time > sectionEnd) {
+                  break;
+                }
+              }
+
+              corrected = true;
+              break;
+            }
+          }
+
+          if (corrected) {
+            // Синхронизируем currentBeatIndex с текущим временем
+            this.syncBeatCursor(currentTime);
+          }
+        }
+      }
+    }
   }
 
   private playVoiceCount(beatNumber: number) {
     if (beatNumber < 1 || beatNumber > 8) return;
+
+    // Применяем voice filter
+    let shouldPlay = false;
+
+    switch (this.voiceFilter) {
+      case "mute":
+        shouldPlay = false;
+        break;
+      case "on1":
+        shouldPlay = beatNumber === 1;
+        break;
+      case "on1and5":
+        shouldPlay = beatNumber === 1 || beatNumber === 5;
+        break;
+      case "full":
+        shouldPlay = true;
+        break;
+    }
+
+    if (!shouldPlay) return;
+
     const voiceFile = this.voiceFiles.get(beatNumber);
     if (voiceFile) {
       // Опционально: не прерывать, если голос тот же, но здесь лучше прерывать для четкости
@@ -641,14 +890,45 @@ export class AudioEngine {
   }
 
   private startUpdate() {
-    if (this.updateAnimationFrameId !== null) return;
-    this.updateAnimationFrameId = requestAnimationFrame(() => this.update());
+    // Используем setInterval для работы в фоне (неактивная вкладка)
+    if (this.updateIntervalId !== null) return;
+
+    // Проверяем видимость страницы для оптимизации частоты обновлений
+    const interval =
+      typeof document !== "undefined" && document.hidden ? 50 : 16;
+    this.updateIntervalId = setInterval(() => this.update(), interval);
+
+    // Также слушаем изменения видимости для оптимизации частоты обновлений
+    if (typeof document !== "undefined" && !this.visibilityHandler) {
+      const handleVisibilityChange = () => {
+        if (this.updateIntervalId !== null && this._isPlaying) {
+          clearInterval(this.updateIntervalId);
+          this.updateIntervalId = null;
+          // Перезапускаем с новой частотой
+          const newInterval = document.hidden ? 50 : 16;
+          this.updateIntervalId = setInterval(() => this.update(), newInterval);
+        }
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      this.visibilityHandler = handleVisibilityChange;
+    }
   }
 
+  private visibilityHandler: (() => void) | null = null;
+
   private stopUpdate() {
+    if (this.updateIntervalId !== null) {
+      clearInterval(this.updateIntervalId);
+      this.updateIntervalId = null;
+    }
     if (this.updateAnimationFrameId !== null) {
       cancelAnimationFrame(this.updateAnimationFrameId);
       this.updateAnimationFrameId = null;
+    }
+    // Удаляем обработчик видимости
+    if (this.visibilityHandler && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
     }
   }
 
@@ -657,7 +937,11 @@ export class AudioEngine {
     this.unloadTrack();
     this.onTrackEnd = null;
     this.onTimeUpdate = null;
+    this.onBeatUpdate = null;
   }
 }
 
+// Экспортируем экземпляр AudioEngine
+// Примечание: preloadVoiceFiles() проверяет наличие window,
+// поэтому ошибки загрузки на сервере не будут возникать
 export const audioEngine = AudioEngine.getInstance();

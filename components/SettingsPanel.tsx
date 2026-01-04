@@ -25,20 +25,24 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-component="settings-panel">
       {!showOnlyVoiceFilter && !showOnlyPlayMode && (
         <h2 className="text-xl font-semibold mb-4 text-white">Настройки</h2>
       )}
 
       {/* Mode Selection */}
       {(!showOnlyVoiceFilter || showOnlyPlayMode) && (
-        <div>
+        <div data-setting="play-mode">
           <label className="block text-sm font-medium text-gray-400 mb-2">
             Mode (Режим воспроизведения)
           </label>
           <div className="space-y-2">
             {playModes.map((mode) => (
-              <label key={mode.value} className="flex items-center cursor-pointer hover:text-white">
+              <label 
+                key={mode.value} 
+                className="flex items-center cursor-pointer hover:text-white"
+                data-option={mode.value}
+              >
                 <input
                   type="radio"
                   name="playMode"
@@ -56,13 +60,17 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
 
       {/* Voice Filter Selection */}
       {(!showOnlyPlayMode || showOnlyVoiceFilter) && (
-        <div>
+        <div data-setting="voice-filter">
           <label className="block text-sm font-medium text-gray-400 mb-2">
             Voice Filter (Режим озвучки)
           </label>
           <div className="space-y-2">
             {voiceFilters.map((filter) => (
-              <label key={filter.value} className="flex items-center cursor-pointer hover:text-white">
+              <label 
+                key={filter.value} 
+                className="flex items-center cursor-pointer hover:text-white"
+                data-option={filter.value}
+              >
                 <input
                   type="radio"
                   name="voiceFilter"

@@ -77,7 +77,10 @@ export default function TrackInfo({}: TrackInfoProps) {
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+    <div 
+      className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+      data-component="track-info"
+    >
       {/* Название и исполнитель */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-white mb-1">

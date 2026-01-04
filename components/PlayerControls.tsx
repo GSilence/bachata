@@ -96,7 +96,10 @@ export default function PlayerControls({
   const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="space-y-6">
+    <div 
+      className="space-y-6"
+      data-component="player-controls"
+    >
       {/* Play/Pause/Stop Buttons */}
       <div className="flex justify-center items-center gap-4">
         <button

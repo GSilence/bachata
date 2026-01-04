@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "@/store/playerStore";
-// Убран BeatCounter - упрощенный плеер без beat tracking
+import BeatCounter from "@/components/BeatCounter";
 import PlayerControls from "@/components/PlayerControls";
 import SettingsPanel from "@/components/SettingsPanel";
 import StemsControl from "@/components/StemsControl";
@@ -30,8 +30,8 @@ export default function PlaybackPage() {
     stop,
   } = usePlayerStore();
 
-  // Убран currentBeat - упрощенный плеер без beat tracking
   const [isClient, setIsClient] = useState(false);
+  const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
 
   // Проверяем, что мы на клиенте
   useEffect(() => {
@@ -171,9 +171,29 @@ export default function PlaybackPage() {
     };
   }, [isClient, setTracks, setCurrentTrack, loadTrack]);
 
-  // UI Update Loop moved to PlayerControls.tsx to avoid duplication
+  // Подписка на обновления битов через callback
+  useEffect(() => {
+    if (!isClient) return;
 
-  // Убраны эффекты для voice filter и stems - упрощенный плеер
+    // Устанавливаем callback для обновления бита
+    audioEngine.setOnBeatUpdate((beatNumber) => {
+      setCurrentBeat(beatNumber);
+    });
+
+    // Также обновляем при загрузке трека
+    const initialBeat = audioEngine.getCurrentBeat();
+    setCurrentBeat(initialBeat);
+
+    return () => {
+      audioEngine.setOnBeatUpdate(null);
+    };
+  }, [isClient]);
+
+  // Синхронизация voiceFilter с audioEngine
+  useEffect(() => {
+    if (!isClient) return;
+    audioEngine.setVoiceFilter(voiceFilter);
+  }, [isClient, voiceFilter]);
 
   const handlePlay = () => {
     console.log("Play clicked", {
@@ -206,13 +226,14 @@ export default function PlaybackPage() {
         let parsed: { state?: { savedTrackId?: number } } = { state: {} };
 
         if (stored) {
-          try {
-            parsed = JSON.parse(stored);
-          } catch (parseError) {
-            // localStorage corruption detected - clear it and start fresh
-            console.error(
-              "localStorage corruption in handleTrackSelect, clearing:",
-              parseError
+          // Проверяем, что это валидная JSON строка, а не [object Object]
+          // localStorage.getItem всегда возвращает string | null, но может быть "[object Object]"
+          if (
+            stored === "[object Object]" ||
+            stored.trim() === "[object Object]"
+          ) {
+            console.warn(
+              "localStorage содержит невалидные данные '[object Object]', очищаем..."
             );
             try {
               localStorage.removeItem("player-storage");
@@ -223,6 +244,25 @@ export default function PlaybackPage() {
               );
             }
             parsed = { state: {} };
+          } else {
+            try {
+              parsed = JSON.parse(stored);
+            } catch (parseError) {
+              // localStorage corruption detected - clear it and start fresh
+              console.error(
+                "localStorage corruption in handleTrackSelect, clearing:",
+                parseError
+              );
+              try {
+                localStorage.removeItem("player-storage");
+              } catch (clearError) {
+                console.error(
+                  "Failed to clear corrupted localStorage:",
+                  clearError
+                );
+              }
+              parsed = { state: {} };
+            }
           }
         }
 
@@ -255,15 +295,29 @@ export default function PlaybackPage() {
           {/* Основная секция - слева */}
           <div className="lg:col-span-2 space-y-6">
             {/* Информация о треке */}
-            <TrackInfo />
+            <div data-block="track-info">
+              <TrackInfo />
+            </div>
 
             {/* Визуализация счета */}
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-              {/* Убран BeatCounter - упрощенный плеер без beat tracking */}
+            <div
+              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              data-block="beat-counter"
+            >
+              {isClient ? (
+                <BeatCounter currentBeat={currentBeat - 1} />
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  Загрузка...
+                </div>
+              )}
             </div>
 
             {/* Управление воспроизведением */}
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div
+              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              data-block="player-controls"
+            >
               {isClient ? (
                 <PlayerControls
                   onPlay={handlePlay}
@@ -278,26 +332,38 @@ export default function PlaybackPage() {
             </div>
 
             {/* Режим озвучки (под Voice Volume) */}
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div
+              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              data-block="voice-filter"
+            >
               <SettingsPanel showOnlyVoiceFilter />
             </div>
 
-            {/* Управление дорожками (только для обработанных треков) */}
-            {isClient && currentTrack?.isProcessed && (
-              <div className="bg-gray-800 rounded-lg border border-gray-700">
+            {/* Управление дорожками */}
+            {isClient && currentTrack && (
+              <div
+                className="bg-gray-800 rounded-lg border border-gray-700"
+                data-block="stems-control"
+              >
                 <StemsControl />
               </div>
             )}
           </div>
 
           {/* Боковая панель - справа */}
-          <div className="space-y-6">
+          <div className="space-y-6" data-block="sidebar">
             {/* Плейлист и настройки воспроизведения */}
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div
+              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              data-block="play-mode"
+            >
               <SettingsPanel showOnlyPlayMode />
             </div>
 
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div
+              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              data-block="playlist"
+            >
               <Playlist onTrackSelect={handleTrackSelect} />
             </div>
           </div>

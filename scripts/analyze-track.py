@@ -4,22 +4,65 @@
 Заменяет старый analyze-bpm-offset.py
 """
 
+# ВАЖНО: Патчи должны применяться ДО ВСЕХ импортов, включая numpy и scipy!
 import sys
-import json
-import numpy as np
-from scipy import signal
-import librosa
+import os
+import collections
+import collections.abc
 
+# Патч 1: Python 3.10+ - добавляем обратную совместимость для collections
+# Должен быть применен ДО импорта madmom, так как madmom использует эти классы
+if sys.version_info >= (3, 10):
+    if not hasattr(collections, 'MutableSequence'):
+        collections.MutableSequence = collections.abc.MutableSequence
+    if not hasattr(collections, 'MutableMapping'):
+        collections.MutableMapping = collections.abc.MutableMapping
+    if not hasattr(collections, 'Mapping'):
+        collections.Mapping = collections.abc.Mapping
+    if not hasattr(collections, 'Sequence'):
+        collections.Sequence = collections.abc.Sequence
+    if not hasattr(collections, 'Iterable'):
+        collections.Iterable = collections.abc.Iterable
+    if not hasattr(collections, 'Iterator'):
+        collections.Iterator = collections.abc.Iterator
+    if not hasattr(collections, 'Callable'):
+        collections.Callable = collections.abc.Callable
+
+# Патч 2: NumPy 1.20+ - добавляем обратную совместимость для np.float, np.int, np.bool
+# Должен быть применен ДО импорта madmom, так как madmom использует эти типы при импорте
+import numpy as np
+import warnings
+
+# Подавляем предупреждение о np.bool и применяем патч
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", FutureWarning)
+    if not hasattr(np, 'float'):
+        np.float = np.float64
+    if not hasattr(np, 'int'):
+        np.int = np.int64
+    if not hasattr(np, 'bool'):
+        np.bool = np.bool_
+    if not hasattr(np, 'complex'):
+        np.complex = np.complex128
+
+# Теперь можно импортировать остальные модули
+import json
+from scipy import signal
+
+import librosa  # Используется только для загрузки аудио
+
+# Импорт madmom (обязателен)
 try:
-    from madmom.features.beats import RNNDownBeatProcessor, DBNBeatTrackingProcessor
+    from madmom.features import RNNDownBeatProcessor
+    from madmom.features.beats import DBNBeatTrackingProcessor
+    from madmom.features.downbeats import DBNDownBeatTrackingProcessor
     from madmom.audio.signal import SignalProcessor, FramedSignalProcessor
     from madmom.audio.stft import ShortTimeFourierTransformProcessor
     from madmom.audio.spectrogram import LogarithmicSpectrogramProcessor
     from madmom.features.onsets import OnsetPeakPickingProcessor
-    MADMOM_AVAILABLE = True
-except ImportError:
-    MADMOM_AVAILABLE = False
-    print("Warning: madmom not available, falling back to librosa", file=sys.stderr)
+except ImportError as e:
+    print(f"Error: madmom is required but not available: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def calculate_rms(audio_data, sample_rate, start_time, end_time):
@@ -151,7 +194,43 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
             "beats": total_beats
         })
     
-    return grid
+    # ФИЛЬТРАЦИЯ МИКРО-СЕКЦИЙ
+    # В бачате музыкальная фраза (секция) не может быть короче 4 beats (минимум)
+    # Обычно секции кратны 8 beats (полный цикл танца)
+    # Игнорируем секции короче 4 beats - это либо ошибка анализа, либо короткая сбивка
+    MIN_SECTION_BEATS = 4  # Минимальная длина секции в beats
+    
+    filtered_grid = []
+    for section in grid:
+        if section['beats'] >= MIN_SECTION_BEATS:
+            filtered_grid.append(section)
+        else:
+            # Микро-секция: объединяем с предыдущей или следующей
+            print(f"  ⚠ Filtering out micro-section: {section['type']} at {section['start']:.2f}s, "
+                  f"only {section['beats']} beats (minimum is {MIN_SECTION_BEATS})", file=sys.stderr)
+            
+            # Если есть предыдущая секция, увеличиваем её длительность
+            if filtered_grid:
+                # Увеличиваем предыдущую секцию, чтобы покрыть микро-секцию
+                prev_section = filtered_grid[-1]
+                section_duration = section['beats'] * (60.0 / bpm)
+                prev_section['beats'] += section['beats']
+                print(f"    → Merged into previous {prev_section['type']} section", file=sys.stderr)
+            # Если нет предыдущей, просто пропускаем (начнем с следующей)
+    
+    # Если после фильтрации осталась только одна секция или ничего, создаем одну verse
+    if len(filtered_grid) <= 1:
+        duration = len(audio_data) / sample_rate
+        total_beats = int(round(duration * bpm / 60.0))
+        filtered_grid = [{
+            "type": "verse",
+            "start": 0.0,
+            "beats": total_beats
+        }]
+        print(f"  ⚠ After filtering, only {len(filtered_grid)} section(s) left. "
+              f"Using single verse section for entire track.", file=sys.stderr)
+    
+    return filtered_grid
 
 
 def analyze_track_with_madmom(audio_path):
@@ -162,33 +241,139 @@ def analyze_track_with_madmom(audio_path):
         dict с ключами 'bpm', 'offset', 'grid'
     """
     try:
-        # Загружаем аудио
-        y, sr = librosa.load(audio_path, sr=None)
+        # Загружаем аудио в моно (mono=True по умолчанию в librosa)
+        y, sr = librosa.load(audio_path, sr=None, mono=True)
         duration = len(y) / sr
         
         print(f"Analyzing track with madmom: {audio_path}", file=sys.stderr)
         print(f"Duration: {duration:.2f}s, Sample rate: {sr}Hz", file=sys.stderr)
+        print(f"Audio shape: {y.shape}, Channels: {'mono' if y.ndim == 1 else 'stereo'}", file=sys.stderr)
         
-        # Создаем процессоры для детекции downbeats
-        downbeat_processor = RNNDownBeatProcessor()
-        beat_processor = DBNBeatTrackingProcessor(fps=100)
+        # Убеждаемся, что аудио в моно (1D массив)
+        if y.ndim > 1:
+            # Если все еще стерео, конвертируем в моно
+            y = np.mean(y, axis=0)
+            print("Converted stereo to mono", file=sys.stderr)
         
-        # Обрабатываем аудио
-        act = downbeat_processor(audio_path)
-        beats = beat_processor(act)
+        # Madmom процессоры ожидают путь к файлу, но могут загрузить стерео
+        # Создаем временный моно файл для madmom
+        import tempfile
+        import soundfile as sf
+        
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        
+        # Сохраняем моно аудио во временный файл
+        sf.write(tmp_path, y, sr)
+        print(f"Created temporary mono file: {tmp_path}", file=sys.stderr)
+        
+        try:
+            # Создаем процессоры для детекции downbeats
+            downbeat_processor = RNNDownBeatProcessor()
+            
+            print("=" * 80, file=sys.stderr)
+            print("MADMOM ANALYSIS - Processing audio file...", file=sys.stderr)
+            print("=" * 80, file=sys.stderr)
+            
+            # Обрабатываем аудио через временный моно файл
+            print("Step 1: Running RNNDownBeatProcessor...", file=sys.stderr)
+            act = downbeat_processor(tmp_path)
+            # act - это numpy array с activation function
+            # Форма: (frames, 2) где:
+            #   - Первая колонка (act[:, 0]) - activation для beats
+            #   - Вторая колонка (act[:, 1]) - activation для downbeats
+            print(f"  ✓ Activation function shape: {act.shape}", file=sys.stderr)
+            print(f"  ✓ Activation function dtype: {act.dtype}", file=sys.stderr)
+            if act.size > 0:
+                print(f"  ✓ Activation range: [{act.min():.4f}, {act.max():.4f}]", file=sys.stderr)
+                print(f"  ✓ Activation mean: {act.mean():.4f}", file=sys.stderr)
+                if len(act.shape) == 2:
+                    print(f"  ✓ Activation frames: {act.shape[0]}, labels: {act.shape[1]}", file=sys.stderr)
+                    print(f"  ✓ Beat activation (col 0) range: [{act[:, 0].min():.4f}, {act[:, 0].max():.4f}]", file=sys.stderr)
+                    print(f"  ✓ Downbeat activation (col 1) range: [{act[:, 1].min():.4f}, {act[:, 1].max():.4f}]", file=sys.stderr)
+            
+            print("Step 2: Running DBNBeatTrackingProcessor for beats...", file=sys.stderr)
+            # Используем первую колонку activation (beats) для beat tracking
+            beat_processor = DBNBeatTrackingProcessor(fps=100)
+            beat_times = beat_processor(act[:, 0])  # Используем только beat activation (первая колонка)
+            print(f"  ✓ Detected {len(beat_times)} beats", file=sys.stderr)
+            
+            print("Step 2b: Assigning labels to beats (1=downbeat, 2-4=other)...", file=sys.stderr)
+            # Используем downbeat activation для определения downbeats
+            # Находим пики в downbeat activation и сопоставляем их с beat times
+            from scipy.signal import find_peaks
+            
+            fps = 100  # FPS из RNNDownBeatProcessor
+            downbeat_act = act[:, 1]
+            
+            # Находим пики в downbeat activation
+            # Используем адаптивный порог
+            threshold = np.percentile(downbeat_act, 70)  # Верхние 30% значений
+            min_distance = max(10, int(fps * 0.5))  # Минимум 0.5 секунды между downbeats
+            peaks, properties = find_peaks(downbeat_act, height=threshold, distance=min_distance)
+            print(f"  ✓ Found {len(peaks)} downbeat peaks in activation", file=sys.stderr)
+            
+            # Преобразуем пики во времена
+            peak_times = peaks / fps
+            
+            # Создаем массив beats с метками
+            beats = []
+            for i, beat_time in enumerate(beat_times):
+                # Проверяем, является ли этот beat downbeat (близок к пику)
+                is_downbeat = False
+                for peak_time in peak_times:
+                    if abs(beat_time - peak_time) < 0.1:  # В пределах 0.1 секунды
+                        is_downbeat = True
+                        break
+                
+                if is_downbeat:
+                    label = 1  # Downbeat
+                else:
+                    # Определяем метку на основе позиции в такте (2-4)
+                    # Находим ближайший предыдущий downbeat
+                    prev_downbeats = [pt for pt in peak_times if pt < beat_time]
+                    if prev_downbeats:
+                        last_downbeat = max(prev_downbeats)
+                        # Вычисляем позицию в такте (предполагаем 4/4)
+                        beats_since_downbeat = (beat_time - last_downbeat) * (120 / 60)  # Предполагаем 120 BPM
+                        label = int((beats_since_downbeat % 4) + 1)
+                        if label == 1:
+                            label = 2  # Если получилось 1, значит это не downbeat, делаем 2
+                    else:
+                        # Если нет предыдущих downbeats, используем простой паттерн
+                        label = ((i % 4) + 1)
+                
+                beats.append((float(beat_time), int(label)))
+            
+            print(f"  ✓ Created {len(beats)} beats with labels", file=sys.stderr)
+        finally:
+            # Удаляем временный файл
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
         
         # Извлекаем downbeats (сильные доли) и обычные beats
         # beats содержит пары (время, метка), где метка 1 = сильная доля, 2-4 = остальные
         downbeats = []
         all_beats = []
+        beat_labels_count = {1: 0, 2: 0, 3: 0, 4: 0}
         
+        print("\nStep 3: Extracting beats and downbeats...", file=sys.stderr)
         for beat_time, beat_label in beats:
-            all_beats.append(beat_time)
+            all_beats.append(float(beat_time))
+            if beat_label in beat_labels_count:
+                beat_labels_count[beat_label] += 1
             if beat_label == 1:  # Сильная доля (единица)
-                downbeats.append(beat_time)
+                downbeats.append(float(beat_time))
+        
+        print(f"  ✓ Beat labels distribution:", file=sys.stderr)
+        for label, count in sorted(beat_labels_count.items()):
+            label_name = "Downbeat (1)" if label == 1 else f"Beat ({label})"
+            print(f"    - {label_name}: {count} beats", file=sys.stderr)
         
         if len(downbeats) == 0:
-            print("Warning: No downbeats detected, using all beats", file=sys.stderr)
+            print("  ⚠ Warning: No downbeats detected, using every 4th beat as downbeat", file=sys.stderr)
             downbeats = all_beats[::4]  # Берем каждый 4-й удар как сильную долю
         
         if len(all_beats) == 0:
@@ -198,26 +383,76 @@ def analyze_track_with_madmom(audio_path):
         if len(all_beats) > 1:
             beat_intervals = np.diff(all_beats)
             avg_interval = np.mean(beat_intervals)
+            min_interval = np.min(beat_intervals)
+            max_interval = np.max(beat_intervals)
+            std_interval = np.std(beat_intervals)
             bpm = round(60.0 / avg_interval)
+            
+            print(f"\nStep 4: Calculating BPM from beat intervals...", file=sys.stderr)
+            print(f"  ✓ Average interval: {avg_interval:.4f}s", file=sys.stderr)
+            print(f"  ✓ Interval range: [{min_interval:.4f}s, {max_interval:.4f}s]", file=sys.stderr)
+            print(f"  ✓ Interval std dev: {std_interval:.4f}s", file=sys.stderr)
         else:
             bpm = 120  # Значение по умолчанию
+            print(f"\nStep 4: Using default BPM (only 1 beat detected)", file=sys.stderr)
         
         # Offset - время первого downbeat (сильной доли)
         offset = round(float(downbeats[0]) if len(downbeats) > 0 else all_beats[0], 3)
         
-        print(f"Detected BPM: {bpm}", file=sys.stderr)
-        print(f"Detected offset: {offset}s", file=sys.stderr)
-        print(f"Found {len(downbeats)} downbeats, {len(all_beats)} total beats", file=sys.stderr)
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("MADMOM ANALYSIS RESULTS:", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(f"  BPM: {bpm}", file=sys.stderr)
+        print(f"  Offset: {offset}s", file=sys.stderr)
+        print(f"  Downbeats: {len(downbeats)}", file=sys.stderr)
+        print(f"  Total beats: {len(all_beats)}", file=sys.stderr)
+        
+        # Выводим первые 10 beats для проверки
+        print(f"\nFirst 10 beats detected:", file=sys.stderr)
+        for i, (beat_time, beat_label) in enumerate(beats[:10]):
+            label_name = "DOWNBEAT" if beat_label == 1 else f"beat-{beat_label}"
+            print(f"  [{i+1:2d}] {beat_time:7.3f}s - {label_name}", file=sys.stderr)
+        
+        if len(beats) > 10:
+            print(f"  ... and {len(beats) - 10} more beats", file=sys.stderr)
+        
+        # Выводим первые 10 downbeats
+        if len(downbeats) > 0:
+            print(f"\nFirst 10 downbeats:", file=sys.stderr)
+            for i, db_time in enumerate(downbeats[:10]):
+                print(f"  [{i+1:2d}] {db_time:7.3f}s", file=sys.stderr)
+            if len(downbeats) > 10:
+                print(f"  ... and {len(downbeats) - 10} more downbeats", file=sys.stderr)
+        
+        print("=" * 80, file=sys.stderr)
         
         # Детектируем мостики
+        print("\nStep 5: Detecting bridge sections...", file=sys.stderr)
         grid = detect_bridges(downbeats, all_beats, y, sr, bpm)
         
-        print(f"Detected {len([s for s in grid if s['type'] == 'bridge'])} bridge sections", file=sys.stderr)
+        bridge_count = len([s for s in grid if s['type'] == 'bridge'])
+        verse_count = len([s for s in grid if s['type'] == 'verse'])
+        
+        print(f"  ✓ Detected {bridge_count} bridge sections, {verse_count} verse sections", file=sys.stderr)
+        
+        if grid:
+            print(f"\nGrid sections breakdown:", file=sys.stderr)
+            for i, section in enumerate(grid):
+                section_end = section['start'] + (section['beats'] * (60.0 / bpm))
+                print(f"  [{i+1:2d}] {section['type'].upper():6s} | "
+                      f"Start: {section['start']:7.3f}s | "
+                      f"Beats: {section['beats']:3d} | "
+                      f"End: {section_end:7.3f}s", file=sys.stderr)
+        
+        print("=" * 80, file=sys.stderr)
         
         return {
             'bpm': bpm,
             'offset': offset,
-            'grid': grid
+            'duration': duration,
+            'grid': grid,
+            'downbeats': downbeats,  # Массив времен downbeats (сильных долей)
+            'totalBeats': len(all_beats)  # Общее количество beats для справки
         }
         
     except Exception as e:
@@ -225,58 +460,6 @@ def analyze_track_with_madmom(audio_path):
         raise
 
 
-def analyze_track_fallback(audio_path):
-    """
-    Fallback анализ с использованием librosa (если madmom недоступен)
-    
-    Returns:
-        dict с ключами 'bpm', 'offset', 'grid'
-    """
-    try:
-        y, sr = librosa.load(audio_path)
-        duration = len(y) / sr
-        
-        print(f"Analyzing track with librosa (fallback): {audio_path}", file=sys.stderr)
-        
-        # Определение BPM
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = round(float(tempo[0]))
-        
-        # Определение Offset
-        onset_frames = librosa.onset.onset_detect(
-            y=y, 
-            sr=sr, 
-            units='time',
-            backtrack=True,
-            delta=0.3
-        )
-        
-        if len(onset_frames) > 0:
-            offset = round(float(onset_frames[0]), 3)
-        else:
-            if len(beats) > 0:
-                beat_times = librosa.frames_to_time(beats, sr=sr)
-                offset = round(float(beat_times[0]), 3)
-            else:
-                offset = 0.0
-        
-        # Простой grid без детекции мостиков (fallback)
-        total_beats = int(round(duration * bpm / 60.0))
-        grid = [{
-            "type": "verse",
-            "start": 0.0,
-            "beats": total_beats
-        }]
-        
-        return {
-            'bpm': bpm,
-            'offset': offset,
-            'grid': grid
-        }
-        
-    except Exception as e:
-        print(f"Error in fallback analysis: {str(e)}", file=sys.stderr)
-        raise
 
 
 def main():
@@ -287,25 +470,23 @@ def main():
     audio_path = sys.argv[1]
     
     try:
-        if MADMOM_AVAILABLE:
-            result = analyze_track_with_madmom(audio_path)
-        else:
-            print("Warning: madmom not available, using librosa fallback", file=sys.stderr)
-            result = analyze_track_fallback(audio_path)
-        
+        result = analyze_track_with_madmom(audio_path)
         print(json.dumps(result))
         
     except Exception as e:
-        print(json.dumps({
+        error_result = {
             'error': str(e),
             'bpm': 120,
             'offset': 0.0,
+            'duration': 180,
             'grid': [{
                 'type': 'verse',
                 'start': 0.0,
                 'beats': 100
             }]
-        }), file=sys.stderr)
+        }
+        print(json.dumps(error_result), file=sys.stderr)
+        print(json.dumps(error_result))  # Также выводим в stdout для парсинга
         sys.exit(1)
 
 

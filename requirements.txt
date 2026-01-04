@@ -1,11 +1,16 @@
 # Python dependencies for Bachata Beat Counter
 
+# Build dependencies (нужны для компиляции madmom)
+Cython>=0.29.0
+setuptools>=65.0.0
+wheel>=0.38.0
+
 # Audio analysis
 madmom>=0.16.1
 numpy>=1.24.0
 scipy>=1.10.0
 
-# Legacy dependencies (для обратной совместимости)
+# Audio loading (используется для загрузки аудио файлов)
 librosa>=0.10.0
 soundfile>=0.12.0
 

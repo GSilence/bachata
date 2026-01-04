@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import type { GridMap, Beat } from '@/types'
-import { generateFallbackBeatGrid } from './beatGrid'
+import { generateFallbackBeatGrid, generateBeatGridFromDownbeats } from './beatGrid'
 
 const execAsync = promisify(exec)
 
@@ -105,15 +105,18 @@ export async function analyzeTrack(
       const gridMap: GridMap = {
         bpm: result.bpm || 120,
         offset: result.offset || 0.0,
-        grid: result.grid || []
+        grid: result.grid || [],
+        downbeats: result.downbeats || [],
+        totalBeats: result.totalBeats || 0
       }
       
-      // For now, generate fallback beatGrid (Python analyzer doesn't detect bridges yet)
-      // TODO: Generate beatGrid from gridMap when bridge detection is implemented
+      // Генерируем beatGrid на основе downbeats и секций
       const bpm = gridMap.bpm
       const offset = gridMap.offset
       const duration = result.duration || 180 // Default 3 minutes if not provided
-      const beatGrid = generateFallbackBeatGrid(bpm, offset, duration)
+      
+      // Используем новую функцию для генерации beatGrid на основе downbeats и секций
+      const beatGrid = generateBeatGridFromDownbeats(gridMap, duration)
       
       return {
         bpm: gridMap.bpm,
@@ -156,7 +159,7 @@ export async function analyzeTrack(
 
 /**
  * Анализирует аудио файл и определяет только BPM и Offset (для обратной совместимости)
- * Использует Python скрипт с librosa
+ * Использует Python скрипт analyze-bpm-offset.py
  * 
  * @param audioPath - путь к аудио файлу
  * @param drumsPath - опциональный путь к дорожке drums (для более точного анализа)
@@ -225,7 +228,7 @@ export async function analyzeBpmOffset(
     console.error('Audio analysis error:', error)
     
     if (error.code === 'ENOENT') {
-      throw new Error('Python or librosa not found. Please install: pip install librosa soundfile')
+      throw new Error('Python not found or analysis script failed. Please check Python installation and dependencies.')
     }
     if (error.code === 'ETIMEDOUT' || error.signal === 'SIGTERM') {
       throw new Error('Audio analysis timed out. The file might be too large.')

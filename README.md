@@ -70,8 +70,29 @@ npm run check:demucs
 - `/public/music` - аудио файлы
 - `/public/audio/voice` - голосовые сэмплы для счета
 
+## Развертывание на VDS
+
+### Быстрая установка через консоль
+
+```bash
+# Скачайте и запустите автоматический скрипт установки
+wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+chmod +x install-bachata.sh
+./install-bachata.sh
+```
+
+**Особенности:**
+- ✅ Автоматически проверяет, что уже установлено
+- ✅ Пропускает выполненные шаги
+- ✅ Можно запускать многократно
+
+Подробнее: [`docs/QUICK_START.md`](./docs/QUICK_START.md)
+
 ## Документация
 
+- [`docs/QUICK_START.md`](./docs/QUICK_START.md) - быстрая установка на VDS
+- [`docs/MANUAL_INSTALL_TIMEWEB.md`](./docs/MANUAL_INSTALL_TIMEWEB.md) - пошаговая ручная установка
+- [`docs/DEPLOYMENT_VDS.md`](./docs/DEPLOYMENT_VDS.md) - полная документация по развертыванию
 - [`docs/database-setup.md`](./docs/database-setup.md) - настройка базы данных
 - [`docs/DEMUCS_SETUP.md`](./docs/DEMUCS_SETUP.md) - установка Demucs
 - [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) - решение проблем

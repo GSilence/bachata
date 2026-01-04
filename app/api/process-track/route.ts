@@ -3,7 +3,6 @@ import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { randomUUID } from 'crypto'
-import { runDemucs } from '@/lib/demucs'
 import { analyzeTrack, analyzeBpmOffset } from '@/lib/analyzeAudio'
 
 // Настройки для работы с большими файлами и долгими операциями
@@ -20,10 +19,14 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null
     const title = formData.get('title') as string | null
     const artist = formData.get('artist') as string | null
-    const bpm = formData.get('bpm') as string | null
-    const offset = formData.get('offset') as string | null
-    const autoBpm = formData.get('autoBpm') === 'true'
-    const autoOffset = formData.get('autoOffset') === 'true'
+    const album = formData.get('album') as string | null
+    const genre = formData.get('genre') as string | null
+    const year = formData.get('year') as string | null
+    const trackNumber = formData.get('track') as string | null
+    const comment = formData.get('comment') as string | null
+    // BPM и Offset всегда определяются автоматически
+    const autoBpm = true
+    const autoOffset = true
 
     // Валидация
     if (!file) {
@@ -58,13 +61,9 @@ export async function POST(request: NextRequest) {
 
     // Создаем директории, если их нет
     const uploadsDir = join(process.cwd(), 'public', 'uploads', 'raw')
-    const stemsDir = join(process.cwd(), 'public', 'uploads', 'stems')
 
     if (!existsSync(uploadsDir)) {
       await mkdir(uploadsDir, { recursive: true })
-    }
-    if (!existsSync(stemsDir)) {
-      await mkdir(stemsDir, { recursive: true })
     }
 
     // Генерируем уникальный идентификатор для трека
@@ -85,43 +84,29 @@ export async function POST(request: NextRequest) {
 
     console.log(`File saved: ${filePath}`)
 
-    // Запускаем Demucs
-    // Используем uniqueId вместо названия трека для уникальности папки
-    const stemsResult = await runDemucs(filePath, stemsDir, uniqueId)
-
-    // Определяем BPM и Offset
-    let finalBpm = bpm ? parseInt(bpm) : 120
-    let finalOffset = offset ? parseFloat(offset) : 0
+    // Определяем BPM и Offset (всегда автоматически)
+    let finalBpm = 120
+    let finalOffset = 0
     let baseBpm: number | null = null
     let baseOffset: number | null = null
     let gridMap: any = null
 
-    // ВСЕГДА анализируем аудио для получения gridMap (даже если BPM/Offset введены вручную)
+    // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
     // gridMap нужен для корректного отслеживания битов с учетом мостиков
     try {
-      console.log('Starting audio analysis for GridMap (and BPM/Offset if needed)...')
+      console.log('Starting audio analysis for GridMap, BPM and Offset...')
       
       // Используем новый скрипт analyze-track.py с madmom для полного анализа
       const analysisResult = await analyzeTrack(filePath, true)
 
-      // Обновляем только те значения, которые нужно определить автоматически
-      if (autoBpm) {
-        finalBpm = analysisResult.bpm
-        baseBpm = analysisResult.bpm // Сохраняем как базовое
-        console.log(`Auto-detected BPM: ${finalBpm}`)
-      } else {
-        // Если BPM введен вручную, сохраняем его как базовое
-        baseBpm = finalBpm
-      }
+      // BPM и Offset всегда определяются автоматически
+      finalBpm = analysisResult.bpm
+      baseBpm = analysisResult.bpm
+      console.log(`Auto-detected BPM: ${finalBpm}`)
       
-      if (autoOffset) {
-        finalOffset = analysisResult.offset
-        baseOffset = analysisResult.offset // Сохраняем как базовое
-        console.log(`Auto-detected Offset: ${finalOffset}s`)
-      } else {
-        // Если Offset введен вручную, сохраняем его как базовое
-        baseOffset = finalOffset
-      }
+      finalOffset = analysisResult.offset
+      baseOffset = analysisResult.offset
+      console.log(`Auto-detected Offset: ${finalOffset}s`)
 
       // ВСЕГДА сохраняем gridMap (если доступен) - он нужен для beat tracking
       if (analysisResult.gridMap) {
@@ -148,6 +133,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Подготавливаем метаданные для сохранения
+    const metadata = {
+      album: album || null,
+      genre: genre || null,
+      year: year || null,
+      track: trackNumber || null,
+      comment: comment || null,
+    }
+
     // Создаем запись в БД
     const track = await prisma.track.create({
       data: {
@@ -160,12 +154,15 @@ export async function POST(request: NextRequest) {
         baseOffset: baseOffset,
         isFree: true,
         pathOriginal: `/uploads/raw/${fileName}`,
-        pathVocals: stemsResult.vocals,
-        pathDrums: stemsResult.drums,
-        pathBass: stemsResult.bass,
-        pathOther: stemsResult.other,
-        isProcessed: true,
-        gridMap: gridMap ? JSON.parse(JSON.stringify(gridMap)) : null, // Преобразуем в JSON для Prisma
+        pathVocals: null, // Будет заполнено после обработки через Demucs
+        pathDrums: null,
+        pathBass: null,
+        pathOther: null,
+        isProcessed: false, // Трек еще не разложен на стемы
+        gridMap: gridMap ? JSON.parse(JSON.stringify({
+          ...gridMap,
+          metadata: metadata // Сохраняем метаданные в gridMap
+        })) : { metadata: metadata }, // Если нет gridMap, создаем объект с метаданными
       },
     })
 

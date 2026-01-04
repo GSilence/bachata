@@ -65,7 +65,7 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       playMode: "sequential",
-      voiceFilter: "on1and5",
+      voiceFilter: "full",
       playlistFilter: "free",
       searchQuery: "",
 
@@ -75,7 +75,12 @@ export const usePlayerStore = create<PlayerState>()(
       // Actions
       setCurrentTrack: (track) => {
         if (!track) {
-          set({ currentTrack: null, isPlaying: false, currentTime: 0, duration: 0 });
+          set({
+            currentTrack: null,
+            isPlaying: false,
+            currentTime: 0,
+            duration: 0,
+          });
           return;
         }
 
@@ -92,7 +97,13 @@ export const usePlayerStore = create<PlayerState>()(
         audioEngine.stop();
 
         // STEP 3: Load the new track with stems settings
-        const { isStemsMode, stemsEnabled, stemsVolume, musicVolume, voiceVolume } = get();
+        const {
+          isStemsMode,
+          stemsEnabled,
+          stemsVolume,
+          musicVolume,
+          voiceVolume,
+        } = get();
         audioEngine.loadTrack(track, isStemsMode, stemsEnabled, stemsVolume);
 
         // STEP 4: Set volume from store
@@ -159,7 +170,8 @@ export const usePlayerStore = create<PlayerState>()(
       setPlayMode: (mode) => set({ playMode: mode }),
       setVoiceFilter: (filter) => {
         set({ voiceFilter: filter });
-        // Убран вызов audioEngine.setVoiceFilter - упрощенный плеер
+        // Синхронизируем с audioEngine
+        audioEngine.setVoiceFilter(filter);
       },
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),
@@ -295,7 +307,10 @@ export const usePlayerStore = create<PlayerState>()(
             // Small delay to ensure track is loaded
             setTimeout(() => {
               const { currentTrack: verifyTrack } = get();
-              if (verifyTrack?.id === nextTrack.id && audioEngine.isTrackLoaded()) {
+              if (
+                verifyTrack?.id === nextTrack.id &&
+                audioEngine.isTrackLoaded()
+              ) {
                 play();
               }
             }, 100);
@@ -309,7 +324,10 @@ export const usePlayerStore = create<PlayerState>()(
         const { currentTrack, tracks, playMode, isPlaying } = get();
         if (!currentTrack || tracks.length === 0) return;
 
-        // STEP 1: Set isPlaying to false BEFORE switching tracks
+        // STEP 1: Save playing state before switching (for auto-play after track loads)
+        const wasPlaying = isPlaying;
+
+        // STEP 2: Set isPlaying to false BEFORE switching tracks
         set({ isPlaying: false });
 
         const currentIndex = tracks.findIndex((t) => t.id === currentTrack.id);
@@ -328,15 +346,18 @@ export const usePlayerStore = create<PlayerState>()(
           prevTrack = tracks[prevIndex];
         }
 
-        // STEP 2: Use setCurrentTrack which includes mandatory Stop logic
+        // STEP 3: Use setCurrentTrack which includes mandatory Stop logic
         if (prevTrack) {
           const { setCurrentTrack, play } = get();
           setCurrentTrack(prevTrack);
           // Auto-play if we were playing before
-          if (isPlaying) {
+          if (wasPlaying) {
             setTimeout(() => {
               const { currentTrack: verifyTrack } = get();
-              if (verifyTrack?.id === prevTrack.id && audioEngine.isTrackLoaded()) {
+              if (
+                verifyTrack?.id === prevTrack.id &&
+                audioEngine.isTrackLoaded()
+              ) {
                 play();
               }
             }, 100);
@@ -374,7 +395,7 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
     if (!stored) return null;
 
     // Проверяем, что это валидная JSON строка, а не [object Object]
-    if (typeof stored !== 'string' || stored === '[object Object]') {
+    if (typeof stored !== "string" || stored === "[object Object]") {
       console.warn("localStorage содержит невалидные данные, очищаем...");
       try {
         trackStorage.removeItem("player-storage");
