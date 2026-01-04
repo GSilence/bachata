@@ -458,6 +458,24 @@ EOF
         chown ${APP_USER}:${APP_USER} ${APP_DIR}/.env.local
         chmod 600 ${APP_DIR}/.env.local
     fi
+    
+    # Создаем .env файл для Prisma (Prisma ищет .env, а не .env.local)
+    if [ ! -f "${APP_DIR}/.env" ]; then
+        # Копируем DATABASE_URL из .env.local в .env
+        if [ -f "${APP_DIR}/.env.local" ]; then
+            grep "DATABASE_URL" ${APP_DIR}/.env.local > ${APP_DIR}/.env || {
+                # Если не нашли в .env.local, создаем заново
+                DB_PASSWORD=$(grep -oP 'mysql://.*:.*@' /root/db_credentials.txt | sed 's/mysql:\/\/.*://' | sed 's/@//' || openssl rand -base64 32)
+                echo "DATABASE_URL=\"mysql://${DB_USER}:${DB_PASSWORD}@localhost:3306/${DB_NAME}\"" > ${APP_DIR}/.env
+            }
+        else
+            # Если .env.local не существует, создаем .env с паролем из файла
+            DB_PASSWORD=$(grep -oP 'mysql://.*:.*@' /root/db_credentials.txt | sed 's/mysql:\/\/.*://' | sed 's/@//' || openssl rand -base64 32)
+            echo "DATABASE_URL=\"mysql://${DB_USER}:${DB_PASSWORD}@localhost:3306/${DB_NAME}\"" > ${APP_DIR}/.env
+        fi
+        chown ${APP_USER}:${APP_USER} ${APP_DIR}/.env
+        chmod 600 ${APP_DIR}/.env
+    fi
 }
 
 check_env_file() {
