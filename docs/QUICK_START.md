@@ -6,13 +6,30 @@
 
 ### Вариант 1: Скачать с GitHub (если файл уже в репозитории)
 
+**Для публичных репозиториев:**
+
 ```bash
-# Скачиваем скрипт
+# Скачиваем скрипт (стандартная ссылка)
 wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
 
-# Или через curl (если wget не работает)
+# Или через curl
 curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh
+```
 
+**Для приватных репозиториев или если стандартная ссылка не работает:**
+
+1. Откройте файл на GitHub: https://github.com/GSilence/bachata/blob/master/install-bachata.sh
+2. Нажмите кнопку **"Raw"** (справа вверху)
+3. Скопируйте полный URL из адресной строки (с токеном)
+4. Используйте его в команде:
+
+```bash
+wget "https://raw.githubusercontent.com/GSilence/bachata/refs/heads/master/install-bachata.sh?token=GHSAT0AAAAAADRX3IJDKOH7D5A3CXJ2IZ2U2K2DETQ" -O install-bachata.sh
+```
+
+**Затем:**
+
+```bash
 # Делаем исполняемым
 chmod +x install-bachata.sh
 

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Автоматическая установка Bachata Beat Counter на VDS Timeweb
 # Использование:
 #   wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
