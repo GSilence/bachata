@@ -82,12 +82,23 @@ safe_exec() {
         return 0
     else
         echo "→ Executing: $step_name"
+        # Временно отключаем set -e для обработки ошибок
+        set +e
         $exec_func
+        local exit_code=$?
+        set -e
+        
+        if [ $exit_code -ne 0 ]; then
+            echo "✗ $step_name failed with exit code $exit_code"
+            echo "Please check the error messages above and try again."
+            return 1
+        fi
+        
         if $check_func; then
             echo "✓ $step_name completed successfully"
             return 0
         else
-            echo "✗ $step_name failed"
+            echo "✗ $step_name execution completed but verification failed"
             return 1
         fi
     fi
@@ -146,7 +157,22 @@ check_nodejs() {
 
 # Шаг 4: Установка Python и библиотек
 step_install_python() {
-    apt-get install -y -qq \
+    # Проверяем, доступен ли Python 3.10 в репозиториях
+    if ! apt-cache show python${PYTHON_VERSION} >/dev/null 2>&1; then
+        echo "Python ${PYTHON_VERSION} not found in repositories. Adding deadsnakes PPA..."
+        apt-get install -y software-properties-common
+        # Для Ubuntu используем PPA, для Debian - другой подход
+        if [ -f /etc/debian_version ] && grep -q "Debian" /etc/os-release 2>/dev/null; then
+            echo "Detected Debian. Python 3.10 may need to be installed from backports or built from source."
+            echo "Trying to install python3.10 from default repositories first..."
+        else
+            add-apt-repository -y ppa:deadsnakes/ppa
+            apt-get update
+        fi
+    fi
+    
+    echo "Installing Python ${PYTHON_VERSION} and dependencies..."
+    apt-get install -y \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-dev \
         python${PYTHON_VERSION}-venv \
@@ -157,7 +183,7 @@ step_install_python() {
         libffi-dev \
         libssl-dev \
         libasound2-dev \
-        portaudio19-dev >/dev/null 2>&1
+        portaudio19-dev
 }
 
 check_python() {
@@ -540,11 +566,11 @@ echo "=========================================="
 echo ""
 
 # Основные шаги установки
-safe_exec "System update" check_system_updated step_update_system
-safe_exec "Base dependencies" check_base_deps step_install_base_deps
-safe_exec "Node.js ${NODE_VERSION}" check_nodejs step_install_nodejs
-safe_exec "Python ${PYTHON_VERSION}" check_python step_install_python
-safe_exec "MySQL" check_mysql step_install_mysql
+safe_exec "System update" check_system_updated step_update_system || exit 1
+safe_exec "Base dependencies" check_base_deps step_install_base_deps || exit 1
+safe_exec "Node.js ${NODE_VERSION}" check_nodejs step_install_nodejs || exit 1
+safe_exec "Python ${PYTHON_VERSION}" check_python step_install_python || exit 1
+safe_exec "MySQL" check_mysql step_install_mysql || exit 1
 safe_exec "Database setup" check_database step_setup_database
 safe_exec "Application user" check_app_user step_create_app_user
 safe_exec "Python virtual environment" check_python_venv step_setup_python_venv
