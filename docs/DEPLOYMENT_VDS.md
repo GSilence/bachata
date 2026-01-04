@@ -48,10 +48,10 @@ APP_DIR="/opt/bachata"   # Директория приложения
 
 ```bash
 # Скачайте скрипт
-wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
 
 # Или через curl
-curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
+curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh
 
 # Сделайте исполняемым и запустите
 chmod +x install-bachata.sh
@@ -70,7 +70,7 @@ chmod +x install-bachata.sh
 Альтернативно, используйте скрипт `install-on-existing-vds.sh`:
 
 ```bash
-wget https://raw.githubusercontent.com/GSilence/bachata/main/install-on-existing-vds.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/master/install-on-existing-vds.sh
 chmod +x install-on-existing-vds.sh
 sudo ./install-on-existing-vds.sh
 ```

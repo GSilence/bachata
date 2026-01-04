@@ -77,7 +77,7 @@ npm run check:demucs
 
 ```bash
 # Скачайте и запустите автоматический скрипт установки
-wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
 chmod +x install-bachata.sh
 ./install-bachata.sh
 ```

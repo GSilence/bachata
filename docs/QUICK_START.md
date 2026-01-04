@@ -4,14 +4,14 @@
 
 ## 🚀 Один скрипт - всё автоматически
 
-Скопируйте и выполните эти команды в веб-консоли Таймвеба:
+### Вариант 1: Скачать с GitHub (если файл уже в репозитории)
 
 ```bash
 # Скачиваем скрипт
-wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
 
 # Или через curl (если wget не работает)
-curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
+curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh
 
 # Делаем исполняемым
 chmod +x install-bachata.sh
@@ -19,6 +19,28 @@ chmod +x install-bachata.sh
 # Запускаем установку
 ./install-bachata.sh
 ```
+
+**Если получаете ошибку 404** - файл еще не загружен в репозиторий. Используйте Вариант 2 ниже.
+
+### Вариант 2: Использовать оригинальный скрипт
+
+Если новый скрипт еще не в репозитории, используйте оригинальный:
+
+```bash
+# Скачиваем оригинальный скрипт
+wget https://raw.githubusercontent.com/GSilence/bachata/master/install-on-existing-vds.sh -O install-on-existing-vds.sh
+
+# Или через curl
+curl -o install-on-existing-vds.sh https://raw.githubusercontent.com/GSilence/bachata/master/install-on-existing-vds.sh
+
+# Делаем исполняемым
+chmod +x install-on-existing-vds.sh
+
+# Запускаем установку
+./install-on-existing-vds.sh
+```
+
+**Примечание:** После того как вы закоммитите и запушите `install-bachata.sh` в репозиторий, можно будет использовать Вариант 1.
 
 **Всё!** Скрипт автоматически:
 
