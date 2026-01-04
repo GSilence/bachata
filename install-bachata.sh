@@ -162,39 +162,87 @@ step_install_python() {
     
     echo "Detected OS: $OS_ID"
     
-    # Проверяем наличие всех необходимых пакетов Python 3.10
-    PYTHON_AVAILABLE=true
-    for pkg in python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv; do
-        if ! apt-cache show "$pkg" >/dev/null 2>&1; then
-            PYTHON_AVAILABLE=false
-            echo "Package $pkg not found in repositories"
-            break
-        fi
-    done
+    # Функция для проверки наличия всех пакетов Python
+    check_python_packages() {
+        local all_found=true
+        for pkg in python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv; do
+            if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+                all_found=false
+                echo "Package $pkg not found in repositories"
+            else
+                echo "✓ Found: $pkg"
+            fi
+        done
+        [ "$all_found" = "true" ]
+    }
     
-    if [ "$PYTHON_AVAILABLE" = "false" ]; then
+    # Проверяем наличие всех необходимых пакетов Python 3.10
+    echo "Checking for Python ${PYTHON_VERSION} packages..."
+    if ! check_python_packages; then
         echo "Python ${PYTHON_VERSION} packages not found in repositories."
         
         if [ "$OS_ID" = "ubuntu" ]; then
+            # Проверяем версию Ubuntu
+            UBUNTU_VERSION=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "")
+            UBUNTU_CODENAME=$(grep "^VERSION_CODENAME=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || \
+                             grep "^UBUNTU_CODENAME=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "")
+            echo "Ubuntu version: $UBUNTU_VERSION (${UBUNTU_CODENAME})"
+            
+            # Для Ubuntu 24.04 (Noble) Python 3.12 доступен по умолчанию, Python 3.10 через deadsnakes
+            if [ "$UBUNTU_VERSION" = "24.04" ]; then
+                echo "Ubuntu 24.04 detected. Python 3.12 is default, Python 3.10 available via deadsnakes PPA."
+            fi
+            
             echo "Adding deadsnakes PPA for Ubuntu..."
             apt-get install -y software-properties-common
             
-            # Проверяем версию Ubuntu
-            UBUNTU_VERSION=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "")
-            echo "Ubuntu version: $UBUNTU_VERSION"
-            
             # Проверяем, не добавлен ли уже репозиторий
             if ! grep -q "deadsnakes" /etc/apt/sources.list.d/* 2>/dev/null; then
-                echo "Adding deadsnakes PPA..."
+                echo "Adding deadsnakes PPA (this may take a moment)..."
                 add-apt-repository -y ppa:deadsnakes/ppa
                 echo "Waiting for repository to be available..."
-                sleep 2
+                sleep 3
             else
                 echo "deadsnakes PPA already added"
             fi
-            echo "Updating package lists..."
-            apt-get update -qq
-            echo "Package lists updated. Checking for Python 3.10 packages..."
+            
+            echo "Updating package lists (this may take a moment)..."
+            apt-get update
+            
+            # Проверяем, что репозиторий действительно добавлен
+            if ! grep -q "deadsnakes" /etc/apt/sources.list.d/* 2>/dev/null; then
+                echo "Warning: deadsnakes PPA may not have been added correctly."
+                echo "Trying alternative method..."
+                apt-get install -y apt-transport-https ca-certificates gnupg
+                # Альтернативный способ добавления PPA
+                add-apt-repository -y ppa:deadsnakes/ppa 2>&1
+                apt-get update
+            fi
+            
+            echo "Package lists updated. Checking for Python ${PYTHON_VERSION} packages again..."
+            
+            # Дополнительная диагностика для Ubuntu 24.04
+            if [ "$UBUNTU_VERSION" = "24.04" ]; then
+                echo "Checking deadsnakes repository status..."
+                apt-cache policy python${PYTHON_VERSION} 2>/dev/null | head -10 || echo "Package policy check failed"
+            fi
+            
+            # Проверяем снова после обновления репозиториев
+            if ! check_python_packages; then
+                echo ""
+                echo "Error: Python ${PYTHON_VERSION} packages are still not available after adding repository."
+                echo ""
+                echo "For Ubuntu 24.04, you have these options:"
+                echo "1. Use Python 3.12 (default, available without PPA)"
+                echo "2. Manually verify deadsnakes PPA is working:"
+                echo "   apt-cache policy python3.10"
+                echo ""
+                echo "Available Python versions in repositories:"
+                apt-cache search "^python3\.[0-9]+$" 2>/dev/null | grep -E "^python3\.[0-9]+ " | head -10
+                echo ""
+                echo "If you want to use Python 3.12 instead, edit the script and change PYTHON_VERSION to 3.12"
+                return 1
+            fi
         elif [ "$OS_ID" = "debian" ]; then
             echo "Detected Debian. Python 3.10 may not be available in default repositories."
             echo "You may need to install from backports or use python3 instead."
@@ -202,43 +250,23 @@ step_install_python() {
             if apt-cache show python3 >/dev/null 2>&1; then
                 echo "Python 3 is available. Consider using PYTHON_VERSION=3 instead."
             fi
+            return 1
         else
-            echo "Warning: Unknown OS type ($OS_ID). Attempting to install anyway..."
+            echo "Warning: Unknown OS type ($OS_ID). Cannot install Python ${PYTHON_VERSION}."
+            return 1
         fi
-        
-        # Проверяем снова после обновления репозиториев
-        echo "Checking for Python ${PYTHON_VERSION} packages after repository update..."
-        PYTHON_AVAILABLE=true
-        for pkg in python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv; do
-            if apt-cache show "$pkg" >/dev/null 2>&1; then
-                echo "✓ Found: $pkg"
-            else
-                PYTHON_AVAILABLE=false
-                echo "✗ Not found: $pkg"
-                # Показываем похожие пакеты
-                echo "  Similar packages:"
-                apt-cache search "^python.*3\.10" 2>/dev/null | head -3 || echo "  (none found)"
-            fi
-        done
     fi
     
     echo "Installing Python ${PYTHON_VERSION} and dependencies..."
     
-    # Пытаемся установить пакеты Python 3.10
-    if [ "$PYTHON_AVAILABLE" = "true" ]; then
-        apt-get install -y \
-            python${PYTHON_VERSION} \
-            python${PYTHON_VERSION}-dev \
-            python${PYTHON_VERSION}-venv || {
-            echo "Error: Failed to install Python ${PYTHON_VERSION} packages."
-            return 1
-        }
-    else
-        echo "Error: Python ${PYTHON_VERSION} packages are not available."
-        echo "Available Python versions:"
-        apt-cache search "^python3\.[0-9]+$" | head -5
+    # Устанавливаем пакеты Python 3.10
+    apt-get install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-dev \
+        python${PYTHON_VERSION}-venv || {
+        echo "Error: Failed to install Python ${PYTHON_VERSION} packages."
         return 1
-    fi
+    }
     
     # Устанавливаем остальные зависимости
     apt-get install -y \
