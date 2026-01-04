@@ -157,25 +157,91 @@ check_nodejs() {
 
 # Шаг 4: Установка Python и библиотек
 step_install_python() {
-    # Проверяем, доступен ли Python 3.10 в репозиториях
-    if ! apt-cache show python${PYTHON_VERSION} >/dev/null 2>&1; then
-        echo "Python ${PYTHON_VERSION} not found in repositories. Adding deadsnakes PPA..."
-        apt-get install -y software-properties-common
-        # Для Ubuntu используем PPA, для Debian - другой подход
-        if [ -f /etc/debian_version ] && grep -q "Debian" /etc/os-release 2>/dev/null; then
-            echo "Detected Debian. Python 3.10 may need to be installed from backports or built from source."
-            echo "Trying to install python3.10 from default repositories first..."
-        else
-            add-apt-repository -y ppa:deadsnakes/ppa
-            apt-get update
+    # Определяем тип ОС
+    OS_ID=$(grep "^ID=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "unknown")
+    
+    echo "Detected OS: $OS_ID"
+    
+    # Проверяем наличие всех необходимых пакетов Python 3.10
+    PYTHON_AVAILABLE=true
+    for pkg in python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv; do
+        if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+            PYTHON_AVAILABLE=false
+            echo "Package $pkg not found in repositories"
+            break
         fi
+    done
+    
+    if [ "$PYTHON_AVAILABLE" = "false" ]; then
+        echo "Python ${PYTHON_VERSION} packages not found in repositories."
+        
+        if [ "$OS_ID" = "ubuntu" ]; then
+            echo "Adding deadsnakes PPA for Ubuntu..."
+            apt-get install -y software-properties-common
+            
+            # Проверяем версию Ubuntu
+            UBUNTU_VERSION=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "")
+            echo "Ubuntu version: $UBUNTU_VERSION"
+            
+            # Проверяем, не добавлен ли уже репозиторий
+            if ! grep -q "deadsnakes" /etc/apt/sources.list.d/* 2>/dev/null; then
+                echo "Adding deadsnakes PPA..."
+                add-apt-repository -y ppa:deadsnakes/ppa
+                echo "Waiting for repository to be available..."
+                sleep 2
+            else
+                echo "deadsnakes PPA already added"
+            fi
+            echo "Updating package lists..."
+            apt-get update -qq
+            echo "Package lists updated. Checking for Python 3.10 packages..."
+        elif [ "$OS_ID" = "debian" ]; then
+            echo "Detected Debian. Python 3.10 may not be available in default repositories."
+            echo "You may need to install from backports or use python3 instead."
+            # Попробуем использовать python3, если доступен
+            if apt-cache show python3 >/dev/null 2>&1; then
+                echo "Python 3 is available. Consider using PYTHON_VERSION=3 instead."
+            fi
+        else
+            echo "Warning: Unknown OS type ($OS_ID). Attempting to install anyway..."
+        fi
+        
+        # Проверяем снова после обновления репозиториев
+        echo "Checking for Python ${PYTHON_VERSION} packages after repository update..."
+        PYTHON_AVAILABLE=true
+        for pkg in python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv; do
+            if apt-cache show "$pkg" >/dev/null 2>&1; then
+                echo "✓ Found: $pkg"
+            else
+                PYTHON_AVAILABLE=false
+                echo "✗ Not found: $pkg"
+                # Показываем похожие пакеты
+                echo "  Similar packages:"
+                apt-cache search "^python.*3\.10" 2>/dev/null | head -3 || echo "  (none found)"
+            fi
+        done
     fi
     
     echo "Installing Python ${PYTHON_VERSION} and dependencies..."
+    
+    # Пытаемся установить пакеты Python 3.10
+    if [ "$PYTHON_AVAILABLE" = "true" ]; then
+        apt-get install -y \
+            python${PYTHON_VERSION} \
+            python${PYTHON_VERSION}-dev \
+            python${PYTHON_VERSION}-venv || {
+            echo "Error: Failed to install Python ${PYTHON_VERSION} packages."
+            return 1
+        }
+    else
+        echo "Error: Python ${PYTHON_VERSION} packages are not available."
+        echo "Available Python versions:"
+        apt-cache search "^python3\.[0-9]+$" | head -5
+        return 1
+    fi
+    
+    # Устанавливаем остальные зависимости
     apt-get install -y \
-        python${PYTHON_VERSION} \
-        python${PYTHON_VERSION}-dev \
-        python${PYTHON_VERSION}-venv \
         python3-pip \
         ffmpeg \
         libsndfile1 \
