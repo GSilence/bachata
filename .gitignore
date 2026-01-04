@@ -78,3 +78,9 @@ __pycache__/
 Thumbs.db
 .DS_Store
 
+# Documentation and installation scripts (kept locally, not in repo)
+*.md
+!README.md
+install*.sh
+cloud-init.sh
+
