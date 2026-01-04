@@ -299,16 +299,46 @@ check_mysql() {
 
 # Шаг 6: Настройка базы данных
 step_setup_database() {
+    # Проверяем, что MySQL запущен
+    if ! systemctl is-active --quiet mysql; then
+        echo "Starting MySQL service..."
+        systemctl start mysql
+        sleep 2
+    fi
+    
     # Генерируем пароль, если его еще нет
     if [ ! -f /root/db_credentials.txt ]; then
         DB_PASSWORD=$(openssl rand -base64 32)
         echo "DATABASE_URL=mysql://${DB_USER}:${DB_PASSWORD}@localhost:3306/${DB_NAME}" > /root/db_credentials.txt
         chmod 600 /root/db_credentials.txt
         
-        mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
-        mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>/dev/null
-        mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>/dev/null
-        mysql -e "FLUSH PRIVILEGES;" 2>/dev/null
+        echo "Creating database and user..."
+        # Пытаемся подключиться как root (без пароля для свежей установки)
+        if mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1; then
+            echo "✓ Database created"
+        elif sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1; then
+            echo "✓ Database created (using sudo)"
+        else
+            echo "⚠ Warning: Could not create database. MySQL may need configuration."
+        fi
+        
+        if mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>&1; then
+            echo "✓ User created"
+        elif sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>&1; then
+            echo "✓ User created (using sudo)"
+        else
+            echo "⚠ Warning: Could not create user. It may already exist."
+        fi
+        
+        if mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>&1; then
+            echo "✓ Privileges granted"
+        elif sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>&1; then
+            echo "✓ Privileges granted (using sudo)"
+        else
+            echo "⚠ Warning: Could not grant privileges."
+        fi
+        
+        mysql -e "FLUSH PRIVILEGES;" 2>&1 || sudo mysql -e "FLUSH PRIVILEGES;" 2>&1 || true
         
         echo "Database password: ${DB_PASSWORD}"
         echo "Password saved to: /root/db_credentials.txt"
@@ -316,17 +346,48 @@ step_setup_database() {
         # Извлекаем пароль из существующего файла
         DB_PASSWORD=$(grep -oP 'mysql://.*:.*@' /root/db_credentials.txt | sed 's/mysql:\/\/.*://' | sed 's/@//' || openssl rand -base64 32)
         
+        echo "Database credentials file exists. Ensuring database and user exist..."
         # Проверяем и создаем БД, если нужно
-        mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null
-        mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>/dev/null
-        mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>/dev/null
-        mysql -e "FLUSH PRIVILEGES;" 2>/dev/null
+        mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1 || {
+            sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1 || true
+        }
+        
+        mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>&1 || {
+            sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';" 2>&1 || true
+        }
+        
+        mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>&1 || {
+            sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" 2>&1 || true
+        }
+        
+        mysql -e "FLUSH PRIVILEGES;" 2>&1 || {
+            sudo mysql -e "FLUSH PRIVILEGES;" 2>&1 || true
+        }
     fi
 }
 
 check_database() {
-    check_file /root/db_credentials.txt && \
-    mysql -u ${DB_USER} -e "USE ${DB_NAME};" 2>/dev/null
+    # Проверяем наличие файла с учетными данными
+    if [ ! -f /root/db_credentials.txt ]; then
+        return 1
+    fi
+    
+    # Извлекаем пароль из файла
+    DB_PASSWORD=$(grep -oP 'mysql://.*:.*@' /root/db_credentials.txt | sed 's/mysql:\/\/.*://' | sed 's/@//' || echo "")
+    
+    if [ -z "$DB_PASSWORD" ]; then
+        return 1
+    fi
+    
+    # Проверяем, что база данных существует (как root, так как это безопаснее)
+    mysql -e "SHOW DATABASES LIKE '${DB_NAME}';" 2>/dev/null | grep -q "${DB_NAME}" || {
+        sudo mysql -e "SHOW DATABASES LIKE '${DB_NAME}';" 2>/dev/null | grep -q "${DB_NAME}"
+    }
+    
+    # Проверяем, что пользователь существует
+    mysql -e "SELECT User FROM mysql.user WHERE User='${DB_USER}';" 2>/dev/null | grep -q "${DB_USER}" || {
+        sudo mysql -e "SELECT User FROM mysql.user WHERE User='${DB_USER}';" 2>/dev/null | grep -q "${DB_USER}"
+    }
 }
 
 # Шаг 7: Создание пользователя приложения
