@@ -10,18 +10,31 @@
 #   chmod +x install-bachata.sh
 #   ./install-bachata.sh
 
+# Проверка и перезапуск с bash, если необходимо
+if [ -z "$BASH_VERSION" ] || [ ! -n "$BASH" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    else
+        echo "Error: bash is required but not found. Please install bash first." >&2
+        exit 1
+    fi
+fi
+
 set -e  # Остановка при критичных ошибках
 
 # Логирование
 LOG_FILE="/var/log/bachata-install.log"
-exec > >(tee -a ${LOG_FILE}) 2>&1
+touch "${LOG_FILE}"
+
+# Перенаправление вывода в файл и на экран одновременно
+exec > >(tee -a "${LOG_FILE}") 2>&1
 echo "=== Installation started at $(date) ==="
 
 # Переменные
 APP_USER="bachata"
 APP_DIR="/opt/bachata"
 APP_NAME="bachata-beat-counter"
-DOMAIN=""  # Будет определен автоматически как IP
+DOMAIN="bachata-music.com"  # Будет определен автоматически как IP
 DB_NAME="bachata_db"
 DB_USER="bachata_user"
 NODE_VERSION="20"
@@ -29,7 +42,7 @@ PYTHON_VERSION="3.10"
 
 # Получаем IP адрес сервера
 SERVER_IP=$(hostname -I | awk '{print $1}')
-if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "your-domain.com" ]; then
+if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "bachata-music.com" ]; then
     DOMAIN="$SERVER_IP"
     echo "Using server IP: $DOMAIN"
 fi
