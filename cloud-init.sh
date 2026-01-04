@@ -108,7 +108,7 @@ chown ${APP_USER}:${APP_USER} ${APP_DIR}
 # Клонирование проекта (если используется Git)
 # Раскомментируйте и укажите ваш репозиторий:
 # echo "=== Cloning repository ==="
-# sudo -u ${APP_USER} git clone https://github.com/your-username/${APP_NAME}.git ${APP_DIR}
+# sudo -u ${APP_USER} git clone https://github.com/GSilence/bachata.git ${APP_DIR}
 
 # ВАЖНО: Если проект уже загружен на сервер вручную, 
 # убедитесь, что все файлы находятся в ${APP_DIR}

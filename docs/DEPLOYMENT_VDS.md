@@ -48,10 +48,10 @@ APP_DIR="/opt/bachata"   # Директория приложения
 
 ```bash
 # Скачайте скрипт
-wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
 
 # Или через curl
-curl -o install-bachata.sh https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh
+curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
 
 # Сделайте исполняемым и запустите
 chmod +x install-bachata.sh
@@ -59,6 +59,7 @@ chmod +x install-bachata.sh
 ```
 
 **Преимущества:**
+
 - ✅ Автоматически проверяет, что уже установлено
 - ✅ Пропускает выполненные шаги
 - ✅ Можно запускать многократно (идемпотентный)
@@ -69,7 +70,7 @@ chmod +x install-bachata.sh
 Альтернативно, используйте скрипт `install-on-existing-vds.sh`:
 
 ```bash
-wget https://raw.githubusercontent.com/your-repo/bachata/main/install-on-existing-vds.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/main/install-on-existing-vds.sh
 chmod +x install-on-existing-vds.sh
 sudo ./install-on-existing-vds.sh
 ```
@@ -94,7 +95,7 @@ sudo ./install-on-existing-vds.sh
 
 ```bash
 cd /opt/bachata
-sudo -u bachata git clone https://github.com/your-username/bachata-beat-counter.git .
+sudo -u bachata git clone https://github.com/GSilence/bachata.git .
 ```
 
 #### Вариант B: Через SCP/SFTP

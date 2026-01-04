@@ -1,12 +1,12 @@
 #!/bin/sh
 # Автоматическая установка Bachata Beat Counter на VDS Timeweb
 # Использование:
-#   wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+#   wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
 #   chmod +x install-bachata.sh
 #   ./install-bachata.sh
 #
 # Или через curl:
-#   curl -o install-bachata.sh https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh
+#   curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
 #   chmod +x install-bachata.sh
 #   ./install-bachata.sh
 

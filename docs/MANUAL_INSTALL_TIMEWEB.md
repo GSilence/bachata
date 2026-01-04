@@ -8,10 +8,10 @@
 
 ```bash
 # Скачайте скрипт
-wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
 
 # Или через curl
-curl -o install-bachata.sh https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh
+curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
 
 # Сделайте исполняемым и запустите
 chmod +x install-bachata.sh
@@ -19,6 +19,7 @@ chmod +x install-bachata.sh
 ```
 
 **Особенности скрипта:**
+
 - ✅ Автоматически проверяет, что уже установлено
 - ✅ Пропускает выполненные шаги
 - ✅ Можно запускать многократно (идемпотентный)
@@ -163,7 +164,7 @@ sudo -u ${APP_USER} ${APP_DIR}/venv/bin/pip install Cython>=0.29.0
 
 ```bash
 cd ${APP_DIR}
-sudo -u ${APP_USER} git clone https://github.com/your-username/bachata-beat-counter.git .
+sudo -u ${APP_USER} git clone https://github.com/GSilence/bachata.git .
 ```
 
 ### Вариант B: Через SCP с вашего компьютера

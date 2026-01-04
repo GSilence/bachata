@@ -8,10 +8,10 @@
 
 ```bash
 # Скачиваем скрипт
-wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
 
 # Или через curl (если wget не работает)
-curl -o install-bachata.sh https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh
+curl -o install-bachata.sh https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh
 
 # Делаем исполняемым
 chmod +x install-bachata.sh
@@ -21,6 +21,7 @@ chmod +x install-bachata.sh
 ```
 
 **Всё!** Скрипт автоматически:
+
 - ✅ Проверит, что уже установлено
 - ✅ Установит все зависимости
 - ✅ Настроит базу данных
@@ -46,7 +47,7 @@ chmod +x install-bachata.sh
 ```bash
 # Через Git
 cd /opt/bachata
-sudo -u bachata git clone https://github.com/your-username/bachata-beat-counter.git .
+sudo -u bachata git clone https://github.com/GSilence/bachata.git .
 
 # Или через SCP с вашего компьютера
 scp -r ./* root@your-server-ip:/opt/bachata/
@@ -56,6 +57,7 @@ chown -R bachata:bachata /opt/bachata
 ### 2. Запустите финальную настройку
 
 Если проект уже загружен, скрипт автоматически:
+
 - Установит Node.js зависимости
 - Настроит Prisma
 - Соберет Next.js приложение
@@ -100,6 +102,7 @@ bachata-manage logs
 ## 🔄 Повторный запуск
 
 Скрипт можно запускать многократно! Он автоматически:
+
 - Пропустит уже установленные компоненты
 - Проверит существующие настройки
 - Выполнит только необходимые шаги
@@ -135,6 +138,7 @@ cat /root/db_credentials.txt
 ## ❓ Проблемы?
 
 См. подробные инструкции:
+
 - [`docs/MANUAL_INSTALL_TIMEWEB.md`](./MANUAL_INSTALL_TIMEWEB.md) - пошаговая ручная установка
 - [`docs/INSTALL_ON_EXISTING_VDS.md`](./INSTALL_ON_EXISTING_VDS.md) - установка через скрипт
 - [`docs/DEPLOYMENT_VDS.md`](./DEPLOYMENT_VDS.md) - полная документация
@@ -145,4 +149,3 @@ cat /root/db_credentials.txt
 - Скрипт работает даже если проект еще не загружен
 - Можно запускать многократно - скрипт идемпотентный
 - Все проверки выполняются автоматически
-

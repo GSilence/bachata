@@ -74,7 +74,7 @@ tail -f /var/log/cloud-init.log
 ```bash
 ssh root@your-server-ip
 cd /opt/bachata
-sudo -u bachata git clone https://github.com/your-username/bachata-beat-counter.git .
+sudo -u bachata git clone https://github.com/GSilence/bachata.git .
 ```
 
 #### Вариант B: Через SCP

@@ -44,6 +44,7 @@ npm run dev
 ## Установка Demucs (для обработки аудио)
 
 См. инструкции:
+
 - [`docs/INSTALL_PYTHON_FFMPEG.md`](./docs/INSTALL_PYTHON_FFMPEG.md) - установка Python и FFmpeg
 - [`docs/DEMUCS_SETUP.md`](./docs/DEMUCS_SETUP.md) - установка Demucs
 
@@ -76,12 +77,13 @@ npm run check:demucs
 
 ```bash
 # Скачайте и запустите автоматический скрипт установки
-wget https://raw.githubusercontent.com/your-repo/bachata/main/install-bachata.sh -O install-bachata.sh
+wget https://raw.githubusercontent.com/GSilence/bachata/main/install-bachata.sh -O install-bachata.sh
 chmod +x install-bachata.sh
 ./install-bachata.sh
 ```
 
 **Особенности:**
+
 - ✅ Автоматически проверяет, что уже установлено
 - ✅ Пропускает выполненные шаги
 - ✅ Можно запускать многократно
