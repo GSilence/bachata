@@ -51,10 +51,6 @@ from scipy import signal
 
 import librosa  # Используется только для загрузки аудио
 
-# DEBUG MODE: Отключение фильтров для отладки
-# Если True, скрипт НЕ будет объединять секции короче 4-х битов, а выдаст всё как есть
-# ВАЖНО: Для продакшена установите False, чтобы фильтровать микро-секции
-DEBUG_NO_FILTER = False
 
 # Импорт Essentia (опционально, с fallback на librosa)
 # ВАЖНО: Essentia не работает на Windows - используйте librosa fallback
@@ -418,11 +414,15 @@ def calculate_rms(audio_data, sample_rate, start_time, end_time):
     return float(rms)
 
 
-def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None, offset=None):
+def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None, offset=None, duration=None):
     """
-    Детектирует мостики (bridges) в композиции по алгоритму "Mikhail's Logic"
-    С применением "Танцевальной логики Бачаты": фильтрация микро-секций и кратность 4 битам
-    Объединяет результаты Madmom (ритм) и Essentia/Librosa (структура)
+    Формирует сетку секций (grid) с идеальным счетом 1-8.
+    
+    Логика:
+    1. Квантование: Все границы от Essentia притягиваются к ближайшему "Раз" (первый бит такта)
+    2. Длительность: Считается длина каждой секции в битах
+    3. Авто-Bridge: Секция 4 бита = bridge, 8+ битов = verse
+    4. Слияние: Соседние секции с одинаковым label объединяются
     
     Args:
         downbeats: массив времен сильных долей (единиц)
@@ -432,551 +432,178 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
         bpm: BPM трека
         debug_data: словарь для сохранения debug информации (опционально)
         structure_section_starts: множество временных меток границ структуры от Essentia/Librosa (опционально)
-        offset: время первого бита (сильной доли) в секундах (опционально, для жесткого квантования)
+        offset: время первого бита (сильной доли) в секундах (обязательно для квантования)
+        duration: длительность трека в секундах (опционально, для корректной обработки последней секции)
     
     Returns:
-        list: список секций с типом (verse/bridge), отфильтрованных и выровненных
+        list: список секций с типом (verse/bridge), где каждый start - начало такта
     """
-    if len(downbeats) < 2:
+    if offset is None:
+        print("[DEBUG] ERROR: offset is required for grid quantization", file=sys.stderr)
         return []
     
-    # Инициализируем список кандидатов для debug
-    candidates_sections = []
-    
-    # Используем объединенные границы структуры для принудительного создания секций
     if structure_section_starts is None:
         structure_section_starts = set()
     
-    # ВАЖНО: Объединяем результаты Essentia (структурные границы) и RMS (громкость)
-    # Оба метода дополняют друг друга:
-    # - Essentia находит смену гармонии/структуры
-    # - RMS находит затихания/брейки (fade outs/breaks)
-    print(f"[DEBUG] Combined mode: Using {len(structure_section_starts)} structure boundaries from Essentia/Librosa", file=sys.stderr)
-    print(f"[DEBUG] RMS analysis ENABLED - combining structural boundaries with volume-based detection", file=sys.stderr)
+    # Вычисляем длительность трека
+    if duration is None:
+        duration = len(audio_data) / sample_rate
     
-    # Вычисляем средний интервал между сильными долями (обычно 8 битов = 4 такта)
-    intervals = np.diff(downbeats)
-    avg_interval = np.mean(intervals)
+    # Вычисляем интервал бита
+    beat_interval = 60.0 / bpm
     
-    # Вычисляем среднюю RMS энергию по всему треку
-    total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
+    print(f"[DEBUG] Grid formation: BPM={bpm}, offset={offset:.3f}s, duration={duration:.2f}s", file=sys.stderr)
+    print(f"[DEBUG] Structure boundaries: {len(structure_section_starts)}", file=sys.stderr)
     
-    # Определяем порог для "короткого" интервала (обычно 4 бита вместо 8)
-    # Если интервал меньше 60% от среднего, это потенциальный мостик
-    short_interval_threshold = avg_interval * 0.6
+    # ШАГ 1: КВАНТОВАНИЕ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ"
+    # Формула: offset + (round((b - offset) / (4 * beat_interval)) * (4 * beat_interval))
+    quantized_boundaries = []
+    for boundary in structure_section_starts:
+        quantized_time = offset + (round((boundary - offset) / (4 * beat_interval)) * (4 * beat_interval))
+        quantized_boundaries.append(quantized_time)
+        if abs(boundary - quantized_time) > 0.01:
+            print(f"[DEBUG] Quantized boundary: {boundary:.3f}s -> {quantized_time:.3f}s", file=sys.stderr)
     
-    # Определяем порог для "тихого" участка (break/fade out)
-    # Если RMS меньше 0.7x от среднего, это затихание/брейк
-    break_threshold = total_rms * 0.7
+    # Сортируем и удаляем дубликаты
+    quantized_boundaries = sorted(set(quantized_boundaries))
+    # Убираем границы вне диапазона [0, duration]
+    quantized_boundaries = [b for b in quantized_boundaries if 0 <= b <= duration]
     
-    print(f"[DEBUG] RMS thresholds: total_rms={total_rms:.4f}, break_threshold={break_threshold:.4f}", file=sys.stderr)
+    print(f"[DEBUG] Quantized boundaries: {len(quantized_boundaries)}", file=sys.stderr)
     
-    # Вычисляем интервалы
-    intervals = np.diff(downbeats)
+    # ШАГ 2: СОЗДАНИЕ СЕКЦИЙ ИЗ КВАНТОВАННЫХ ГРАНИЦ
+    sections = []
     
-    grid = []
-    current_start = 0.0
-    current_type = "verse"
-    current_beats = 0
+    # Начинаем с начала трека
+    current_start = offset  # Первая секция начинается с offset (первый "Раз")
     
-    # ОБЪЕДИНЕННЫЙ РЕЖИМ: Используем и Essentia границы, и RMS анализ
-    print(f"[DEBUG] ===== COMBINED MODE: Using Essentia boundaries + RMS analysis =====", file=sys.stderr)
+    # Добавляем все границы, включая начало и конец
+    all_boundaries = [current_start] + quantized_boundaries
     
-    # Проходим по всем сильным долям
-    for i in range(len(downbeats) - 1):
-        interval = intervals[i]
-        downbeat_time = downbeats[i]
-        next_downbeat_time = downbeats[i + 1]
+    # Если последняя граница не совпадает с концом, добавляем конец
+    if not all_boundaries or all_boundaries[-1] < duration - 0.1:
+        all_boundaries.append(duration)
+    
+    # Создаем секции между границами
+    for i in range(len(all_boundaries) - 1):
+        section_start = all_boundaries[i]
+        section_end = all_boundaries[i + 1]
         
-        # Вычисляем количество битов в этом интервале
-        beats_in_interval = int(round(interval / (60.0 / bpm)))
+        # Вычисляем длительность секции в битах
+        section_duration_seconds = section_end - section_start
+        section_beats = round(section_duration_seconds / beat_interval)
         
-        # Проверяем, является ли этот downbeat границей структуры от Essentia
-        is_structure_boundary = False
-        for struct_start in structure_section_starts:
-            if abs(downbeat_time - struct_start) < 0.2:  # В пределах 0.2 секунды
-                is_structure_boundary = True
-                print(f"[DEBUG] ✓ Essentia structure boundary detected at {downbeat_time:.2f}s", file=sys.stderr)
-                break
+        # Округляем до кратности 4 (минимум 4 бита)
+        section_beats = (section_beats // 4) * 4
+        if section_beats < 4:
+            section_beats = 4
         
-        # Проверяем RMS для обнаружения затиханий/брейков
-        # Важно: считаем секцию "тихой ямой" только если RMS низкий минимум 1 секунду
-        # Кратковременное затихание между ударами не должно считаться брейком
-        is_break_detected = False
-        segment_rms = None
-        
-        # Вычисляем RMS на текущем участке
-        segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
-        
-        # Проверяем, что RMS низкий на протяжении минимум 1 секунды
-        # Для этого проверяем текущий интервал и следующие интервалы, пока не наберем 1 секунду
-        if segment_rms < break_threshold:
-            # Проверяем следующие интервалы, чтобы убедиться, что затихание длится минимум 1 секунду
-            total_low_rms_duration = interval
-            checked_intervals = 1
-            min_break_duration = 1.0  # Минимум 1 секунда
-            
-            # Проверяем следующие интервалы, пока не наберем 1 секунду или не закончатся интервалы
-            j = i + 1
-            while total_low_rms_duration < min_break_duration and j < len(downbeats) - 1:
-                next_interval = intervals[j]
-                next_start = downbeats[j]
-                next_end = downbeats[j + 1]
-                
-                # Вычисляем RMS следующего интервала
-                next_rms = calculate_rms(audio_data, sample_rate, next_start, next_end)
-                
-                if next_rms < break_threshold:
-                    total_low_rms_duration += next_interval
-                    checked_intervals += 1
-                    j += 1
-                else:
-                    # Если RMS поднялся выше порога - прерываем проверку
-                    break
-            
-            # Считаем break только если затихание длится минимум 1 секунду
-            if total_low_rms_duration >= min_break_duration:
-                is_break_detected = True
-                print(f"[DEBUG] ✓ RMS break detected at {downbeat_time:.2f}s "
-                      f"(RMS: {segment_rms:.4f} < {break_threshold:.4f}, "
-                      f"duration: {total_low_rms_duration:.2f}s, checked {checked_intervals} intervals)", file=sys.stderr)
-            else:
-                print(f"[DEBUG] ✗ RMS low but too short at {downbeat_time:.2f}s "
-                      f"(RMS: {segment_rms:.4f} < {break_threshold:.4f}, "
-                      f"duration: {total_low_rms_duration:.2f}s < {min_break_duration}s) - ignoring", file=sys.stderr)
-        
-        # Объединяем результаты: новая секция если есть граница Essentia ИЛИ RMS break
-        is_new_section = is_structure_boundary or is_break_detected
-        
-        if is_new_section:
-            # Завершаем предыдущую секцию (если она есть)
-            if current_beats > 0:
-                prev_section = {
-                    "type": current_type,
-                    "start": current_start,
-                    "beats": current_beats
-                }
-                grid.append(prev_section)
-                reason = []
-                if is_structure_boundary:
-                    reason.append("essentia_boundary")
-                if is_break_detected:
-                    reason.append("rms_break")
-                
-                candidates_sections.append({
-                    "time": current_start,
-                    "type": current_type,
-                    "beats": current_beats,
-                    "reason": "_".join(reason) + "_previous",
-                    "action": "added"
-                })
-                print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
-                      f"({current_beats} beats) - before {'+'.join(reason)}", file=sys.stderr)
-            
-            # Определяем тип новой секции
-            if is_break_detected:
-                # Если это затихание - помечаем как bridge
-                # Выравниваем количество битов до кратности 4 (минимум 4)
-                beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)
-                
-                bridge_section = {
-                    "type": "bridge",
-                    "start": downbeat_time,
-                    "beats": beats_in_bridge
-                }
-                grid.append(bridge_section)
-                
-                reason_parts = []
-                if is_structure_boundary:
-                    reason_parts.append("essentia")
-                reason_parts.append("rms_break")
-                
-                candidates_sections.append({
-                    "time": downbeat_time,
-                    "type": "bridge",
-                    "beats": beats_in_bridge,
-                    "original_beats": beats_in_interval,
-                    "reason": "_".join(reason_parts),
-                    "action": "added"
-                })
-                
-                print(f"[DEBUG] DECISION: Added BRIDGE section at {downbeat_time:.2f}s "
-                      f"({beats_in_interval} beats -> {beats_in_bridge} beats, "
-                      f"RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
-                
-                # После bridge начинаем новую verse секцию со следующего интервала
-                current_start = next_downbeat_time
-                current_type = "verse"
-                current_beats = 0
-            else:
-                # Если это только структурная граница (без RMS break) - начинаем verse
-                current_type = "verse"
-                current_start = downbeat_time
-                current_beats = beats_in_interval
-                print(f"[DEBUG] DECISION: Starting VERSE section at {downbeat_time:.2f}s (Essentia boundary only)", file=sys.stderr)
+        # Авто-Bridge: 4 бита = bridge, 8+ = verse
+        if section_beats == 4:
+            section_type = "bridge"
         else:
-            # Обычный интервал - продолжаем текущую секцию
-            if current_type == "verse" and current_beats == 0:
-                current_start = downbeat_time
-            
-            current_beats += beats_in_interval
-    
-    # Добавляем последнюю секцию
-    if current_beats > 0:
-        grid.append({
-            "type": current_type,
-            "start": current_start,
-            "beats": current_beats
+            section_type = "verse"
+        
+        sections.append({
+            "type": section_type,
+            "start": section_start,
+            "beats": section_beats
         })
     
-    # Если grid пустой, создаем одну verse секцию на весь трек
-    if not grid:
-        duration = len(audio_data) / sample_rate
-        total_beats = int(round(duration * bpm / 60.0))
-        grid.append({
+    # Если секций нет, создаем одну verse на весь трек
+    if not sections:
+        total_beats = round(duration * bpm / 60.0)
+        # Округляем до кратности 4
+        total_beats = (total_beats // 4) * 4
+        if total_beats < 8:
+            total_beats = 8
+        sections.append({
             "type": "verse",
-            "start": 0.0,
+            "start": offset,
             "beats": total_beats
         })
     
-    # ПОСТ-ОБРАБОТКА: Фильтрация близких границ + Musical Quantization
-    # Этап 1: Musical Quantization - убираем секции короче 4-х битов (музыкально некорректные)
-    # Этап 2: Фильтрация близких границ по времени
-    print(f"\n[DEBUG] Post-processing: Musical Quantization + Filtering boundaries...", file=sys.stderr)
-    print(f"[DEBUG] Total sections before post-processing: {len(grid)}", file=sys.stderr)
+    print(f"[DEBUG] Sections after creation: {len(sections)}", file=sys.stderr)
     
-    # Параметры для Musical Quantization
-    MIN_SECTION_BEATS_QUANTIZATION = 3.5  # Минимум 3.5 битов (с погрешностью для 4-х битов)
-    MIN_BOUNDARY_DISTANCE = 3.0  # Минимум 3 секунды между границами (для фильтрации по времени)
-    MAX_SECTION_DURATION_FOR_MERGE = 4.0  # Не объединяем секции длиннее 4 секунд
+    # ШАГ 3: СЛИЯНИЕ СОСЕДНИХ СЕКЦИЙ С ОДИНАКОВЫМ LABEL
+    merged_sections = []
+    for section in sections:
+        if not merged_sections:
+            merged_sections.append(section.copy())
+        else:
+            prev_section = merged_sections[-1]
+            # Если тип совпадает - объединяем
+            if prev_section['type'] == section['type']:
+                # Объединяем: увеличиваем beats предыдущей секции
+                prev_section['beats'] += section['beats']
+                print(f"[DEBUG] Merged {section['type']} sections: {prev_section['beats'] - section['beats']} + {section['beats']} = {prev_section['beats']} beats", file=sys.stderr)
+            else:
+                # Разные типы - добавляем как новую секцию
+                merged_sections.append(section.copy())
     
-    # Вычисляем длительность одного бита в секундах
+    sections = merged_sections
+    print(f"[DEBUG] Sections after merging: {len(sections)}", file=sys.stderr)
+    
+    # ШАГ 4: ФИНАЛЬНАЯ ПРОВЕРКА И КОРРЕКТИРОВКА
+    # Убеждаемся, что все start квантованы к "Раз"
     beat_interval = 60.0 / bpm
-    seconds_per_beat = beat_interval
+    final_sections = []
     
-    if len(grid) > 1:
-        filtered_grid = [grid[0]]  # Всегда оставляем первую секцию
+    for i, section in enumerate(sections):
+        # Квантуем start к ближайшему "Раз"
+        quantized_start = offset + (round((section['start'] - offset) / (4 * beat_interval)) * (4 * beat_interval))
         
-        for i in range(1, len(grid)):
-            current_section = grid[i]
-            current_start = current_section['start']
-            prev_section = filtered_grid[-1]
-            prev_start = prev_section['start']
-            
-            distance = current_start - prev_start
-            
-            # ЭТАП 1: Musical Quantization - проверяем длительность в БИТАХ
-            # Рассчитываем длительность текущей секции в битах (от предыдущей границы до текущей)
-            # Это более точно, чем использовать beats из секции, так как учитывает реальное время
-            current_beats_duration = distance / seconds_per_beat
-            
-            # ПРИОРИТЕТ 1: Если секция короче 3.5 битов - БЕЗУСЛОВНО объединяем
-            # Это убирает "дребезг" (1-2-1-2) и случайные сбросы посреди такта
-            if current_beats_duration < MIN_SECTION_BEATS_QUANTIZATION:
-                print(f"[DEBUG] Musical Quantization: Merging section at {current_start:.2f}s "
-                      f"(duration: {current_beats_duration:.2f} beats < {MIN_SECTION_BEATS_QUANTIZATION} beats - musically incorrect)", file=sys.stderr)
-                
-                prev_section['beats'] += current_section['beats']
-                print(f"[DEBUG]   → Merged {current_section['beats']} beats into previous section at {prev_start:.2f}s "
-                      f"({prev_section['beats']} beats total)", file=sys.stderr)
-                continue  # Пропускаем добавление текущей секции
-            
-            # Вычисляем длительность предыдущей секции в секундах (для проверки MAX_SECTION_DURATION_FOR_MERGE)
-            prev_section_duration = prev_section['beats'] * beat_interval
-            
-            # ЭТАП 2: Фильтрация близких границ по времени (если не сработала Musical Quantization)
-            if distance < MIN_BOUNDARY_DISTANCE and prev_section_duration < MAX_SECTION_DURATION_FOR_MERGE:
-                # Две границы слишком близко И предыдущая секция короткая - удаляем текущую
-                # Объединяем beats текущей секции с предыдущей
-                print(f"[DEBUG] Removing close boundary: {current_start:.2f}s (too close to {prev_start:.2f}s, "
-                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s, "
-                      f"prev section duration: {prev_section_duration:.2f}s < {MAX_SECTION_DURATION_FOR_MERGE}s)", file=sys.stderr)
-                
-                prev_section['beats'] += current_section['beats']
-                print(f"[DEBUG]   → Merged {current_section['beats']} beats into previous section at {prev_start:.2f}s "
-                      f"({prev_section['beats']} beats total)", file=sys.stderr)
-            elif distance < MIN_BOUNDARY_DISTANCE and prev_section_duration >= MAX_SECTION_DURATION_FOR_MERGE:
-                # Границы близко, но предыдущая секция уже длинная - НЕ объединяем
-                # Это позволяет разбить "Гига-Куплет" на части
-                print(f"[DEBUG] Keeping boundary: {current_start:.2f}s (close to {prev_start:.2f}s, "
-                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s, "
-                      f"BUT prev section duration: {prev_section_duration:.2f}s >= {MAX_SECTION_DURATION_FOR_MERGE}s - NOT merging)", file=sys.stderr)
-                filtered_grid.append(current_section)
-            else:
-                # Нормальная секция - добавляем её
-                filtered_grid.append(current_section)
-        
-        grid = filtered_grid
-        print(f"[DEBUG] Post-processing complete. Total sections after filtering: {len(grid)}", file=sys.stderr)
-    else:
-        print(f"[DEBUG] Post-processing skipped (only {len(grid)} section)", file=sys.stderr)
-    
-    # ФИЛЬТРАЦИЯ МИКРО-СЕКЦИЙ И ВЫРАВНИВАНИЕ ПО КРАТНОСТИ 4
-    # В бачате музыкальная фраза (секция) не может быть короче 4 beats (минимум один такт)
-    # Обычно секции кратны 8 beats (полный цикл танца), но минимум 4 beats
-    MIN_SECTION_BEATS = 4  # Минимальная длина секции в beats
-    
-    print(f"\n[DEBUG] Starting filtering process. Total sections before filtering: {len(grid)}", file=sys.stderr)
-    print(f"[DEBUG] DEBUG_NO_FILTER = {DEBUG_NO_FILTER}", file=sys.stderr)
-    
-    filtered_grid = []
-    for i, section in enumerate(grid):
-        beats_count = section['beats']
-        section_start = section['start']
-        
-        print(f"[DEBUG] Processing section #{i+1}: {section['type']} at {section_start:.2f}s, "
-              f"{beats_count} beats", file=sys.stderr)
-        
-        # Если DEBUG_NO_FILTER включен, пропускаем фильтрацию
-        if DEBUG_NO_FILTER:
-            print(f"[DEBUG] DECISION: Keeping section at {section_start:.2f}s (DEBUG_NO_FILTER=True, no filtering)", file=sys.stderr)
-            filtered_grid.append({
-                "type": section['type'],
-                "start": section['start'],
-                "beats": beats_count
-            })
-            continue
-        
-        # Если секция короче минимума - вливаем в предыдущую
-        if beats_count < MIN_SECTION_BEATS:
-            print(f"[DEBUG] DECISION: Merging section at {section_start:.2f}s because duration ({beats_count} beats) < MIN_SECTION_LENGTH ({MIN_SECTION_BEATS})", file=sys.stderr)
-            
-            # Обновляем debug данные
-            for candidate in candidates_sections:
-                if abs(candidate['time'] - section_start) < 0.1:
-                    candidate['action'] = 'merged'
-                    candidate['reason'] = f'duration_too_short_{beats_count}_beats'
-            
-            # Если есть предыдущая секция, увеличиваем её длительность
-            if filtered_grid:
-                prev_section = filtered_grid[-1]
-                prev_beats = prev_section['beats']
-                prev_section['beats'] += beats_count
-                print(f"[DEBUG]    → Merged into previous {prev_section['type']} section "
-                      f"({prev_beats} -> {prev_section['beats']} beats)", file=sys.stderr)
-            # Если нет предыдущей и это первая секция, пропускаем (начнем со следующей)
-            elif i < len(grid) - 1:
-                # Пытаемся влить в следующую секцию
-                next_section = grid[i + 1]
-                next_section['beats'] += beats_count
-                next_section['start'] = section['start']  # Сдвигаем начало следующей секции
-                print(f"[DEBUG]    → Will merge into next {next_section['type']} section", file=sys.stderr)
+        # Пересчитываем длительность в битах на основе следующей секции или конца трека
+        if i < len(sections) - 1:
+            next_start = sections[i + 1]['start']
+            next_quantized = offset + (round((next_start - offset) / (4 * beat_interval)) * (4 * beat_interval))
+            section_end = next_quantized
         else:
-            # Выравниваем до кратности 4 (округляем вниз для стабильности)
-            aligned_beats = (beats_count // 4) * 4
-            if aligned_beats < MIN_SECTION_BEATS:
-                aligned_beats = MIN_SECTION_BEATS
-            
-            if aligned_beats != beats_count:
-                print(f"[DEBUG] DECISION: Aligning section at {section_start:.2f}s "
-                      f"from {beats_count} to {aligned_beats} beats (multiple of 4)", file=sys.stderr)
-            else:
-                print(f"[DEBUG] DECISION: Keeping section at {section_start:.2f}s "
-                      f"({beats_count} beats, already aligned)", file=sys.stderr)
-            
-            filtered_grid.append({
-                "type": section['type'],
-                "start": section['start'],
-                "beats": aligned_beats
-            })
-    
-    # Если после фильтрации осталась только одна секция или ничего, создаем одну verse
-    if len(filtered_grid) <= 1:
-        duration = len(audio_data) / sample_rate
-        total_beats = int(round(duration * bpm / 60.0))
-        # Выравниваем до кратности 4
-        total_beats = (total_beats // 4) * 4
-        filtered_grid = [{
-            "type": "verse",
-            "start": 0.0,
-            "beats": max(MIN_SECTION_BEATS, total_beats)
-        }]
-        print(f"  ⚠ After filtering, only {len(filtered_grid)} section(s) left. "
-              f"Using single verse section for entire track ({filtered_grid[0]['beats']} beats).", file=sys.stderr)
-    
-    # Финальная проверка: убеждаемся, что все секции >= MIN_SECTION_BEATS
-    final_grid = []
-    for section in filtered_grid:
-        if section['beats'] >= MIN_SECTION_BEATS:
-            final_grid.append(section)
+            # Последняя секция - до конца трека (квантуем конец к ближайшему "Раз")
+            section_end_quantized = offset + (round((duration - offset) / (4 * beat_interval)) * (4 * beat_interval))
+            # Но не обрезаем трек - используем реальный duration
+            section_end = duration
+        
+        # Вычисляем длительность в битах
+        section_duration = section_end - quantized_start
+        section_beats = round(section_duration / beat_interval)
+        
+        # Округляем до кратности 4
+        section_beats = (section_beats // 4) * 4
+        if section_beats < 4:
+            section_beats = 4
+        
+        # Авто-Bridge: 4 бита = bridge, 8+ = verse
+        if section_beats == 4:
+            section_type = "bridge"
         else:
-            # Последний шанс: вливаем в предыдущую
-            if final_grid:
-                final_grid[-1]['beats'] += section['beats']
-                print(f"[DEBUG] Final merge: {section['type']} section at {section['start']:.2f}s merged into previous", file=sys.stderr)
-    
-    # ВТОРОЙ ПРОХОД ФИЛЬТРАЦИИ: Musical Quantization 2.0
-    # Убираем секции с длительностью, которая ломает танцевальный счет (1-8)
-    # Проблема: секции длиной 6 или 10 битов остаются после первого прохода
-    print(f"\n[DEBUG] Second Pass: Musical Quantization 2.0 - fixing sections that break dance count (1-8)...", file=sys.stderr)
-    print(f"[DEBUG] Total sections before second pass: {len(final_grid if final_grid else filtered_grid)}", file=sys.stderr)
-    
-    # Используем final_grid если он не пустой, иначе filtered_grid
-    sections_to_process = final_grid if final_grid else filtered_grid
-    second_pass_grid = []
-    
-    # Вычисляем среднюю RMS энергию для определения "явной тишины"
-    total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
-    break_threshold = total_rms * 0.7  # Порог для тишины (break/bridge)
-    
-    for i, section in enumerate(sections_to_process):
-        beats_duration = section['beats']
-        section_start = section['start']
-        section_type = section['type']
+            section_type = "verse"
         
-        # Вычисляем остаток от деления на 4
-        remainder = beats_duration % 4
-        
-        # Правило: Если beats_duration % 4 >= 2 (например, 6, 10, 14 битов)
-        # Это значит граница стоит "посередине" такта - удаляем её
-        if remainder >= 2:
-            # Исключение: Если это явная тишина (Bridge) с очень низким RMS
-            is_explicit_break = False
-            if section_type == 'bridge':
-                # Вычисляем конец секции
-                beat_interval = 60.0 / bpm
-                section_end = section_start + (beats_duration * beat_interval)
-                segment_rms = calculate_rms(audio_data, sample_rate, section_start, section_end)
-                
-                if segment_rms < break_threshold:
-                    is_explicit_break = True
-                    print(f"[DEBUG] Second Pass: Keeping bridge at {section_start:.2f}s "
-                          f"({beats_duration} beats, remainder={remainder}) - explicit break "
-                          f"(RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
-            
-            if not is_explicit_break:
-                # Удаляем границу - объединяем с предыдущей секцией
-                print(f"[DEBUG] Second Pass: Removing boundary at {section_start:.2f}s "
-                      f"({beats_duration} beats, remainder={remainder} >= 2) - merging with previous section", file=sys.stderr)
-                
-                if second_pass_grid:
-                    # Объединяем с предыдущей секцией
-                    prev_section = second_pass_grid[-1]
-                    prev_section['beats'] += beats_duration
-                    print(f"[DEBUG]   → Merged {beats_duration} beats into previous {prev_section['type']} section "
-                          f"at {prev_section['start']:.2f}s ({prev_section['beats']} beats total)", file=sys.stderr)
-                else:
-                    # Если это первая секция, оставляем как есть (начнем со следующей)
-                    print(f"[DEBUG]   → First section, keeping as is", file=sys.stderr)
-                    second_pass_grid.append(section)
-            else:
-                # Явная тишина - оставляем как есть
-                second_pass_grid.append(section)
+        final_sections.append({
+            "type": section_type,
+            "start": round(quantized_start, 3),
+            "beats": section_beats
+        })
+    
+    # Финальное слияние соседних секций с одинаковым типом
+    final_merged = []
+    for section in final_sections:
+        if not final_merged:
+            final_merged.append(section.copy())
         else:
-            # Если remainder < 2 (например, 5, 9, 13 битов) - это погрешность, оставляем как есть
-            # Фронтенд сам притянет к ближайшему биту (у нас там есть snap)
-            if remainder > 0:
-                print(f"[DEBUG] Second Pass: Keeping section at {section_start:.2f}s "
-                      f"({beats_duration} beats, remainder={remainder} < 2) - small error, frontend will snap", file=sys.stderr)
-            second_pass_grid.append(section)
-    
-    # Обновляем final_grid результатами второго прохода
-    final_grid = second_pass_grid
-    print(f"[DEBUG] Second Pass complete. Total sections after second pass: {len(final_grid)}", file=sys.stderr)
-    
-    # ЖЕСТКОЕ КВАНТОВАНИЕ ПО СЕТКЕ (Hard Grid Quantization)
-    # ВРЕМЯ БИТОВ НЕЗЫБЛЕМО: все границы секций должны попадать строго на начало такта (каждый 4-й бит)
-    # Это гарантирует, что фронтенд не будет сбрасывать счетчик посреди фразы
-    if offset is not None and len(final_grid) > 0:
-        print(f"\n[DEBUG] Hard Grid Quantization: Aligning all section starts to beat grid...", file=sys.stderr)
-        print(f"[DEBUG] BPM={bpm}, offset={offset:.3f}s", file=sys.stderr)
-        
-        # Вычисляем идеальную длину бита
-        beat_interval = 60.0 / bpm
-        
-        # Создаем "Виртуальную Сетку Допустимых Начал" (Valid Start Points)
-        # Это точки времени: offset + (i * 4 * beat_interval) - начало каждого такта (каждые 4 бита)
-        # Генерируем сетку на весь трек (с запасом)
-        track_duration = len(audio_data) / sample_rate
-        max_grid_index = int((track_duration - offset) / (4 * beat_interval)) + 10  # +10 для запаса
-        
-        valid_start_points = []
-        for i in range(max_grid_index + 1):
-            grid_time = offset + (i * 4 * beat_interval)
-            if grid_time >= 0:
-                valid_start_points.append(grid_time)
-        
-        print(f"[DEBUG] Generated {len(valid_start_points)} valid start points (every 4 beats = {4 * beat_interval:.3f}s)", file=sys.stderr)
-        if len(valid_start_points) > 0:
-            print(f"[DEBUG] First valid point: {valid_start_points[0]:.3f}s, last: {valid_start_points[-1]:.3f}s", file=sys.stderr)
-        
-        # Квантуем каждую секцию к ближайшей точке сетки
-        quantized_grid = []
-        for i, section in enumerate(final_grid):
-            original_start = section['start']
-            
-            # Находим ближайшую точку из виртуальной сетки
-            nearest_grid_time = None
-            min_distance = float('inf')
-            
-            for grid_time in valid_start_points:
-                distance = abs(grid_time - original_start)
-                if distance < min_distance:
-                    min_distance = distance
-                    nearest_grid_time = grid_time
-            
-            if nearest_grid_time is None:
-                # Если не нашли (не должно произойти), оставляем как есть
-                print(f"[DEBUG] WARNING: Could not find nearest grid point for section at {original_start:.3f}s", file=sys.stderr)
-                quantized_grid.append(section)
-                continue
-            
-            # Принудительно заменяем start на идеальное время
-            quantized_section = section.copy()
-            quantized_section['start'] = round(nearest_grid_time, 3)
-            
-            if abs(original_start - nearest_grid_time) > 0.01:  # Если изменение заметное (>10ms)
-                print(f"[DEBUG] Quantized section #{i+1}: {original_start:.3f}s -> {nearest_grid_time:.3f}s "
-                      f"(shift: {nearest_grid_time - original_start:+.3f}s, distance: {min_distance:.3f}s)", file=sys.stderr)
-            
-            quantized_grid.append(quantized_section)
-        
-        # Проверяем, что после квантования секции не схлопнулись
-        # Удаляем дубликаты (секции с одинаковым start) и секции с нулевой длиной
-        cleaned_grid = []
-        for i, section in enumerate(quantized_grid):
-            section_start = section['start']
-            section_beats = section['beats']
-            
-            # Проверяем, что длина секции > 0
-            if section_beats <= 0:
-                print(f"[DEBUG] Removing section #{i+1} at {section_start:.3f}s: zero or negative length ({section_beats} beats)", file=sys.stderr)
-                continue
-            
-            # Проверяем, что start не совпадает с предыдущей секцией
-            if cleaned_grid and abs(cleaned_grid[-1]['start'] - section_start) < 0.001:
-                # Объединяем с предыдущей секцией
-                print(f"[DEBUG] Merging section #{i+1} at {section_start:.3f}s with previous (same start time)", file=sys.stderr)
-                cleaned_grid[-1]['beats'] += section_beats
-                # Сохраняем тип предыдущей секции (или bridge если любая из них bridge)
-                if section['type'] == 'bridge' or cleaned_grid[-1]['type'] == 'bridge':
-                    cleaned_grid[-1]['type'] = 'bridge'
+            prev = final_merged[-1]
+            if prev['type'] == section['type']:
+                prev['beats'] += section['beats']
             else:
-                cleaned_grid.append(section)
-        
-        final_grid = cleaned_grid
-        print(f"[DEBUG] Hard Grid Quantization complete. Final sections: {len(final_grid)}", file=sys.stderr)
-        
-        # Выводим финальные времена для проверки
-        if len(final_grid) > 0:
-            print(f"[DEBUG] Quantized section starts:", file=sys.stderr)
-            for i, section in enumerate(final_grid[:10]):  # Первые 10 для краткости
-                print(f"[DEBUG]   Section #{i+1}: {section['start']:.3f}s ({section['type']}, {section['beats']} beats)", file=sys.stderr)
-            if len(final_grid) > 10:
-                print(f"[DEBUG]   ... and {len(final_grid) - 10} more sections", file=sys.stderr)
-    else:
-        if offset is None:
-            print(f"[DEBUG] Hard Grid Quantization skipped: offset not provided", file=sys.stderr)
-        else:
-            print(f"[DEBUG] Hard Grid Quantization skipped: no sections to quantize", file=sys.stderr)
+                final_merged.append(section.copy())
     
-    # Сохраняем debug данные если передан debug_data
-    if debug_data is not None:
-        debug_data['candidates_sections'] = candidates_sections
+    print(f"[DEBUG] Final grid: {len(final_merged)} sections", file=sys.stderr)
+    for i, section in enumerate(final_merged[:10]):
+        print(f"[DEBUG]   Section #{i+1}: {section['start']:.3f}s, {section['type']}, {section['beats']} beats", file=sys.stderr)
+    if len(final_merged) > 10:
+        print(f"[DEBUG]   ... and {len(final_merged) - 10} more sections", file=sys.stderr)
     
-    print(f"[DEBUG] Filtering complete. Total sections after filtering: {len(final_grid if final_grid else filtered_grid)}", file=sys.stderr)
-    
-    return final_grid if final_grid else filtered_grid
+    return final_merged
 
 
 def analyze_track_with_madmom(audio_path, drums_path=None):
@@ -1229,7 +856,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         # Step 7: Детектирование мостиков с учетом объединенных границ
         # Используем оригинальное аудио (y) и его sample_rate (sr_orig) для RMS анализа
         print("\nStep 7: Detecting bridge sections (with merged structure boundaries)...", file=sys.stderr)
-        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm, debug_data, merged_section_starts, offset)
+        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm, debug_data, merged_section_starts, offset, duration)
         
         bridge_count = len([s for s in grid if s['type'] == 'bridge'])
         verse_count = len([s for s in grid if s['type'] == 'verse'])
@@ -1266,8 +893,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                 'candidates_sections': debug_data['candidates_sections'],
                 'final_grid': grid,
                 'total_beats': len(all_beats),
-                'total_downbeats': len(downbeats),
-                'debug_no_filter': DEBUG_NO_FILTER
+                'total_downbeats': len(downbeats)
             }
             
             with open(debug_file_path, 'w', encoding='utf-8') as f:
