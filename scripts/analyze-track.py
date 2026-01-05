@@ -157,13 +157,14 @@ def analyze_structure_essentia(audio_path):
         # При hop_size=512: 4 секунды = ~345 кадров
         # При hop_size=2048: 4 секунды = ~86 кадров
         beats_per_bar = 4  # Бачата обычно 4/4
-        bars_per_section = 2  # Минимум 2 такта на секцию
-        seconds_per_section = (beats_per_bar * bars_per_section) * (60.0 / 120.0)  # Примерно 4 секунды при 120 BPM
+        bars_per_section = 4  # Увеличиваем до 4 тактов (квадрат) для стабильности
+        seconds_per_section = (beats_per_bar * bars_per_section) * (60.0 / 120.0)  # ~8 секунд при 120 BPM
         frames_per_section = int(seconds_per_section * sample_rate / hop_size)
         
         # Kernel size должен быть достаточно большим, чтобы не реагировать на отдельные удары
-        # но достаточно маленьким, чтобы уловить смену секций
-        kernel_size = max(50, min(frames_per_section // 2, 200))  # От 50 до 200 кадров
+        # Увеличиваем kernel_size чтобы видеть структуру, а не ритм
+        # Минимум 100 кадров, максимум 300 кадров (больше чем раньше)
+        kernel_size = max(100, min(frames_per_section // 2, 300))  # От 100 до 300 кадров
         
         print(f"[Essentia] NoveltyCurve parameters: kernel_size={kernel_size}, hop_size={hop_size}", file=sys.stderr)
         
@@ -201,17 +202,25 @@ def analyze_structure_essentia(audio_path):
         from scipy.signal import find_peaks
         
         # Порог для пиков: используем процентиль для адаптации к разным трекам
-        # Более низкий порог = больше границ (более чувствительно)
-        peak_height = np.percentile(novelty_curve, 60)  # 60-й процентиль для чувствительности
+        # Повышаем порог для снижения чувствительности (меньше ложных срабатываний)
+        peak_height = np.percentile(novelty_curve, 70)  # 70-й процентиль (было 60)
         
-        # Минимальное расстояние между пиками: минимум 2 секунды (чтобы не реагировать на каждый удар)
-        min_distance_frames = int(sample_rate / hop_size * 2)  # 2 секунды
+        # Минимальное расстояние между пиками: минимум 4 секунды
+        # Секции в Бачате не меняются чаще, чем раз в квадрат (8 счетов = ~4 секунды при 120 BPM)
+        min_distance_frames = int(sample_rate / hop_size * 4)  # 4 секунды (было 2)
+        
+        # Prominence (значимость пика) - игнорируем мелкую рябь
+        # Вычисляем prominence как процент от диапазона кривой
+        curve_range = np.max(novelty_curve) - np.min(novelty_curve)
+        prominence_threshold = curve_range * 0.15  # 15% от диапазона (можно настроить 0.1-0.2)
         
         peaks, properties = find_peaks(novelty_curve,
                                       height=peak_height,
-                                      distance=min_distance_frames)
+                                      distance=min_distance_frames,
+                                      prominence=prominence_threshold)
         
-        print(f"[Essentia] Found {len(peaks)} peaks in NoveltyCurve (height >= {peak_height:.4f})", file=sys.stderr)
+        print(f"[Essentia] Found {len(peaks)} peaks in NoveltyCurve", file=sys.stderr)
+        print(f"[Essentia] Peak detection params: height>={peak_height:.4f}, distance>={min_distance_frames} frames (~4s), prominence>={prominence_threshold:.4f}", file=sys.stderr)
         
         # Преобразуем индексы пиков во временные метки
         frame_times = np.arange(len(mfccs)) * (hop_size / sample_rate)
@@ -484,16 +493,50 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
                 break
         
         # Проверяем RMS для обнаружения затиханий/брейков
+        # Важно: считаем секцию "тихой ямой" только если RMS низкий минимум 1 секунду
+        # Кратковременное затихание между ударами не должно считаться брейком
         is_break_detected = False
         segment_rms = None
         
-        # Вычисляем RMS на этом участке
+        # Вычисляем RMS на текущем участке
         segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
         
-        # Если RMS упал ниже порога - это затихание/брейк
+        # Проверяем, что RMS низкий на протяжении минимум 1 секунды
+        # Для этого проверяем текущий интервал и следующие интервалы, пока не наберем 1 секунду
         if segment_rms < break_threshold:
-            is_break_detected = True
-            print(f"[DEBUG] ✓ RMS break detected at {downbeat_time:.2f}s (RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
+            # Проверяем следующие интервалы, чтобы убедиться, что затихание длится минимум 1 секунду
+            total_low_rms_duration = interval
+            checked_intervals = 1
+            min_break_duration = 1.0  # Минимум 1 секунда
+            
+            # Проверяем следующие интервалы, пока не наберем 1 секунду или не закончатся интервалы
+            j = i + 1
+            while total_low_rms_duration < min_break_duration and j < len(downbeats) - 1:
+                next_interval = intervals[j]
+                next_start = downbeats[j]
+                next_end = downbeats[j + 1]
+                
+                # Вычисляем RMS следующего интервала
+                next_rms = calculate_rms(audio_data, sample_rate, next_start, next_end)
+                
+                if next_rms < break_threshold:
+                    total_low_rms_duration += next_interval
+                    checked_intervals += 1
+                    j += 1
+                else:
+                    # Если RMS поднялся выше порога - прерываем проверку
+                    break
+            
+            # Считаем break только если затихание длится минимум 1 секунду
+            if total_low_rms_duration >= min_break_duration:
+                is_break_detected = True
+                print(f"[DEBUG] ✓ RMS break detected at {downbeat_time:.2f}s "
+                      f"(RMS: {segment_rms:.4f} < {break_threshold:.4f}, "
+                      f"duration: {total_low_rms_duration:.2f}s, checked {checked_intervals} intervals)", file=sys.stderr)
+            else:
+                print(f"[DEBUG] ✗ RMS low but too short at {downbeat_time:.2f}s "
+                      f"(RMS: {segment_rms:.4f} < {break_threshold:.4f}, "
+                      f"duration: {total_low_rms_duration:.2f}s < {min_break_duration}s) - ignoring", file=sys.stderr)
         
         # Объединяем результаты: новая секция если есть граница Essentia ИЛИ RMS break
         is_new_section = is_structure_boundary or is_break_detected
@@ -588,6 +631,43 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
             "start": 0.0,
             "beats": total_beats
         })
+    
+    # ПОСТ-ОБРАБОТКА: Фильтрация близких границ
+    # Если две найденные границы находятся ближе чем 3 секунды друг к другу,
+    # оставляем только одну (удаляем вторую и объединяем её beats с предыдущей секцией)
+    print(f"\n[DEBUG] Post-processing: Filtering boundaries closer than 3 seconds...", file=sys.stderr)
+    print(f"[DEBUG] Total sections before post-processing: {len(grid)}", file=sys.stderr)
+    
+    MIN_BOUNDARY_DISTANCE = 3.0  # Минимум 3 секунды между границами
+    
+    if len(grid) > 1:
+        filtered_grid = [grid[0]]  # Всегда оставляем первую секцию
+        
+        for i in range(1, len(grid)):
+            current_section = grid[i]
+            current_start = current_section['start']
+            prev_section = filtered_grid[-1]
+            prev_start = prev_section['start']
+            
+            distance = current_start - prev_start
+            
+            if distance < MIN_BOUNDARY_DISTANCE:
+                # Две границы слишком близко - удаляем текущую
+                # Объединяем beats текущей секции с предыдущей
+                print(f"[DEBUG] Removing close boundary: {current_start:.2f}s (too close to {prev_start:.2f}s, "
+                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s)", file=sys.stderr)
+                
+                prev_section['beats'] += current_section['beats']
+                print(f"[DEBUG]   → Merged {current_section['beats']} beats into previous section at {prev_start:.2f}s "
+                      f"({prev_section['beats']} beats total)", file=sys.stderr)
+            else:
+                # Нормальная секция - добавляем её
+                filtered_grid.append(current_section)
+        
+        grid = filtered_grid
+        print(f"[DEBUG] Post-processing complete. Total sections after filtering: {len(grid)}", file=sys.stderr)
+    else:
+        print(f"[DEBUG] Post-processing skipped (only {len(grid)} section)", file=sys.stderr)
     
     # ФИЛЬТРАЦИЯ МИКРО-СЕКЦИЙ И ВЫРАВНИВАНИЕ ПО КРАТНОСТИ 4
     # В бачате музыкальная фраза (секция) не может быть короче 4 beats (минимум один такт)
