@@ -106,39 +106,90 @@ def analyze_structure_essentia(audio_path):
         loader = es.MonoLoader(filename=audio_path)
         audio = loader()
         sample_rate = 44100  # Essentia MonoLoader использует 44100 по умолчанию
+        duration = len(audio) / sample_rate
         
-        print(f"[Essentia] Audio loaded: {len(audio)} samples, {len(audio)/sample_rate:.2f}s", file=sys.stderr)
+        print(f"[Essentia] Audio loaded: {len(audio)} samples, {duration:.2f}s", file=sys.stderr)
         
-        # Вычисляем MFCC features для анализа структуры
-        print("[Essentia] Computing MFCC features for structure analysis...", file=sys.stderr)
-        mfcc = es.MFCC()
-        windowing = es.Windowing(type='hann')
-        spectrum = es.Spectrum()
+        # Проверка размера трека - для треков длиннее 180 секунд используем оптимизированный алгоритм
+        # с downsampling и локальной самоподобие для экономии памяти
+        MAX_DURATION_FOR_FULL_MATRIX = 180  # секунд
         
-        # Обрабатываем аудио по кадрам
+        # Инициализируем переменные
         frame_size = 2048
-        hop_size = 512
-        frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
+        hop_size = 512  # По умолчанию
         
-        mfccs = []
-        for frame in frames:
-            spec = spectrum(windowing(frame))
-            mfcc_coeffs, mfcc_bands = mfcc(spec)
-            mfccs.append(mfcc_coeffs)
-        
-        mfccs = np.array(mfccs)
-        print(f"[Essentia] Computed {len(mfccs)} MFCC frames", file=sys.stderr)
-        
-        # Вычисляем матрицу само-подобия (self-similarity matrix)
-        print("[Essentia] Computing self-similarity matrix...", file=sys.stderr)
-        from scipy.spatial.distance import cdist
-        similarity_matrix = 1 - cdist(mfccs, mfccs, metric='cosine')
-        
-        # Находим границы секций используя алгоритм поиска изменений в матрице подобия
-        row_similarity = np.mean(similarity_matrix, axis=1)
-        similarity_diff = np.diff(row_similarity)
+        if duration > MAX_DURATION_FOR_FULL_MATRIX:
+            print(f"[Essentia] Track duration ({duration:.1f}s) exceeds safe limit ({MAX_DURATION_FOR_FULL_MATRIX}s).", file=sys.stderr)
+            print(f"[Essentia] Using memory-efficient algorithm with downsampling...", file=sys.stderr)
+            
+            # Используем увеличенный hop_size для уменьшения количества кадров
+            hop_size = 2048  # Увеличиваем hop_size в 4 раза для экономии памяти
+            frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
+            
+            mfcc = es.MFCC()
+            windowing = es.Windowing(type='hann')
+            spectrum = es.Spectrum()
+            
+            mfccs = []
+            for frame in frames:
+                spec = spectrum(windowing(frame))
+                mfcc_coeffs, mfcc_bands = mfcc(spec)
+                mfccs.append(mfcc_coeffs)
+            
+            mfccs = np.array(mfccs)
+            print(f"[Essentia] Computed {len(mfccs)} MFCC frames (downsampled)", file=sys.stderr)
+            
+            # Для больших треков используем более эффективный метод без полной матрицы
+            # Вычисляем локальную самоподобие вместо полной матрицы
+            print("[Essentia] Computing local similarity (memory-efficient)...", file=sys.stderr)
+            
+            # Используем скользящее окно для вычисления локальной самоподобия
+            window_size = min(500, len(mfccs) // 10)  # Окно ~10% от длины, но не больше 500
+            row_similarity = []
+            
+            for i in range(len(mfccs)):
+                # Вычисляем подобие только с соседними кадрами в окне
+                start_idx = max(0, i - window_size // 2)
+                end_idx = min(len(mfccs), i + window_size // 2)
+                
+                # Косинусное расстояние только с окном
+                from scipy.spatial.distance import cdist
+                window_mfccs = mfccs[start_idx:end_idx]
+                distances = cdist([mfccs[i]], window_mfccs, metric='cosine')[0]
+                similarity = 1 - np.mean(distances)
+                row_similarity.append(similarity)
+            
+            row_similarity = np.array(row_similarity)
+        else:
+            # Для коротких треков используем оригинальный алгоритм с полной матрицей
+            print("[Essentia] Computing MFCC features for structure analysis...", file=sys.stderr)
+            mfcc = es.MFCC()
+            windowing = es.Windowing(type='hann')
+            spectrum = es.Spectrum()
+            
+            # Обрабатываем аудио по кадрам
+            frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
+            
+            mfccs = []
+            for frame in frames:
+                spec = spectrum(windowing(frame))
+                mfcc_coeffs, mfcc_bands = mfcc(spec)
+                mfccs.append(mfcc_coeffs)
+            
+            mfccs = np.array(mfccs)
+            print(f"[Essentia] Computed {len(mfccs)} MFCC frames", file=sys.stderr)
+            
+            # Вычисляем матрицу само-подобия (self-similarity matrix)
+            print("[Essentia] Computing self-similarity matrix...", file=sys.stderr)
+            from scipy.spatial.distance import cdist
+            similarity_matrix = 1 - cdist(mfccs, mfccs, metric='cosine')
+            
+            # Находим границы секций используя алгоритм поиска изменений в матрице подобия
+            row_similarity = np.mean(similarity_matrix, axis=1)
         
         # Находим пики в производной (резкие изменения структуры)
+        similarity_diff = np.diff(row_similarity)
+        
         from scipy.signal import find_peaks
         peaks, properties = find_peaks(np.abs(similarity_diff), 
                                       height=np.percentile(np.abs(similarity_diff), 75),
@@ -152,6 +203,14 @@ def analyze_structure_essentia(audio_path):
         
         return boundaries
         
+    except MemoryError as e:
+        print(f"[Essentia] Memory error during structure analysis: {e}", file=sys.stderr)
+        print(f"[Essentia] ERROR: Insufficient memory. Please:", file=sys.stderr)
+        print(f"[Essentia] 1. Add swap memory to the server (recommended)", file=sys.stderr)
+        print(f"[Essentia] 2. Or increase memory limits in systemd service", file=sys.stderr)
+        print(f"[Essentia] 3. See docs/ESSENTIA_SETUP.md for instructions", file=sys.stderr)
+        # Пробрасываем исключение дальше, чтобы пользователь знал о проблеме
+        raise
     except Exception as e:
         print(f"[Essentia] Error during structure analysis: {e}", file=sys.stderr)
         import traceback
