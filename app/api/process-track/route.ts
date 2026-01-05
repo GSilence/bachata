@@ -118,7 +118,11 @@ export async function POST(request: NextRequest) {
       // ВСЕГДА сохраняем gridMap (если доступен) - он нужен для beat tracking
       if (analysisResult.gridMap) {
         gridMap = analysisResult.gridMap
-        console.log(`Detected gridMap with ${analysisResult.gridMap.grid.length} sections`)
+        // Сохраняем duration в gridMap для использования при генерации beatGrid
+        if (analysisResult.duration) {
+          gridMap.duration = analysisResult.duration
+        }
+        console.log(`Detected gridMap with ${analysisResult.gridMap.grid.length} sections, duration: ${analysisResult.duration || 'unknown'}s`)
       } else {
         console.warn('GridMap not available in analysis result')
       }

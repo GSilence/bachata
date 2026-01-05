@@ -36,9 +36,13 @@ loadEnvLocal()
 export interface AudioAnalysisResult {
   bpm: number
   offset: number
+  duration?: number
+  grid?: GridMap['grid']
+  downbeats?: number[]
 }
 
 export interface FullAudioAnalysisResult extends AudioAnalysisResult {
+  duration: number
   gridMap: GridMap | null
   beatGrid: Beat[] | null
 }
@@ -130,8 +134,11 @@ export async function analyzeTrack(
       return {
         bpm: gridMap.bpm,
         offset: gridMap.offset,
+        duration: duration, // ОБЯЗАТЕЛЬНО возвращаем duration
         gridMap: gridMap,
-        beatGrid: beatGrid
+        beatGrid: beatGrid,
+        grid: result.grid || [],
+        downbeats: result.downbeats || []
       }
     }
 
@@ -144,6 +151,7 @@ export async function analyzeTrack(
     return {
       bpm: bpm,
       offset: offset,
+      duration: duration, // ОБЯЗАТЕЛЬНО возвращаем duration
       gridMap: null,
       beatGrid: beatGrid
     }

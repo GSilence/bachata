@@ -211,8 +211,14 @@ def analyze_structure_essentia(audio_path):
         
         # Prominence (значимость пика) - игнорируем мелкую рябь
         # Вычисляем prominence как процент от диапазона кривой
+        # УМЕНЬШЕНО с 0.15 до 0.06 для повышения чувствительности (замечать мостики)
         curve_range = np.max(novelty_curve) - np.min(novelty_curve)
-        prominence_threshold = curve_range * 0.15  # 15% от диапазона (можно настроить 0.1-0.2)
+        prominence_threshold = curve_range * 0.06  # 6% от диапазона (было 15%) - более чувствительно
+        
+        # УМЕНЬШЕНО distance до ~2 секунд (80 фреймов при hop_size=512, ~40 при hop_size=2048)
+        # Это позволит замечать короткие вставки (мостики)
+        min_distance_frames_short = int(sample_rate / hop_size * 2)  # 2 секунды вместо 4
+        min_distance_frames = min(min_distance_frames, min_distance_frames_short)  # Используем меньший
         
         peaks, properties = find_peaks(novelty_curve,
                                       height=peak_height,
@@ -220,7 +226,7 @@ def analyze_structure_essentia(audio_path):
                                       prominence=prominence_threshold)
         
         print(f"[Essentia] Found {len(peaks)} peaks in NoveltyCurve", file=sys.stderr)
-        print(f"[Essentia] Peak detection params: height>={peak_height:.4f}, distance>={min_distance_frames} frames (~4s), prominence>={prominence_threshold:.4f}", file=sys.stderr)
+        print(f"[Essentia] Peak detection params: height>={peak_height:.4f}, distance>={min_distance_frames} frames (~{min_distance_frames * hop_size / sample_rate:.1f}s), prominence>={prominence_threshold:.4f} ({prominence_threshold/curve_range*100:.1f}% of range)", file=sys.stderr)
         
         # Преобразуем индексы пиков во временные метки
         frame_times = np.arange(len(mfccs)) * (hop_size / sample_rate)

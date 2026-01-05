@@ -151,14 +151,14 @@ export class AudioEngine {
     // 3. Beat Grid - генерируем из gridMap если есть, иначе используем fallback
     if (track.gridMap && track.gridMap.grid && track.gridMap.grid.length > 0) {
       // Используем gridMap для генерации точного beatGrid с учетом мостиков
-      // Получаем длительность трека (будет обновлена после загрузки аудио)
-      const estimatedDuration = 180; // Временная оценка, будет обновлена после загрузки
+      // Получаем длительность трека из gridMap (из результата анализа) или используем фоллбек
+      const duration = track.gridMap.duration || 180
       this.beatGrid = generateBeatGridFromDownbeats(
         track.gridMap,
-        estimatedDuration
+        duration
       );
       console.log(
-        `[AudioEngine] Generated beatGrid from gridMap: ${this.beatGrid.length} beats, ${track.gridMap.grid.length} sections`
+        `[AudioEngine] Generated beatGrid from gridMap: ${this.beatGrid.length} beats, ${track.gridMap.grid.length} sections, duration: ${duration}s`
       );
     } else if (track.beatGrid && track.beatGrid.length > 0) {
       // Используем предварительно сгенерированный beatGrid (если есть)
@@ -168,12 +168,13 @@ export class AudioEngine {
       );
     } else {
       // Fallback: генерируем простой beatGrid без учета мостиков
-      const estimatedDuration = 180;
+      // Используем duration из gridMap если есть, иначе фоллбек
+      const duration = track.gridMap?.duration || 180;
       const bpm = track.bpm || 120;
       const offset = track.offset || 0;
-      this.beatGrid = generateFallbackBeatGrid(bpm, offset, estimatedDuration);
+      this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
       console.log(
-        `[AudioEngine] Using fallback beatGrid: ${this.beatGrid.length} beats`
+        `[AudioEngine] Using fallback beatGrid: ${this.beatGrid.length} beats, duration: ${duration}s`
       );
     }
 

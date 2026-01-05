@@ -14,6 +14,7 @@ export interface GridMap {
   grid: GridSection[];
   downbeats?: number[]; // Массив времен downbeats (сильных долей) в секундах
   totalBeats?: number; // Общее количество beats для справки
+  duration?: number; // Длительность трека в секундах (из анализа)
 }
 
 export interface Beat {
