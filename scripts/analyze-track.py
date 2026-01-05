@@ -455,14 +455,29 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     print(f"[DEBUG] Grid formation: BPM={bpm}, offset={offset:.3f}s, duration={duration:.2f}s", file=sys.stderr)
     print(f"[DEBUG] Structure boundaries: {len(structure_section_starts)}", file=sys.stderr)
     
-    # ШАГ 1: КВАНТОВАНИЕ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ"
-    # Формула: offset + (round((b - offset) / (4 * beat_interval)) * (4 * beat_interval))
+    # ШАГ 1: КВАНТОВАНИЕ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ" С КОМПЕНСАЦИЕЙ ЗАДЕРЖКИ
+    # Проблема: Essentia находит границы с задержкой (из-за размера окна анализа)
+    # Решение: применяем динамический bias (сдвиг на 2 бита назад) перед округлением
+    # Это компенсирует задержку и возвращает границы на их законное место в начале такта
+    
+    # Рассчитываем bias: сдвиг на 2 бита назад (половина такта)
+    bias = 2 * beat_interval
+    
+    print(f"[DEBUG] Quantization bias: {bias:.3f}s (2 beats = half bar)", file=sys.stderr)
+    
     quantized_boundaries = []
     for boundary in structure_section_starts:
-        quantized_time = offset + (round((boundary - offset) / (4 * beat_interval)) * (4 * beat_interval))
+        # Применяем Bias, чтобы "помочь" округлению выбрать предыдущий такт при поздней детекции
+        biased_boundary = boundary - bias
+        
+        # Квантуем смещенное время к ближайшему "Раз"
+        n = round((biased_boundary - offset) / (4 * beat_interval))
+        quantized_time = offset + (n * 4 * beat_interval)
+        
         quantized_boundaries.append(quantized_time)
-        if abs(boundary - quantized_time) > 0.01:
-            print(f"[DEBUG] Quantized boundary: {boundary:.3f}s -> {quantized_time:.3f}s", file=sys.stderr)
+        
+        # Логирование для отладки
+        print(f"[DEBUG] Quantization: Raw={boundary:.3f}s -> Biased={biased_boundary:.3f}s -> Snapped={quantized_time:.3f}s", file=sys.stderr)
     
     # Сортируем и удаляем дубликаты
     quantized_boundaries = sorted(set(quantized_boundaries))
