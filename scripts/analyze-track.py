@@ -414,148 +414,15 @@ def calculate_rms(audio_data, sample_rate, start_time, end_time):
     return float(rms)
 
 
-def calculate_rms_energy(audio_data, sample_rate, bpm, hop_length=None):
-    """
-    Вычисляет RMS энергию с окном примерно равным 1 биту.
-    Нормализует значения от 0 до 1.
-    
-    Args:
-        audio_data: numpy array с аудио данными
-        sample_rate: частота дискретизации
-        bpm: BPM трека
-        hop_length: размер шага в сэмплах (опционально, по умолчанию ~1/4 бита)
-    
-    Returns:
-        tuple: (rms_times, rms_values_normalized)
-            rms_times: массив временных меток в секундах
-            rms_values_normalized: массив нормализованных RMS значений (0-1)
-    """
-    # Вычисляем длительность одного бита в секундах
-    beat_interval = 60.0 / bpm
-    
-    # Размер окна примерно равен 1 биту
-    frame_length = int(sample_rate * beat_interval)
-    if frame_length < 1:
-        frame_length = 1
-    
-    # Размер шага примерно равен 1/4 бита для плавности
-    if hop_length is None:
-        hop_length = max(1, frame_length // 4)
-    
-    # Вычисляем RMS для каждого окна
-    rms_values = []
-    rms_times = []
-    
-    for i in range(0, len(audio_data) - frame_length, hop_length):
-        window = audio_data[i:i + frame_length]
-        rms = np.sqrt(np.mean(window ** 2))
-        time = i / sample_rate
-        rms_values.append(rms)
-        rms_times.append(time)
-    
-    # Нормализуем значения от 0 до 1
-    rms_array = np.array(rms_values)
-    if len(rms_array) > 0 and rms_array.max() > 0:
-        rms_normalized = rms_array / rms_array.max()
-    else:
-        rms_normalized = rms_array
-    
-    return np.array(rms_times), rms_normalized
-
-
-def detect_energy_drops(rms_times, rms_values, bpm, offset, duration, threshold_ratio=0.35, min_duration_beats=4):
-    """
-    Детектор провалов энергии (Silence/Drop Detector).
-    Находит участки, где RMS энергия падает ниже порога на длительность около 4 битов.
-    
-    Args:
-        rms_times: массив временных меток RMS в секундах
-        rms_values: массив нормализованных RMS значений (0-1)
-        bpm: BPM трека
-        offset: время первого бита в секундах
-        duration: длительность трека в секундах
-        threshold_ratio: порог относительно средней энергии (0.35 = 35%)
-        min_duration_beats: минимальная длительность провала в битах (по умолчанию 4)
-    
-    Returns:
-        list: список временных меток начала провалов энергии (в секундах)
-    """
-    if len(rms_values) == 0:
-        return []
-    
-    # Вычисляем среднюю энергию
-    avg_energy = np.mean(rms_values)
-    threshold = avg_energy * threshold_ratio
-    
-    beat_interval = 60.0 / bpm
-    min_duration_seconds = min_duration_beats * beat_interval
-    
-    print(f"[DEBUG] Energy drop detector: avg_energy={avg_energy:.4f}, threshold={threshold:.4f} ({threshold_ratio*100:.0f}%), min_duration={min_duration_seconds:.2f}s ({min_duration_beats} beats)", file=sys.stderr)
-    
-    # Находим участки с низкой энергией
-    drop_boundaries = []
-    in_drop = False
-    drop_start = None
-    drop_duration = 0.0
-    
-    for i, (time, energy) in enumerate(zip(rms_times, rms_values)):
-        if energy < threshold:
-            if not in_drop:
-                # Начало провала
-                in_drop = True
-                drop_start = time
-                drop_duration = 0.0
-            else:
-                # Продолжение провала
-                if i > 0:
-                    drop_duration = time - drop_start
-        else:
-            if in_drop:
-                # Конец провала
-                if drop_duration >= min_duration_seconds:
-                    # Применяем latency compensation: сдвигаем назад на 50-100мс
-                    latency_compensation = -0.075  # -75мс (среднее между -50 и -100)
-                    compensated_start = drop_start + latency_compensation
-                    
-                    # Убеждаемся, что не выходим за границы
-                    if compensated_start < 0:
-                        compensated_start = 0
-                    if compensated_start < duration:
-                        drop_boundaries.append(compensated_start)
-                        print(f"[DEBUG] Found energy drop at {drop_start:.3f}s (compensated: {compensated_start:.3f}s), length: {drop_duration:.2f}s ({drop_duration/beat_interval:.1f} beats). Marking as Bridge candidate.", file=sys.stderr)
-                
-                in_drop = False
-                drop_start = None
-                drop_duration = 0.0
-    
-    # Проверяем последний провал, если он дошел до конца трека
-    if in_drop and drop_start is not None:
-        drop_duration = duration - drop_start
-        if drop_duration >= min_duration_seconds:
-            latency_compensation = -0.075
-            compensated_start = drop_start + latency_compensation
-            if compensated_start < 0:
-                compensated_start = 0
-            if compensated_start < duration:
-                drop_boundaries.append(compensated_start)
-                print(f"[DEBUG] Found energy drop at {drop_start:.3f}s (compensated: {compensated_start:.3f}s), length: {drop_duration:.2f}s ({drop_duration/beat_interval:.1f} beats). Marking as Bridge candidate.", file=sys.stderr)
-    
-    print(f"[DEBUG] Energy drop detector found {len(drop_boundaries)} drop boundaries", file=sys.stderr)
-    return drop_boundaries
-
-
 def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None, offset=None, duration=None):
     """
     Формирует сетку секций (grid) с идеальным счетом 1-8.
     
     Логика:
-    1. Детекция провалов энергии (RMS): Находит участки с низкой громкостью через анализ RMS энергии
-    2. Объединение границ: Смешивает границы от Essentia и от RMS детектора
-    3. Квантование: Все границы притягиваются к ближайшему "Раз" (первый бит такта)
-    4. Длительность: Считается длина каждой секции в битах
-    5. Авто-Bridge: Секция 4 бита = bridge, секция с низким RMS (< 0.4) = bridge, 8+ битов = verse
-    6. Слияние: Соседние секции с одинаковым label объединяются
-    7. Latency Compensation: RMS границы сдвигаются назад на -75мс для точного попадания в начало затишья
+    1. Квантование: Все границы от Essentia притягиваются к ближайшему "Раз" (первый бит такта)
+    2. Длительность: Считается длина каждой секции в битах
+    3. Авто-Bridge: Секция 4 бита = bridge, 8+ битов = verse
+    4. Слияние: Соседние секции с одинаковым label объединяются
     
     Args:
         downbeats: массив времен сильных долей (единиц)
@@ -588,39 +455,10 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     print(f"[DEBUG] Grid formation: BPM={bpm}, offset={offset:.3f}s, duration={duration:.2f}s", file=sys.stderr)
     print(f"[DEBUG] Structure boundaries: {len(structure_section_starts)}", file=sys.stderr)
     
-    # ШАГ 0: ДЕТЕКЦИЯ ПРОВАЛОВ ЭНЕРГИИ (RMS)
-    print(f"\n[DEBUG] ===== RMS ENERGY DETECTION =====", file=sys.stderr)
-    rms_energy_boundaries = []
-    rms_energy_map = {}  # Карта: время -> нормализованная RMS энергия
-    rms_times = np.array([])  # Инициализируем пустым массивом
-    
-    try:
-        # Вычисляем RMS энергию с окном ~1 бит
-        rms_times, rms_values = calculate_rms_energy(audio_data, sample_rate, bpm)
-        print(f"[DEBUG] RMS energy calculated: {len(rms_times)} frames", file=sys.stderr)
-        
-        # Создаем карту энергии для быстрого доступа
-        for time, energy in zip(rms_times, rms_values):
-            rms_energy_map[time] = energy
-        
-        # Детектируем провалы энергии
-        rms_energy_boundaries = detect_energy_drops(rms_times, rms_values, bpm, offset, duration)
-        print(f"[DEBUG] RMS energy boundaries found: {len(rms_energy_boundaries)}", file=sys.stderr)
-    except Exception as e:
-        print(f"[DEBUG] WARNING: RMS energy detection failed: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        rms_energy_boundaries = []
-        rms_times = np.array([])
-    
-    # ШАГ 1: ОБЪЕДИНЕНИЕ И КВАНТОВАНИЕ ВСЕХ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ"
-    # Объединяем границы от Essentia и от RMS детектора
-    all_raw_boundaries = list(structure_section_starts) + rms_energy_boundaries
-    print(f"[DEBUG] Total raw boundaries: {len(structure_section_starts)} from Essentia + {len(rms_energy_boundaries)} from RMS = {len(all_raw_boundaries)}", file=sys.stderr)
-    
-    # Формула квантования: offset + (round((b - offset) / (4 * beat_interval)) * (4 * beat_interval))
+    # ШАГ 1: КВАНТОВАНИЕ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ"
+    # Формула: offset + (round((b - offset) / (4 * beat_interval)) * (4 * beat_interval))
     quantized_boundaries = []
-    for boundary in all_raw_boundaries:
+    for boundary in structure_section_starts:
         quantized_time = offset + (round((boundary - offset) / (4 * beat_interval)) * (4 * beat_interval))
         quantized_boundaries.append(quantized_time)
         if abs(boundary - quantized_time) > 0.01:
@@ -631,7 +469,7 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     # Убираем границы вне диапазона [0, duration]
     quantized_boundaries = [b for b in quantized_boundaries if 0 <= b <= duration]
     
-    print(f"[DEBUG] Quantized boundaries after merge: {len(quantized_boundaries)}", file=sys.stderr)
+    print(f"[DEBUG] Quantized boundaries: {len(quantized_boundaries)}", file=sys.stderr)
     
     # ШАГ 2: СОЗДАНИЕ СЕКЦИЙ ИЗ КВАНТОВАННЫХ ГРАНИЦ
     sections = []
@@ -660,28 +498,9 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
         if section_beats < 4:
             section_beats = 4
         
-        # Проверяем RMS энергию секции для определения типа
-        section_avg_rms = None
-        if rms_energy_map:
-            # Находим ближайшие значения RMS для этой секции
-            section_rms_values = []
-            for rms_time in rms_times:
-                if section_start <= rms_time <= section_end:
-                    section_rms_values.append(rms_energy_map.get(rms_time, 0.0))
-            
-            if len(section_rms_values) > 0:
-                section_avg_rms = np.mean(section_rms_values)
-        
-        # Определение типа секции:
-        # 1. Если секция 4 бита - всегда bridge
-        # 2. Если средняя RMS энергия низкая (< 0.4) - принудительно bridge
-        # 3. Иначе - verse
+        # Авто-Bridge: 4 бита = bridge, 8+ = verse
         if section_beats == 4:
             section_type = "bridge"
-        elif section_avg_rms is not None and section_avg_rms < 0.4:
-            # Низкая энергия - принудительно bridge
-            section_type = "bridge"
-            print(f"[DEBUG] Section at {section_start:.3f}s marked as bridge due to low RMS energy ({section_avg_rms:.3f} < 0.4)", file=sys.stderr)
         else:
             section_type = "verse"
         
@@ -754,28 +573,9 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
         if section_beats < 4:
             section_beats = 4
         
-        # Проверяем RMS энергию секции для финального определения типа
-        section_avg_rms = None
-        if rms_energy_map and len(rms_times) > 0:
-            # Находим ближайшие значения RMS для этой секции
-            section_rms_values = []
-            for rms_time in rms_times:
-                if quantized_start <= rms_time <= section_end:
-                    section_rms_values.append(rms_energy_map.get(rms_time, 0.0))
-            
-            if len(section_rms_values) > 0:
-                section_avg_rms = np.mean(section_rms_values)
-        
-        # Определение типа секции:
-        # 1. Если секция 4 бита - всегда bridge
-        # 2. Если средняя RMS энергия низкая (< 0.4) - принудительно bridge
-        # 3. Иначе - verse
+        # Авто-Bridge: 4 бита = bridge, 8+ = verse
         if section_beats == 4:
             section_type = "bridge"
-        elif section_avg_rms is not None and section_avg_rms < 0.4:
-            # Низкая энергия - принудительно bridge
-            section_type = "bridge"
-            print(f"[DEBUG] Final section at {quantized_start:.3f}s marked as bridge due to low RMS energy ({section_avg_rms:.3f} < 0.4)", file=sys.stderr)
         else:
             section_type = "verse"
         
