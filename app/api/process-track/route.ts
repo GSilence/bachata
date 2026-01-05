@@ -94,10 +94,17 @@ export async function POST(request: NextRequest) {
     // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
     // gridMap нужен для корректного отслеживания битов с учетом мостиков
     try {
-      console.log('Starting audio analysis for GridMap, BPM and Offset...')
+      console.log('\n' + '='.repeat(80))
+      console.log('🎵 Starting audio analysis for GridMap, BPM and Offset...')
+      console.log(`📁 Audio file: ${filePath}`)
+      console.log('='.repeat(80) + '\n')
       
       // Используем новый скрипт analyze-track.py с madmom для полного анализа
       const analysisResult = await analyzeTrack(filePath, true)
+      
+      console.log('\n' + '='.repeat(80))
+      console.log('✅ Audio analysis completed successfully!')
+      console.log('='.repeat(80) + '\n')
 
       // BPM и Offset всегда определяются автоматически
       finalBpm = analysisResult.bpm

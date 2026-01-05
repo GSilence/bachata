@@ -45,307 +45,204 @@ export function generateFallbackBeatGrid(
 }
 
 /**
- * Generates beat grid based on downbeats and grid sections from madmom analysis
- * This is the preferred method for maximum accuracy
- *
+ * Generates beat grid using "Master Grid + Labeling" approach
+ * 
  * Strategy:
- * 1. Use downbeats (сильные доли) as the primary reference
- * 2. In Bachata: downbeats correspond to counts 1, 3, 5, 7 (every other beat)
- * 3. Between downbeats, add intermediate beats (2, 4, 6, 8)
- * 4. Use grid sections (Verse/Bridge) as checkpoints - each section start should be beat 1
+ * 1. Generate a perfect metronome skeleton (Master Grid) based on BPM and offset
+ *    - Time between beats is ALWAYS constant (60 / bpm)
+ *    - No gaps, no jumps, no "sticking"
+ * 2. Label beats with numbers (1-8) based on grid sections
+ *    - Find nearest beat to each section.start
+ *    - Reset to "1" at section boundaries
+ *    - Continue counting (2, 3, 4, 5, 6, 7, 8, 1...) within each section
  *
- * IMPORTANT: This function works with ANY values returned by madmom:
- * - Any number of downbeats (not just 265)
- * - Any number of sections (not just 16 bridge + 15 verse)
- * - Any BPM value (not just 124)
- * - Any offset value (not just 0.21s)
- * - Any downbeats-to-beats ratio (works even if not exactly 2:1)
+ * Key rules:
+ * - NEVER change beat.time from skeleton (ensures perfect rhythm)
+ * - NEVER remove beats (except those beyond track duration)
+ * - If section starts "between" beats - attach to nearest existing beat
  *
- * @param gridMap - GridMap with downbeats and sections from madmom analysis
+ * @param gridMap - GridMap with sections from madmom/Librosa analysis
  * @param duration - Track duration in seconds
- * @returns Beat[] array with pre-calculated beats based on downbeats
+ * @returns Beat[] array with perfect metronome timing and section-based numbering
  */
 export function generateBeatGridFromDownbeats(
   gridMap: GridMap,
   duration: number
 ): Beat[] {
-  const beatGrid: Beat[] = [];
-
-  // Если нет downbeats, используем fallback
-  if (!gridMap.downbeats || gridMap.downbeats.length === 0) {
-    console.warn("No downbeats in gridMap, using fallback beat grid");
-    return generateFallbackBeatGrid(gridMap.bpm, gridMap.offset, duration);
-  }
-
-  let downbeats = gridMap.downbeats;
-  const sections = gridMap.grid || [];
   const bpm = gridMap.bpm;
+  const offset = gridMap.offset || 0;
+  const sections = gridMap.grid || [];
 
-  // Интервал между beats = 60 / bpm
+  // Интервал между beats = 60 / bpm (константа для идеального метронома)
   const beatInterval = 60 / bpm;
-  // Ожидаемый интервал между downbeats (каждый второй beat) = 2 * beatInterval
-  const expectedDownbeatInterval = 2 * beatInterval;
 
-  // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем downbeats, если madmom определил их слишком часто
-  // В бачате downbeats должны быть каждый второй beat, а не каждый beat
-  // Если интервалы между downbeats слишком короткие (< 1.5 * beatInterval),
-  // значит madmom определил слишком много downbeats, и нужно фильтровать их
-  if (downbeats.length > 1) {
-    const firstInterval = downbeats[1] - downbeats[0];
-    const threshold = 1.5 * beatInterval; // Порог для определения "слишком частых" downbeats
+  console.log(
+    `[BeatGrid] Generating Master Grid: BPM=${bpm}, offset=${offset.toFixed(3)}s, ` +
+    `beatInterval=${beatInterval.toFixed(3)}s, duration=${duration.toFixed(2)}s`
+  );
 
-    if (firstInterval < threshold) {
-      console.warn(
-        `[BeatGrid] Downbeats are too frequent (interval: ${firstInterval.toFixed(
-          3
-        )}s, expected: ${expectedDownbeatInterval.toFixed(
-          3
-        )}s). Filtering to every other downbeat.`
-      );
+  // ============================================
+  // ШАГ 1: ГЕНЕРАЦИЯ СКЕЛЕТА (Master Grid)
+  // ============================================
+  // Создаем идеальный метроном без залипаний и скачков
+  const skeletonBeats: Beat[] = [];
+  let time = offset;
+  let beatIndex = 0;
 
-      // Фильтруем downbeats, оставляя только каждый второй
-      // Простой подход: если интервалы слишком короткие, оставляем каждый второй downbeat
-      const filteredDownbeats: number[] = [downbeats[0]]; // Всегда оставляем первый
-
-      // Вычисляем средний интервал между downbeats
-      const intervals: number[] = [];
-      for (let i = 1; i < Math.min(10, downbeats.length); i++) {
-        intervals.push(downbeats[i] - downbeats[i - 1]);
-      }
-      const avgInterval =
-        intervals.length > 0
-          ? intervals.reduce((a, b) => a + b, 0) / intervals.length
-          : firstInterval;
-
-      // Если средний интервал меньше порога, значит downbeats слишком частые
-      // Оставляем каждый второй downbeat
-      if (avgInterval < threshold) {
-        for (let i = 2; i < downbeats.length; i += 2) {
-          filteredDownbeats.push(downbeats[i]);
-        }
-      } else {
-        // Если интервалы нормальные, оставляем все downbeats
-        filteredDownbeats.push(...downbeats.slice(1));
-      }
-
-      console.log(
-        `[BeatGrid] Filtered ${downbeats.length} downbeats to ${filteredDownbeats.length} downbeats`
-      );
-      downbeats = filteredDownbeats;
-    }
-  }
-
-  // Создаем Set для быстрого поиска начал секций
-  const sectionStarts = new Set<number>();
-  for (const section of sections) {
-    sectionStarts.add(section.start);
-  }
-
-  // Генерируем beats на основе downbeats
-  // В бачате: downbeats = счеты 1, 3, 5, 7 (каждый второй beat)
-  // Между downbeats добавляем промежуточные beats (2, 4, 6, 8)
-
-  let beatNumber = 1; // Текущий счет (1-8)
-
-  for (let i = 0; i < downbeats.length; i++) {
-    const downbeatTime = downbeats[i];
-
-    // Проверяем, начинается ли новая секция на этом downbeat
-    const isSectionStart = Array.from(sectionStarts).some(
-      (start) => Math.abs(start - downbeatTime) < 0.2
-    );
-
-    // Если начинается новая секция, сбрасываем счетчик на 1
-    if (isSectionStart) {
-      beatNumber = 1;
-    }
-
-    // Downbeat всегда нечетный счет (1, 3, 5, 7)
-    // Если текущий счет четный, делаем его нечетным
-    if (beatNumber % 2 === 0) {
-      beatNumber = (beatNumber - 1) % 8 || 1;
-    }
-
-    // Добавляем downbeat
-    beatGrid.push({
-      time: downbeatTime,
-      number: beatNumber,
+  while (time <= duration) {
+    skeletonBeats.push({
+      time: time,
+      number: 1, // Временное значение, будет переопределено на шаге 2
       hasVoice: true,
     });
 
-    // Добавляем промежуточный beat между downbeats (если есть следующий downbeat)
-    // В бачате между downbeats (1, 3, 5, 7) должны быть промежуточные beats (2, 4, 6, 8)
-    if (i < downbeats.length - 1) {
-      const nextDownbeatTime = downbeats[i + 1];
-      const intermediateTime = downbeatTime + beatInterval;
+    beatIndex++;
+    time = offset + beatIndex * beatInterval;
+  }
 
-      // Проверяем, что промежуточный beat находится между текущим и следующим downbeat
-      // и не выходит за границы трека
-      if (
-        intermediateTime < nextDownbeatTime - 0.05 &&
-        intermediateTime <= duration
-      ) {
-        const intermediateNumber = (beatNumber % 8) + 1;
-        beatGrid.push({
-          time: intermediateTime,
-          number: intermediateNumber,
-          hasVoice: true,
-        });
-      }
-    } else {
-      // Если это последний downbeat, добавляем промежуточный beat после него
-      // (если не выходим за границы трека)
-      const intermediateTime = downbeatTime + beatInterval;
-      if (intermediateTime <= duration) {
-        const intermediateNumber = (beatNumber % 8) + 1;
-        beatGrid.push({
-          time: intermediateTime,
-          number: intermediateNumber,
-          hasVoice: true,
-        });
-      }
+  console.log(
+    `[BeatGrid] Master Grid generated: ${skeletonBeats.length} beats, ` +
+    `first=${skeletonBeats[0]?.time.toFixed(3)}s, ` +
+    `last=${skeletonBeats[skeletonBeats.length - 1]?.time.toFixed(3)}s`
+  );
+
+  // Проверка: если скелет пустой, используем fallback
+  if (skeletonBeats.length === 0) {
+    console.warn("[BeatGrid] Master Grid is empty, using fallback");
+    return generateFallbackBeatGrid(bpm, offset, duration);
+  }
+
+  // ============================================
+  // ШАГ 2: НАЛОЖЕНИЕ СТРУКТУРЫ (Labeling)
+  // ============================================
+  // Если нет секций, просто нумеруем по порядку (1-8)
+  if (sections.length === 0) {
+    console.log("[BeatGrid] No sections found, using sequential numbering (1-8)");
+    let beatNumber = 1;
+    for (const beat of skeletonBeats) {
+      beat.number = beatNumber;
+      beatNumber = (beatNumber % 8) + 1;
     }
-
-    // Обновляем счетчик для следующего downbeat
-    // Следующий downbeat будет через 2 beats (1->3, 3->5, 5->7, 7->1)
-    beatNumber = (beatNumber + 2) % 8 || 1;
+    return skeletonBeats;
   }
 
-  // Сортируем по времени
-  beatGrid.sort((a, b) => a.time - b.time);
+  // Сортируем секции по времени начала
+  const sortedSections = [...sections].sort((a, b) => a.start - b.start);
 
-  // Проверка: если beatGrid пустой или слишком короткий, используем fallback
-  if (beatGrid.length === 0) {
-    console.warn("[BeatGrid] Generated beatGrid is empty, using fallback");
-    return generateFallbackBeatGrid(bpm, gridMap.offset || 0, duration);
+  // Создаем массив для хранения информации о секциях: индекс ближайшего beat и границы
+  interface SectionInfo {
+    startBeatIndex: number;
+    endBeatIndex: number;
+    section: typeof sortedSections[0];
   }
+  const sectionInfos: SectionInfo[] = [];
 
-  // Проверка: если beatGrid слишком короткий (меньше 10 beats на минуту трека), используем fallback
-  const expectedMinBeats = Math.floor((duration / 60) * bpm);
-  if (beatGrid.length < expectedMinBeats * 0.5) {
-    console.warn(
-      `[BeatGrid] Generated beatGrid is too short (${beatGrid.length} beats, expected ~${expectedMinBeats}), using fallback`
-    );
-    return generateFallbackBeatGrid(bpm, gridMap.offset || 0, duration);
-  }
-
-  // УМНАЯ ЛОГИКА СБРОСА: "Танцевальная логика Бачаты"
-  // Сброс на "1" происходит только для длинных и стабильных секций
-  // Короткие мостики (4 бита) могут продолжать счет или сбрасывать логично
-  // Микро-секции (1-2 бита) полностью игнорируются
-  
-  const MIN_SECTION_BEATS_FOR_RESET = 8; // Минимальная длина для сброса (2 такта)
-  const SHORT_BRIDGE_BEATS = 4; // Короткий мостик - ровно 4 бита (1 такт)
-  const MICRO_SECTION_BEATS = 2; // Микро-секции (1-2 бита) - игнорируем полностью
-
-  for (const section of sections) {
+  // ШАГ 2.1: Находим ближайший beat для каждой секции и определяем границы
+  for (let i = 0; i < sortedSections.length; i++) {
+    const section = sortedSections[i];
     const sectionStart = section.start;
-    const tolerance = 0.2;
-
-    // ЗАПРЕТ НА МИКРО-СБРОСЫ: Игнорируем секции короче 2 битов
-    if (section.beats < MICRO_SECTION_BEATS) {
-      console.log(
-        `[BeatGrid] Ignoring micro-section: ${section.type} at ${sectionStart.toFixed(2)}s, ` +
-        `only ${section.beats} beats (too short for reset)`
-      );
-      continue; // Полностью игнорируем микро-секции
-    }
+    const sectionEnd = i < sortedSections.length - 1
+      ? sortedSections[i + 1].start
+      : duration;
 
     // Находим ближайший beat к началу секции
-    const beatAtStart = beatGrid.find(
-      (beat) => Math.abs(beat.time - sectionStart) < tolerance
-    );
+    let nearestBeatIndex = -1;
+    let minDistance = Infinity;
 
-    if (!beatAtStart) {
-      continue; // Не нашли beat в начале секции
+    for (let j = 0; j < skeletonBeats.length; j++) {
+      const distance = Math.abs(skeletonBeats[j].time - sectionStart);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestBeatIndex = j;
+      }
     }
 
-    const currentBeatNumber = beatAtStart.number;
-    const sectionEnd = sectionStart + section.beats * beatInterval;
-    const sectionBeats = beatGrid.filter(
-      (beat) =>
-        beat.time >= sectionStart - tolerance &&
-        beat.time <= sectionEnd + tolerance
-    );
-
-    // ЛОГИКА СБРОСА:
-    if (section.beats >= MIN_SECTION_BEATS_FOR_RESET) {
-      // ДЛИННАЯ СЕКЦИЯ (> 8 битов): Всегда сбрасываем на "1"
-      // Это реальная граница Куплета/Припева
-      if (currentBeatNumber !== 1) {
-        console.log(
-          `[BeatGrid] Long section (${section.beats} beats) starts at ${sectionStart.toFixed(2)}s. ` +
-          `Resetting from ${currentBeatNumber} to 1.`
-        );
-        
-        // Пересчитываем beats в секции, начиная с 1
-        let beatNum = 1;
-        for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
-          if (beat.time >= sectionStart - tolerance) {
-            beat.number = beatNum;
-            beatNum = (beatNum % 8) + 1;
-          }
-        }
-      }
-    } else if (section.beats === SHORT_BRIDGE_BEATS && section.type === "bridge") {
-      // КОРОТКИЙ МОСТИК (ровно 4 бита): Логичный сброс на "1"
-      // 4 бита = законченный такт, логично начать с "1"
-      console.log(
-        `[BeatGrid] Short bridge (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
-        `Resetting to 1 (complete measure).`
+    if (nearestBeatIndex === -1) {
+      console.warn(
+        `[BeatGrid] Could not find nearest beat for section at ${sectionStart.toFixed(2)}s`
       );
-      
-      let beatNum = 1;
-      for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
-        if (beat.time >= sectionStart - tolerance) {
-          beat.number = beatNum;
-          beatNum = (beatNum % 8) + 1;
-        }
+      continue;
+    }
+
+    // Находим последний beat в секции (до начала следующей секции или до конца трека)
+    let endBeatIndex = skeletonBeats.length - 1;
+    for (let j = nearestBeatIndex; j < skeletonBeats.length; j++) {
+      if (skeletonBeats[j].time > sectionEnd + 0.1) {
+        endBeatIndex = j - 1;
+        break;
       }
-    } else if (section.beats >= 4 && section.beats < MIN_SECTION_BEATS_FOR_RESET) {
-      // СРЕДНЯЯ СЕКЦИЯ (4-7 битов): Проверяем, нужен ли сброс
-      // Если текущий счет близок к "1" (1, 2, 8) - не сбрасываем, продолжаем
-      // Если текущий счет далек от "1" (3-7) - сбрасываем на "1"
-      const shouldReset = currentBeatNumber >= 3 && currentBeatNumber <= 7;
-      
-      if (shouldReset) {
-        console.log(
-          `[BeatGrid] Medium section (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
-          `Current beat is ${currentBeatNumber}, resetting to 1.`
-        );
-        
-        let beatNum = 1;
-        for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
-          if (beat.time >= sectionStart - tolerance) {
-            beat.number = beatNum;
-            beatNum = (beatNum % 8) + 1;
-          }
-        }
-      } else {
-        console.log(
-          `[BeatGrid] Medium section (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
-          `Current beat is ${currentBeatNumber}, continuing count (no reset).`
-        );
-        // Продолжаем счет без сброса
-      }
+    }
+
+    sectionInfos.push({
+      startBeatIndex: nearestBeatIndex,
+      endBeatIndex: endBeatIndex,
+      section: section,
+    });
+
+    console.log(
+      `[BeatGrid] Section ${i + 1}/${sortedSections.length}: ${section.type} at ${sectionStart.toFixed(2)}s, ` +
+      `nearest beat at ${skeletonBeats[nearestBeatIndex].time.toFixed(3)}s (distance: ${minDistance.toFixed(3)}s), ` +
+      `beats: ${section.beats}, beat range: [${nearestBeatIndex}, ${endBeatIndex}]`
+    );
+  }
+
+  // ШАГ 2.2: Нумеруем все beats
+  // Сначала нумеруем beats до первой секции
+  let currentBeatNum = 1;
+  let firstSectionStartIndex = sectionInfos.length > 0 ? sectionInfos[0].startBeatIndex : skeletonBeats.length;
+
+  for (let i = 0; i < firstSectionStartIndex; i++) {
+    skeletonBeats[i].number = currentBeatNum;
+    currentBeatNum = (currentBeatNum % 8) + 1;
+  }
+
+  // Затем нумеруем beats внутри каждой секции, начиная с "1" на начале секции
+  for (const sectionInfo of sectionInfos) {
+    // Сбрасываем на "1" на начале секции
+    let beatNum = 1;
+    
+    for (let i = sectionInfo.startBeatIndex; i <= sectionInfo.endBeatIndex; i++) {
+      skeletonBeats[i].number = beatNum;
+      beatNum = (beatNum % 8) + 1;
+    }
+  }
+
+  // Наконец, нумеруем beats после последней секции
+  if (sectionInfos.length > 0) {
+    const lastSectionInfo = sectionInfos[sectionInfos.length - 1];
+    const lastBeatNum = skeletonBeats[lastSectionInfo.endBeatIndex].number;
+    currentBeatNum = (lastBeatNum % 8) + 1;
+
+    for (let i = lastSectionInfo.endBeatIndex + 1; i < skeletonBeats.length; i++) {
+      skeletonBeats[i].number = currentBeatNum;
+      currentBeatNum = (currentBeatNum % 8) + 1;
     }
   }
 
   console.log(
-    `[BeatGrid] Generated ${beatGrid.length} beats for duration ${duration}s (BPM: ${bpm})`
+    `[BeatGrid] Generated ${skeletonBeats.length} beats for duration ${duration.toFixed(2)}s (BPM: ${bpm})`
   );
-  if (beatGrid.length > 0) {
+  if (skeletonBeats.length > 0) {
     console.log(
-      `[BeatGrid] First beat: time=${beatGrid[0].time.toFixed(3)}s, number=${
-        beatGrid[0].number
-      }`
+      `[BeatGrid] First beat: time=${skeletonBeats[0].time.toFixed(3)}s, number=${skeletonBeats[0].number}`
     );
     console.log(
-      `[BeatGrid] Last beat: time=${beatGrid[beatGrid.length - 1].time.toFixed(
-        3
-      )}s, number=${beatGrid[beatGrid.length - 1].number}`
+      `[BeatGrid] Last beat: time=${skeletonBeats[skeletonBeats.length - 1].time.toFixed(3)}s, number=${skeletonBeats[skeletonBeats.length - 1].number}`
     );
+
+    // Проверяем константность интервалов
+    if (skeletonBeats.length > 1) {
+      const intervals: number[] = [];
+      for (let i = 1; i < Math.min(10, skeletonBeats.length); i++) {
+        intervals.push(skeletonBeats[i].time - skeletonBeats[i - 1].time);
+      }
+      const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const maxDeviation = Math.max(...intervals.map((iv) => Math.abs(iv - avgInterval)));
+      console.log(
+        `[BeatGrid] Beat interval check: avg=${avgInterval.toFixed(3)}s, maxDeviation=${maxDeviation.toFixed(3)}s`
+      );
+    }
   }
 
-  return beatGrid;
+  return skeletonBeats;
 }

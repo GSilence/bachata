@@ -219,7 +219,13 @@ export async function analyzeBpmOffset(
 
     // stderr содержит логи, stdout - JSON результат
     if (stderr) {
-      console.log('Analysis stderr:', stderr)
+      console.log('\n' + '='.repeat(80))
+      console.log('🔍 PYTHON SCRIPT STDERR (BPM/Offset Analysis Logs):')
+      console.log('='.repeat(80))
+      console.log(stderr)
+      console.log('='.repeat(80) + '\n')
+    } else {
+      console.warn('⚠️ WARNING: No stderr output from Python script - this is unusual!')
     }
 
     // Парсим JSON результат

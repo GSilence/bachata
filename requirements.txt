@@ -7,6 +7,9 @@ wheel>=0.38.0
 
 # Audio analysis
 madmom>=0.16.1
+# Essentia не устанавливается на Windows (требует компиляцию C++)
+# На Windows автоматически используется librosa fallback (уже установлен)
+# Для Linux/Mac можно установить вручную: pip install essentia
 numpy>=1.24.0
 scipy>=1.10.0
 

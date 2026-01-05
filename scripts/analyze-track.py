@@ -51,6 +51,28 @@ from scipy import signal
 
 import librosa  # Используется только для загрузки аудио
 
+# DEBUG MODE: Отключение фильтров для отладки
+# Если True, скрипт НЕ будет объединять секции короче 4-х битов, а выдаст всё как есть
+# ВАЖНО: Для продакшена установите False, чтобы фильтровать микро-секции
+DEBUG_NO_FILTER = False
+
+# Импорт Essentia (опционально, с fallback на librosa)
+# ВАЖНО: Essentia не работает на Windows - используйте librosa fallback
+ESSENTIA_AVAILABLE = False
+try:
+    import essentia
+    import essentia.standard as es
+    ESSENTIA_AVAILABLE = True
+    print("[INFO] ✓ Essentia library loaded successfully - using for structure analysis", file=sys.stderr)
+except ImportError:
+    # Это нормально - librosa fallback работает на всех платформах
+    print("[INFO] Essentia not available (this is OK on Windows). Using librosa fallback for structure analysis.", file=sys.stderr)
+    ESSENTIA_AVAILABLE = False
+except Exception as e:
+    # Другие ошибки (например, проблемы с компиляцией на Windows)
+    print(f"[INFO] Essentia not available ({type(e).__name__}). Using librosa fallback for structure analysis.", file=sys.stderr)
+    ESSENTIA_AVAILABLE = False
+
 # Импорт madmom (обязателен)
 try:
     from madmom.features import RNNDownBeatProcessor
@@ -63,6 +85,216 @@ try:
 except ImportError as e:
     print(f"Error: madmom is required but not available: {e}", file=sys.stderr)
     sys.exit(1)
+
+
+def analyze_structure_essentia(audio_path):
+    """
+    Анализирует структуру трека с помощью Essentia
+    Находит границы секций (boundaries) где меняется гармония
+    
+    Args:
+        audio_path: путь к аудио файлу
+    
+    Returns:
+        list: список временных меток границ секций в секундах
+    """
+    if not ESSENTIA_AVAILABLE:
+        return []
+    
+    try:
+        print("[Essentia] Loading audio file...", file=sys.stderr)
+        loader = es.MonoLoader(filename=audio_path)
+        audio = loader()
+        sample_rate = 44100  # Essentia MonoLoader использует 44100 по умолчанию
+        
+        print(f"[Essentia] Audio loaded: {len(audio)} samples, {len(audio)/sample_rate:.2f}s", file=sys.stderr)
+        
+        # Вычисляем MFCC features для анализа структуры
+        print("[Essentia] Computing MFCC features for structure analysis...", file=sys.stderr)
+        mfcc = es.MFCC()
+        windowing = es.Windowing(type='hann')
+        spectrum = es.Spectrum()
+        
+        # Обрабатываем аудио по кадрам
+        frame_size = 2048
+        hop_size = 512
+        frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
+        
+        mfccs = []
+        for frame in frames:
+            spec = spectrum(windowing(frame))
+            mfcc_coeffs, mfcc_bands = mfcc(spec)
+            mfccs.append(mfcc_coeffs)
+        
+        mfccs = np.array(mfccs)
+        print(f"[Essentia] Computed {len(mfccs)} MFCC frames", file=sys.stderr)
+        
+        # Вычисляем матрицу само-подобия (self-similarity matrix)
+        print("[Essentia] Computing self-similarity matrix...", file=sys.stderr)
+        from scipy.spatial.distance import cdist
+        similarity_matrix = 1 - cdist(mfccs, mfccs, metric='cosine')
+        
+        # Находим границы секций используя алгоритм поиска изменений в матрице подобия
+        row_similarity = np.mean(similarity_matrix, axis=1)
+        similarity_diff = np.diff(row_similarity)
+        
+        # Находим пики в производной (резкие изменения структуры)
+        from scipy.signal import find_peaks
+        peaks, properties = find_peaks(np.abs(similarity_diff), 
+                                      height=np.percentile(np.abs(similarity_diff), 75),
+                                      distance=int(sample_rate / hop_size * 2))  # Минимум 2 секунды между границами
+        
+        # Преобразуем пики во временные метки
+        frame_times = np.arange(len(mfccs)) * (hop_size / sample_rate)
+        boundaries = frame_times[peaks].tolist()
+        
+        print(f"[Essentia] Found {len(boundaries)} structural boundaries: {[f'{b:.2f}s' for b in boundaries[:10]]}", file=sys.stderr)
+        
+        return boundaries
+        
+    except Exception as e:
+        print(f"[Essentia] Error during structure analysis: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def analyze_structure_librosa(audio_path):
+    """
+    Fallback: Анализирует структуру трека с помощью librosa
+    Использует recurrence matrix для поиска границ секций
+    
+    Args:
+        audio_path: путь к аудио файлу
+    
+    Returns:
+        list: список временных меток границ секций в секундах
+    """
+    try:
+        print("[Librosa Fallback] Loading audio for structure analysis...", file=sys.stderr)
+        y, sr = librosa.load(audio_path, sr=22050)  # Используем меньшую частоту для скорости
+        
+        print(f"[Librosa Fallback] Computing chroma features...", file=sys.stderr)
+        # Используем chroma features для анализа гармонии
+        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+        
+        print(f"[Librosa Fallback] Computing recurrence matrix...", file=sys.stderr)
+        # Вычисляем матрицу рекуррентности (self-similarity)
+        R = librosa.segment.cross_similarity(chroma, chroma)
+        
+        # Находим границы секций используя agglomerative clustering
+        # Используем chroma напрямую (не R), так как agglomerative работает с feature matrix
+        print(f"[Librosa Fallback] Finding segment boundaries using agglomerative clustering...", file=sys.stderr)
+        # agglomerative принимает feature matrix и количество сегментов k
+        # Используем среднее значение между разумными границами
+        k_segments = 10  # Количество сегментов для поиска
+        boundaries = librosa.segment.agglomerative(chroma, k=k_segments)
+        
+        # Преобразуем frame индексы во времена
+        times = librosa.frames_to_time(boundaries, sr=sr)
+        
+        # Фильтруем границы: оставляем только те, что достаточно далеко друг от друга (минимум 4 секунды)
+        filtered_boundaries = [times[0]]
+        for t in times[1:]:
+            if t - filtered_boundaries[-1] >= 4.0:  # Минимум 4 секунды между границами
+                filtered_boundaries.append(t)
+        
+        print(f"[Librosa Fallback] Found {len(filtered_boundaries)} structural boundaries: {[f'{b:.2f}s' for b in filtered_boundaries[:10]]}", file=sys.stderr)
+        
+        return filtered_boundaries
+        
+    except Exception as e:
+        print(f"[Librosa Fallback] Error during structure analysis: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def analyze_structure(audio_path):
+    """
+    Анализирует структуру трека, используя Essentia (приоритет) или librosa (fallback)
+    
+    Args:
+        audio_path: путь к аудио файлу
+    
+    Returns:
+        list: список временных меток границ секций в секундах
+    """
+    print(f"[analyze_structure] Starting structure analysis for: {audio_path}", file=sys.stderr)
+    print(f"[analyze_structure] ESSENTIA_AVAILABLE = {ESSENTIA_AVAILABLE}", file=sys.stderr)
+    
+    if ESSENTIA_AVAILABLE:
+        print("[analyze_structure] Attempting to use Essentia...", file=sys.stderr)
+        try:
+            boundaries = analyze_structure_essentia(audio_path)
+            if boundaries and len(boundaries) > 0:
+                print(f"[analyze_structure] Essentia returned {len(boundaries)} boundaries", file=sys.stderr)
+                return boundaries
+            else:
+                print("[WARNING] Essentia returned no boundaries, falling back to librosa", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARNING] Essentia failed with error: {e}, falling back to librosa", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
+    # Fallback на librosa
+    print("[analyze_structure] Using librosa fallback...", file=sys.stderr)
+    try:
+        boundaries = analyze_structure_librosa(audio_path)
+        print(f"[analyze_structure] Librosa returned {len(boundaries)} boundaries", file=sys.stderr)
+        return boundaries
+    except Exception as e:
+        print(f"[ERROR] Librosa fallback also failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def merge_structure_with_beats(structure_boundaries, beats, downbeats, tolerance=0.5):
+    """
+    Объединяет границы структуры от Essentia/Librosa с битами от Madmom
+    Для каждой границы находит ближайший бит и помечает его как начало секции
+    
+    Args:
+        structure_boundaries: список временных меток границ от Essentia/Librosa
+        beats: список всех битов от Madmom
+        downbeats: список downbeats от Madmom
+        tolerance: максимальное расстояние для сопоставления (в секундах)
+    
+    Returns:
+        set: множество временных меток битов, которые должны быть началами секций
+    """
+    section_starts = set()
+    
+    if not structure_boundaries:
+        print("[Merge] No structure boundaries found, using only Madmom analysis", file=sys.stderr)
+        return section_starts
+    
+    print(f"[Merge] Merging {len(structure_boundaries)} structure boundaries with {len(beats)} beats", file=sys.stderr)
+    
+    # Объединяем beats и downbeats для поиска ближайших
+    all_beat_times = sorted(set(beats + downbeats))
+    
+    for boundary_time in structure_boundaries:
+        # Находим ближайший бит к границе
+        closest_beat = None
+        min_distance = float('inf')
+        
+        for beat_time in all_beat_times:
+            distance = abs(beat_time - boundary_time)
+            if distance < min_distance:
+                min_distance = distance
+                closest_beat = beat_time
+        
+        # Если ближайший бит находится в пределах tolerance, добавляем его
+        if closest_beat is not None and min_distance <= tolerance:
+            section_starts.add(closest_beat)
+            print(f"[Merge] Structure boundary at {boundary_time:.2f}s -> beat at {closest_beat:.2f}s (distance: {min_distance:.3f}s)", file=sys.stderr)
+        else:
+            print(f"[Merge] Structure boundary at {boundary_time:.2f}s -> no close beat found (min distance: {min_distance:.3f}s > {tolerance}s)", file=sys.stderr)
+    
+    print(f"[Merge] Total section starts after merging: {len(section_starts)}", file=sys.stderr)
+    return section_starts
 
 
 def calculate_rms(audio_data, sample_rate, start_time, end_time):
@@ -94,10 +326,11 @@ def calculate_rms(audio_data, sample_rate, start_time, end_time):
     return float(rms)
 
 
-def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
+def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None):
     """
     Детектирует мостики (bridges) в композиции по алгоритму "Mikhail's Logic"
     С применением "Танцевальной логики Бачаты": фильтрация микро-секций и кратность 4 битам
+    Объединяет результаты Madmom (ритм) и Essentia/Librosa (структура)
     
     Args:
         downbeats: массив времен сильных долей (единиц)
@@ -105,6 +338,8 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
         audio_data: numpy array с аудио данными
         sample_rate: частота дискретизации
         bpm: BPM трека
+        debug_data: словарь для сохранения debug информации (опционально)
+        structure_section_starts: множество временных меток границ структуры от Essentia/Librosa (опционально)
     
     Returns:
         list: список секций с типом (verse/bridge), отфильтрованных и выровненных
@@ -112,75 +347,183 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
     if len(downbeats) < 2:
         return []
     
-    # Вычисляем средний интервал между сильными долями (обычно 8 битов = 4 такта)
+    # Инициализируем список кандидатов для debug
+    candidates_sections = []
+    
+    # Используем объединенные границы структуры для принудительного создания секций
+    if structure_section_starts is None:
+        structure_section_starts = set()
+    
+    # ВАЖНО: Если есть границы структуры от Librosa/Essentia - используем ТОЛЬКО их
+    # Полностью отключаем RMS анализ, чтобы избежать ложных срабатываний
+    use_structure_only = len(structure_section_starts) > 0
+    
+    if use_structure_only:
+        print(f"[DEBUG] Structure-based mode: Using {len(structure_section_starts)} structure boundaries from Librosa/Essentia", file=sys.stderr)
+        print(f"[DEBUG] RMS analysis DISABLED - trusting only structural boundaries", file=sys.stderr)
+    else:
+        print(f"[DEBUG] Fallback mode: No structure boundaries found, using RMS-based analysis", file=sys.stderr)
+        # Вычисляем средний интервал между сильными долями (обычно 8 битов = 4 такта)
+        intervals = np.diff(downbeats)
+        avg_interval = np.mean(intervals)
+        
+        # Вычисляем среднюю RMS энергию по всему треку
+        total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
+        
+        # Определяем порог для "короткого" интервала (обычно 4 бита вместо 8)
+        # Если интервал меньше 60% от среднего, это потенциальный мостик
+        short_interval_threshold = avg_interval * 0.6
+        
+        # Определяем порог для "громкого" участка (брейк)
+        # Если RMS больше 1.5x от среднего, это брейк, а не мостик
+        break_threshold = total_rms * 1.5
+    
+    # Вычисляем интервалы (нужны для обоих режимов)
     intervals = np.diff(downbeats)
-    avg_interval = np.mean(intervals)
-    
-    # Вычисляем среднюю RMS энергию по всему треку
-    total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
-    
-    # Определяем порог для "короткого" интервала (обычно 4 бита вместо 8)
-    # Если интервал меньше 60% от среднего, это потенциальный мостик
-    short_interval_threshold = avg_interval * 0.6
-    
-    # Определяем порог для "громкого" участка (брейк)
-    # Если RMS больше 1.5x от среднего, это брейк, а не мостик
-    break_threshold = total_rms * 1.5
     
     grid = []
     current_start = 0.0
     current_type = "verse"
     current_beats = 0
     
-    # Проходим по всем сильным долям
-    for i in range(len(downbeats) - 1):
-        interval = intervals[i]
-        downbeat_time = downbeats[i]
-        next_downbeat_time = downbeats[i + 1]
+    # РЕЖИМ 1: Используем ТОЛЬКО границы структуры (Librosa/Essentia)
+    if use_structure_only:
+        print(f"[DEBUG] ===== STRUCTURE-ONLY MODE: Creating sections ONLY at structure boundaries =====", file=sys.stderr)
         
-        # Вычисляем количество битов в этом интервале
-        beats_in_interval = int(round(interval / (60.0 / bpm)))
-        
-        # Проверяем, является ли интервал "коротким"
-        if interval < short_interval_threshold:
-            # Это потенциальный мостик или брейк
-            # Вычисляем RMS на этом участке
-            segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
+        # Проходим по всем сильным долям
+        for i in range(len(downbeats) - 1):
+            interval = intervals[i]
+            downbeat_time = downbeats[i]
+            next_downbeat_time = downbeats[i + 1]
             
-            # Если громкость "ровная" (не пик) - это мостик
-            if segment_rms < break_threshold:
+            # Вычисляем количество битов в этом интервале
+            beats_in_interval = int(round(interval / (60.0 / bpm)))
+            
+            # Проверяем, является ли этот downbeat границей структуры
+            is_structure_boundary = False
+            for struct_start in structure_section_starts:
+                if abs(downbeat_time - struct_start) < 0.2:  # В пределах 0.2 секунды
+                    is_structure_boundary = True
+                    print(f"[DEBUG] ✓ Structure boundary detected at {downbeat_time:.2f}s (from Librosa/Essentia)", file=sys.stderr)
+                    break
+            
+            # Если это граница структуры - создаем новую секцию
+            if is_structure_boundary:
                 # Завершаем предыдущую секцию (если она есть)
                 if current_beats > 0:
-                    grid.append({
+                    prev_section = {
                         "type": current_type,
                         "start": current_start,
                         "beats": current_beats
+                    }
+                    grid.append(prev_section)
+                    candidates_sections.append({
+                        "time": current_start,
+                        "type": current_type,
+                        "beats": current_beats,
+                        "reason": "structure_boundary_previous",
+                        "action": "added"
                     })
+                    print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
+                          f"({current_beats} beats) - before structure boundary", file=sys.stderr)
                 
-                # Начинаем мостик
-                # Выравниваем количество битов до кратности 4 (минимум 4)
-                beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)  # Округляем вверх до кратности 4
-                grid.append({
-                    "type": "bridge",
-                    "start": downbeat_time,
-                    "beats": beats_in_bridge
-                })
-                
-                # Начинаем новую verse секцию после мостика
-                current_start = next_downbeat_time
+                # Начинаем новую verse секцию на границе структуры
+                current_start = downbeat_time
                 current_type = "verse"
                 current_beats = 0
-            else:
-                # Если это брейк (громкий участок), игнорируем и продолжаем verse
-                if current_type == "verse" and current_beats == 0:
-                    current_start = downbeat_time
-                current_beats += beats_in_interval
-        else:
-            # Обычный интервал - продолжаем verse
+                print(f"[DEBUG] DECISION: Starting new verse section at {downbeat_time:.2f}s (structure boundary)", file=sys.stderr)
+            
+            # Добавляем биты текущего интервала к текущей секции
             if current_type == "verse" and current_beats == 0:
                 current_start = downbeat_time
-            
             current_beats += beats_in_interval
+    
+    # РЕЖИМ 2: Fallback - используем старую RMS логику (если структура не найдена)
+    else:
+        print(f"[DEBUG] ===== FALLBACK MODE: Using RMS-based analysis (no structure boundaries) =====", file=sys.stderr)
+        
+        # Проходим по всем сильным долям
+        for i in range(len(downbeats) - 1):
+            interval = intervals[i]
+            downbeat_time = downbeats[i]
+            next_downbeat_time = downbeats[i + 1]
+            
+            # Вычисляем количество битов в этом интервале
+            beats_in_interval = int(round(interval / (60.0 / bpm)))
+            
+            # Проверяем, является ли интервал "коротким"
+            if interval < short_interval_threshold:
+                # Это потенциальный мостик или брейк
+                # Вычисляем RMS на этом участке
+                segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
+                
+                print(f"[DEBUG] Short interval detected at {downbeat_time:.2f}s. "
+                      f"RMS: {segment_rms:.4f}, Break threshold: {break_threshold:.4f}", file=sys.stderr)
+                
+                # Если громкость "ровная" (не пик) - это мостик
+                if segment_rms < break_threshold:
+                    # Завершаем предыдущую секцию (если она есть)
+                    if current_beats > 0:
+                        prev_section = {
+                            "type": current_type,
+                            "start": current_start,
+                            "beats": current_beats
+                        }
+                        grid.append(prev_section)
+                        candidates_sections.append({
+                            "time": current_start,
+                            "type": current_type,
+                            "beats": current_beats,
+                            "reason": "previous_section_end",
+                            "action": "added"
+                        })
+                        print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
+                              f"({current_beats} beats)", file=sys.stderr)
+                    
+                    # Начинаем мостик
+                    # Выравниваем количество битов до кратности 4 (минимум 4)
+                    beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)  # Округляем вверх до кратности 4
+                    bridge_section = {
+                        "type": "bridge",
+                        "start": downbeat_time,
+                        "beats": beats_in_bridge
+                    }
+                    grid.append(bridge_section)
+                    candidates_sections.append({
+                        "time": downbeat_time,
+                        "type": "bridge",
+                        "beats": beats_in_bridge,
+                        "original_beats": beats_in_interval,
+                        "reason": "short_interval_low_rms",
+                        "action": "added"
+                    })
+                    print(f"[DEBUG] DECISION: Added BRIDGE section at {downbeat_time:.2f}s "
+                          f"({beats_in_interval} beats -> {beats_in_bridge} beats after alignment)", file=sys.stderr)
+                    
+                    # Начинаем новую verse секцию после мостика
+                    current_start = next_downbeat_time
+                    current_type = "verse"
+                    current_beats = 0
+                else:
+                    # Если это брейк (громкий участок), игнорируем и продолжаем verse
+                    candidates_sections.append({
+                        "time": downbeat_time,
+                        "type": "break",
+                        "beats": beats_in_interval,
+                        "reason": "short_interval_high_rms",
+                        "action": "ignored"
+                    })
+                    print(f"[DEBUG] DECISION: Ignoring potential bridge at {downbeat_time:.2f}s "
+                          f"(high RMS: {segment_rms:.4f} > {break_threshold:.4f}) - treating as break", file=sys.stderr)
+                    if current_type == "verse" and current_beats == 0:
+                        current_start = downbeat_time
+                    current_beats += beats_in_interval
+            else:
+                # Обычный интервал - продолжаем verse
+                if current_type == "verse" and current_beats == 0:
+                    current_start = downbeat_time
+                
+                current_beats += beats_in_interval
     
     # Добавляем последнюю секцию
     if current_beats > 0:
@@ -205,28 +548,51 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
     # Обычно секции кратны 8 beats (полный цикл танца), но минимум 4 beats
     MIN_SECTION_BEATS = 4  # Минимальная длина секции в beats
     
+    print(f"\n[DEBUG] Starting filtering process. Total sections before filtering: {len(grid)}", file=sys.stderr)
+    print(f"[DEBUG] DEBUG_NO_FILTER = {DEBUG_NO_FILTER}", file=sys.stderr)
+    
     filtered_grid = []
     for i, section in enumerate(grid):
         beats_count = section['beats']
+        section_start = section['start']
+        
+        print(f"[DEBUG] Processing section #{i+1}: {section['type']} at {section_start:.2f}s, "
+              f"{beats_count} beats", file=sys.stderr)
+        
+        # Если DEBUG_NO_FILTER включен, пропускаем фильтрацию
+        if DEBUG_NO_FILTER:
+            print(f"[DEBUG] DECISION: Keeping section at {section_start:.2f}s (DEBUG_NO_FILTER=True, no filtering)", file=sys.stderr)
+            filtered_grid.append({
+                "type": section['type'],
+                "start": section['start'],
+                "beats": beats_count
+            })
+            continue
         
         # Если секция короче минимума - вливаем в предыдущую
         if beats_count < MIN_SECTION_BEATS:
-            print(f"  ⚠ Filtering out micro-section: {section['type']} at {section['start']:.2f}s, "
-                  f"only {beats_count} beats (minimum is {MIN_SECTION_BEATS})", file=sys.stderr)
+            print(f"[DEBUG] DECISION: Merging section at {section_start:.2f}s because duration ({beats_count} beats) < MIN_SECTION_LENGTH ({MIN_SECTION_BEATS})", file=sys.stderr)
+            
+            # Обновляем debug данные
+            for candidate in candidates_sections:
+                if abs(candidate['time'] - section_start) < 0.1:
+                    candidate['action'] = 'merged'
+                    candidate['reason'] = f'duration_too_short_{beats_count}_beats'
             
             # Если есть предыдущая секция, увеличиваем её длительность
             if filtered_grid:
                 prev_section = filtered_grid[-1]
+                prev_beats = prev_section['beats']
                 prev_section['beats'] += beats_count
-                print(f"    → Merged into previous {prev_section['type']} section "
-                      f"(now {prev_section['beats']} beats)", file=sys.stderr)
+                print(f"[DEBUG]    → Merged into previous {prev_section['type']} section "
+                      f"({prev_beats} -> {prev_section['beats']} beats)", file=sys.stderr)
             # Если нет предыдущей и это первая секция, пропускаем (начнем со следующей)
             elif i < len(grid) - 1:
                 # Пытаемся влить в следующую секцию
                 next_section = grid[i + 1]
                 next_section['beats'] += beats_count
                 next_section['start'] = section['start']  # Сдвигаем начало следующей секции
-                print(f"    → Will merge into next {next_section['type']} section", file=sys.stderr)
+                print(f"[DEBUG]    → Will merge into next {next_section['type']} section", file=sys.stderr)
         else:
             # Выравниваем до кратности 4 (округляем вниз для стабильности)
             aligned_beats = (beats_count // 4) * 4
@@ -234,8 +600,11 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
                 aligned_beats = MIN_SECTION_BEATS
             
             if aligned_beats != beats_count:
-                print(f"  ↻ Aligning section: {section['type']} at {section['start']:.2f}s "
+                print(f"[DEBUG] DECISION: Aligning section at {section_start:.2f}s "
                       f"from {beats_count} to {aligned_beats} beats (multiple of 4)", file=sys.stderr)
+            else:
+                print(f"[DEBUG] DECISION: Keeping section at {section_start:.2f}s "
+                      f"({beats_count} beats, already aligned)", file=sys.stderr)
             
             filtered_grid.append({
                 "type": section['type'],
@@ -266,7 +635,13 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
             # Последний шанс: вливаем в предыдущую
             if final_grid:
                 final_grid[-1]['beats'] += section['beats']
-                print(f"  ⚠ Final merge: {section['type']} section merged into previous", file=sys.stderr)
+                print(f"[DEBUG] Final merge: {section['type']} section at {section['start']:.2f}s merged into previous", file=sys.stderr)
+    
+    # Сохраняем debug данные если передан debug_data
+    if debug_data is not None:
+        debug_data['candidates_sections'] = candidates_sections
+    
+    print(f"[DEBUG] Filtering complete. Total sections after filtering: {len(final_grid if final_grid else filtered_grid)}", file=sys.stderr)
     
     return final_grid if final_grid else filtered_grid
 
@@ -481,10 +856,47 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         
         print("=" * 80, file=sys.stderr)
         
-        # Детектируем мостики
+        # Подготавливаем debug данные
+        debug_data = {
+            'raw_beats': [float(bt) for bt in all_beats],
+            'raw_downbeats': [float(db) for db in downbeats],
+            'candidates_sections': []
+        }
+        
+        # Step 5: Анализ структуры с помощью Essentia/Librosa
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("Step 5: Analyzing structure (Essentia/Librosa)...", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        try:
+            structure_boundaries = analyze_structure(audio_path)
+            print(f"[Step 5] Structure analysis complete. Found {len(structure_boundaries)} boundaries", file=sys.stderr)
+            debug_data['structure_boundaries'] = [float(b) for b in structure_boundaries]
+        except Exception as e:
+            print(f"[Step 5] ERROR: Structure analysis failed: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            structure_boundaries = []
+            debug_data['structure_boundaries'] = []
+        
+        # Step 6: Объединение структуры с битами Madmom
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("Step 6: Merging structure boundaries with Madmom beats...", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        try:
+            merged_section_starts = merge_structure_with_beats(structure_boundaries, all_beats, downbeats, tolerance=0.5)
+            print(f"[Step 6] Merge complete. Total merged section starts: {len(merged_section_starts)}", file=sys.stderr)
+            debug_data['merged_section_starts'] = [float(s) for s in merged_section_starts]
+        except Exception as e:
+            print(f"[Step 6] ERROR: Merge failed: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            merged_section_starts = set()
+            debug_data['merged_section_starts'] = []
+        
+        # Step 7: Детектирование мостиков с учетом объединенных границ
         # Используем оригинальное аудио (y) и его sample_rate (sr_orig) для RMS анализа
-        print("\nStep 5: Detecting bridge sections...", file=sys.stderr)
-        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm)
+        print("\nStep 7: Detecting bridge sections (with merged structure boundaries)...", file=sys.stderr)
+        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm, debug_data, merged_section_starts)
         
         bridge_count = len([s for s in grid if s['type'] == 'bridge'])
         verse_count = len([s for s in grid if s['type'] == 'verse'])
@@ -501,6 +913,36 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                       f"End: {section_end:7.3f}s", file=sys.stderr)
         
         print("=" * 80, file=sys.stderr)
+        
+        # Сохраняем debug файл
+        try:
+            audio_dir = os.path.dirname(os.path.abspath(audio_path))
+            if not audio_dir:
+                # Если путь относительный или нет директории, используем текущую
+                audio_dir = os.getcwd()
+            
+            debug_file_path = os.path.join(audio_dir, 'analysis_debug.json')
+            
+            debug_output = {
+                'audio_path': audio_path,
+                'bpm': bpm,
+                'offset': offset,
+                'duration': duration,
+                'raw_beats': debug_data['raw_beats'],
+                'raw_downbeats': debug_data['raw_downbeats'],
+                'candidates_sections': debug_data['candidates_sections'],
+                'final_grid': grid,
+                'total_beats': len(all_beats),
+                'total_downbeats': len(downbeats),
+                'debug_no_filter': DEBUG_NO_FILTER
+            }
+            
+            with open(debug_file_path, 'w', encoding='utf-8') as f:
+                json.dump(debug_output, f, indent=2, ensure_ascii=False)
+            
+            print(f"\n[DEBUG] Debug file saved: {debug_file_path}", file=sys.stderr)
+        except Exception as e:
+            print(f"[DEBUG] Warning: Failed to save debug file: {e}", file=sys.stderr)
         
         return {
             'bpm': bpm,
