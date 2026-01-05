@@ -804,6 +804,75 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
                 final_grid[-1]['beats'] += section['beats']
                 print(f"[DEBUG] Final merge: {section['type']} section at {section['start']:.2f}s merged into previous", file=sys.stderr)
     
+    # ВТОРОЙ ПРОХОД ФИЛЬТРАЦИИ: Musical Quantization 2.0
+    # Убираем секции с длительностью, которая ломает танцевальный счет (1-8)
+    # Проблема: секции длиной 6 или 10 битов остаются после первого прохода
+    print(f"\n[DEBUG] Second Pass: Musical Quantization 2.0 - fixing sections that break dance count (1-8)...", file=sys.stderr)
+    print(f"[DEBUG] Total sections before second pass: {len(final_grid if final_grid else filtered_grid)}", file=sys.stderr)
+    
+    # Используем final_grid если он не пустой, иначе filtered_grid
+    sections_to_process = final_grid if final_grid else filtered_grid
+    second_pass_grid = []
+    
+    # Вычисляем среднюю RMS энергию для определения "явной тишины"
+    total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
+    break_threshold = total_rms * 0.7  # Порог для тишины (break/bridge)
+    
+    for i, section in enumerate(sections_to_process):
+        beats_duration = section['beats']
+        section_start = section['start']
+        section_type = section['type']
+        
+        # Вычисляем остаток от деления на 4
+        remainder = beats_duration % 4
+        
+        # Правило: Если beats_duration % 4 >= 2 (например, 6, 10, 14 битов)
+        # Это значит граница стоит "посередине" такта - удаляем её
+        if remainder >= 2:
+            # Исключение: Если это явная тишина (Bridge) с очень низким RMS
+            is_explicit_break = False
+            if section_type == 'bridge':
+                # Вычисляем конец секции
+                beat_interval = 60.0 / bpm
+                section_end = section_start + (beats_duration * beat_interval)
+                segment_rms = calculate_rms(audio_data, sample_rate, section_start, section_end)
+                
+                if segment_rms < break_threshold:
+                    is_explicit_break = True
+                    print(f"[DEBUG] Second Pass: Keeping bridge at {section_start:.2f}s "
+                          f"({beats_duration} beats, remainder={remainder}) - explicit break "
+                          f"(RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
+            
+            if not is_explicit_break:
+                # Удаляем границу - объединяем с предыдущей секцией
+                print(f"[DEBUG] Second Pass: Removing boundary at {section_start:.2f}s "
+                      f"({beats_duration} beats, remainder={remainder} >= 2) - merging with previous section", file=sys.stderr)
+                
+                if second_pass_grid:
+                    # Объединяем с предыдущей секцией
+                    prev_section = second_pass_grid[-1]
+                    prev_section['beats'] += beats_duration
+                    print(f"[DEBUG]   → Merged {beats_duration} beats into previous {prev_section['type']} section "
+                          f"at {prev_section['start']:.2f}s ({prev_section['beats']} beats total)", file=sys.stderr)
+                else:
+                    # Если это первая секция, оставляем как есть (начнем со следующей)
+                    print(f"[DEBUG]   → First section, keeping as is", file=sys.stderr)
+                    second_pass_grid.append(section)
+            else:
+                # Явная тишина - оставляем как есть
+                second_pass_grid.append(section)
+        else:
+            # Если remainder < 2 (например, 5, 9, 13 битов) - это погрешность, оставляем как есть
+            # Фронтенд сам притянет к ближайшему биту (у нас там есть snap)
+            if remainder > 0:
+                print(f"[DEBUG] Second Pass: Keeping section at {section_start:.2f}s "
+                      f"({beats_duration} beats, remainder={remainder} < 2) - small error, frontend will snap", file=sys.stderr)
+            second_pass_grid.append(section)
+    
+    # Обновляем final_grid результатами второго прохода
+    final_grid = second_pass_grid
+    print(f"[DEBUG] Second Pass complete. Total sections after second pass: {len(final_grid)}", file=sys.stderr)
+    
     # Сохраняем debug данные если передан debug_data
     if debug_data is not None:
         debug_data['candidates_sections'] = candidates_sections
