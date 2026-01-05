@@ -418,7 +418,7 @@ def calculate_rms(audio_data, sample_rate, start_time, end_time):
     return float(rms)
 
 
-def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None):
+def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=None, structure_section_starts=None, offset=None):
     """
     Детектирует мостики (bridges) в композиции по алгоритму "Mikhail's Logic"
     С применением "Танцевальной логики Бачаты": фильтрация микро-секций и кратность 4 битам
@@ -432,6 +432,7 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
         bpm: BPM трека
         debug_data: словарь для сохранения debug информации (опционально)
         structure_section_starts: множество временных меток границ структуры от Essentia/Librosa (опционально)
+        offset: время первого бита (сильной доли) в секундах (опционально, для жесткого квантования)
     
     Returns:
         list: список секций с типом (verse/bridge), отфильтрованных и выровненных
@@ -873,6 +874,102 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     final_grid = second_pass_grid
     print(f"[DEBUG] Second Pass complete. Total sections after second pass: {len(final_grid)}", file=sys.stderr)
     
+    # ЖЕСТКОЕ КВАНТОВАНИЕ ПО СЕТКЕ (Hard Grid Quantization)
+    # ВРЕМЯ БИТОВ НЕЗЫБЛЕМО: все границы секций должны попадать строго на начало такта (каждый 4-й бит)
+    # Это гарантирует, что фронтенд не будет сбрасывать счетчик посреди фразы
+    if offset is not None and len(final_grid) > 0:
+        print(f"\n[DEBUG] Hard Grid Quantization: Aligning all section starts to beat grid...", file=sys.stderr)
+        print(f"[DEBUG] BPM={bpm}, offset={offset:.3f}s", file=sys.stderr)
+        
+        # Вычисляем идеальную длину бита
+        beat_interval = 60.0 / bpm
+        
+        # Создаем "Виртуальную Сетку Допустимых Начал" (Valid Start Points)
+        # Это точки времени: offset + (i * 4 * beat_interval) - начало каждого такта (каждые 4 бита)
+        # Генерируем сетку на весь трек (с запасом)
+        track_duration = len(audio_data) / sample_rate
+        max_grid_index = int((track_duration - offset) / (4 * beat_interval)) + 10  # +10 для запаса
+        
+        valid_start_points = []
+        for i in range(max_grid_index + 1):
+            grid_time = offset + (i * 4 * beat_interval)
+            if grid_time >= 0:
+                valid_start_points.append(grid_time)
+        
+        print(f"[DEBUG] Generated {len(valid_start_points)} valid start points (every 4 beats = {4 * beat_interval:.3f}s)", file=sys.stderr)
+        if len(valid_start_points) > 0:
+            print(f"[DEBUG] First valid point: {valid_start_points[0]:.3f}s, last: {valid_start_points[-1]:.3f}s", file=sys.stderr)
+        
+        # Квантуем каждую секцию к ближайшей точке сетки
+        quantized_grid = []
+        for i, section in enumerate(final_grid):
+            original_start = section['start']
+            
+            # Находим ближайшую точку из виртуальной сетки
+            nearest_grid_time = None
+            min_distance = float('inf')
+            
+            for grid_time in valid_start_points:
+                distance = abs(grid_time - original_start)
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_grid_time = grid_time
+            
+            if nearest_grid_time is None:
+                # Если не нашли (не должно произойти), оставляем как есть
+                print(f"[DEBUG] WARNING: Could not find nearest grid point for section at {original_start:.3f}s", file=sys.stderr)
+                quantized_grid.append(section)
+                continue
+            
+            # Принудительно заменяем start на идеальное время
+            quantized_section = section.copy()
+            quantized_section['start'] = round(nearest_grid_time, 3)
+            
+            if abs(original_start - nearest_grid_time) > 0.01:  # Если изменение заметное (>10ms)
+                print(f"[DEBUG] Quantized section #{i+1}: {original_start:.3f}s -> {nearest_grid_time:.3f}s "
+                      f"(shift: {nearest_grid_time - original_start:+.3f}s, distance: {min_distance:.3f}s)", file=sys.stderr)
+            
+            quantized_grid.append(quantized_section)
+        
+        # Проверяем, что после квантования секции не схлопнулись
+        # Удаляем дубликаты (секции с одинаковым start) и секции с нулевой длиной
+        cleaned_grid = []
+        for i, section in enumerate(quantized_grid):
+            section_start = section['start']
+            section_beats = section['beats']
+            
+            # Проверяем, что длина секции > 0
+            if section_beats <= 0:
+                print(f"[DEBUG] Removing section #{i+1} at {section_start:.3f}s: zero or negative length ({section_beats} beats)", file=sys.stderr)
+                continue
+            
+            # Проверяем, что start не совпадает с предыдущей секцией
+            if cleaned_grid and abs(cleaned_grid[-1]['start'] - section_start) < 0.001:
+                # Объединяем с предыдущей секцией
+                print(f"[DEBUG] Merging section #{i+1} at {section_start:.3f}s with previous (same start time)", file=sys.stderr)
+                cleaned_grid[-1]['beats'] += section_beats
+                # Сохраняем тип предыдущей секции (или bridge если любая из них bridge)
+                if section['type'] == 'bridge' or cleaned_grid[-1]['type'] == 'bridge':
+                    cleaned_grid[-1]['type'] = 'bridge'
+            else:
+                cleaned_grid.append(section)
+        
+        final_grid = cleaned_grid
+        print(f"[DEBUG] Hard Grid Quantization complete. Final sections: {len(final_grid)}", file=sys.stderr)
+        
+        # Выводим финальные времена для проверки
+        if len(final_grid) > 0:
+            print(f"[DEBUG] Quantized section starts:", file=sys.stderr)
+            for i, section in enumerate(final_grid[:10]):  # Первые 10 для краткости
+                print(f"[DEBUG]   Section #{i+1}: {section['start']:.3f}s ({section['type']}, {section['beats']} beats)", file=sys.stderr)
+            if len(final_grid) > 10:
+                print(f"[DEBUG]   ... and {len(final_grid) - 10} more sections", file=sys.stderr)
+    else:
+        if offset is None:
+            print(f"[DEBUG] Hard Grid Quantization skipped: offset not provided", file=sys.stderr)
+        else:
+            print(f"[DEBUG] Hard Grid Quantization skipped: no sections to quantize", file=sys.stderr)
+    
     # Сохраняем debug данные если передан debug_data
     if debug_data is not None:
         debug_data['candidates_sections'] = candidates_sections
@@ -1132,7 +1229,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         # Step 7: Детектирование мостиков с учетом объединенных границ
         # Используем оригинальное аудио (y) и его sample_rate (sr_orig) для RMS анализа
         print("\nStep 7: Detecting bridge sections (with merged structure boundaries)...", file=sys.stderr)
-        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm, debug_data, merged_section_starts)
+        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm, debug_data, merged_section_starts, offset)
         
         bridge_count = len([s for s in grid if s['type'] == 'bridge'])
         verse_count = len([s for s in grid if s['type'] == 'verse'])
