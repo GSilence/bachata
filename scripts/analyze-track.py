@@ -457,13 +457,15 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     
     # ШАГ 1: КВАНТОВАНИЕ ГРАНИЦ К БЛИЖАЙШЕМУ "РАЗ" С КОМПЕНСАЦИЕЙ ЗАДЕРЖКИ
     # Проблема: Essentia находит границы с задержкой (из-за размера окна анализа)
-    # Решение: применяем динамический bias (сдвиг на 2 бита назад) перед округлением
+    # Решение: применяем динамический bias (сдвиг на 1 бит назад) перед округлением
     # Это компенсирует задержку и возвращает границы на их законное место в начале такта
     
-    # Рассчитываем bias: сдвиг на 2 бита назад (половина такта)
-    bias = 2 * beat_interval
+    # Используем 1 бит (0.25 такта). Это "Золотая середина":
+    # - Компенсирует лаг до 2.5 битов (стандартный лаг Essentia ~1-1.5 бита)
+    # - Не ломает структуру, если детекция сработала чуть раньше (до -1 бита)
+    bias = 1.0 * beat_interval
     
-    print(f"[DEBUG] Quantization bias: {bias:.3f}s (2 beats = half bar)", file=sys.stderr)
+    print(f"[DEBUG] Quantization bias: {bias:.3f}s (1 beat = 0.25 bar)", file=sys.stderr)
     
     quantized_boundaries = []
     for boundary in structure_section_starts:
