@@ -638,15 +638,20 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
             "beats": total_beats
         })
     
-    # ПОСТ-ОБРАБОТКА: Фильтрация близких границ
-    # Если две найденные границы находятся ближе чем 3 секунды друг к другу,
-    # оставляем только одну (удаляем вторую и объединяем её beats с предыдущей секцией)
-    # ВАЖНО: НЕ объединяем секции, если предыдущая секция уже длиннее 4 секунд
-    print(f"\n[DEBUG] Post-processing: Filtering boundaries closer than 3 seconds...", file=sys.stderr)
+    # ПОСТ-ОБРАБОТКА: Фильтрация близких границ + Musical Quantization
+    # Этап 1: Musical Quantization - убираем секции короче 4-х битов (музыкально некорректные)
+    # Этап 2: Фильтрация близких границ по времени
+    print(f"\n[DEBUG] Post-processing: Musical Quantization + Filtering boundaries...", file=sys.stderr)
     print(f"[DEBUG] Total sections before post-processing: {len(grid)}", file=sys.stderr)
     
-    MIN_BOUNDARY_DISTANCE = 3.0  # Минимум 3 секунды между границами
+    # Параметры для Musical Quantization
+    MIN_SECTION_BEATS_QUANTIZATION = 3.5  # Минимум 3.5 битов (с погрешностью для 4-х битов)
+    MIN_BOUNDARY_DISTANCE = 3.0  # Минимум 3 секунды между границами (для фильтрации по времени)
     MAX_SECTION_DURATION_FOR_MERGE = 4.0  # Не объединяем секции длиннее 4 секунд
+    
+    # Вычисляем длительность одного бита в секундах
+    beat_interval = 60.0 / bpm
+    seconds_per_beat = beat_interval
     
     if len(grid) > 1:
         filtered_grid = [grid[0]]  # Всегда оставляем первую секцию
@@ -659,11 +664,26 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
             
             distance = current_start - prev_start
             
-            # Вычисляем длительность предыдущей секции в секундах
-            # Используем BPM из параметров функции detect_bridges
-            beat_interval = 60.0 / bpm
+            # ЭТАП 1: Musical Quantization - проверяем длительность в БИТАХ
+            # Рассчитываем длительность текущей секции в битах (от предыдущей границы до текущей)
+            # Это более точно, чем использовать beats из секции, так как учитывает реальное время
+            current_beats_duration = distance / seconds_per_beat
+            
+            # ПРИОРИТЕТ 1: Если секция короче 3.5 битов - БЕЗУСЛОВНО объединяем
+            # Это убирает "дребезг" (1-2-1-2) и случайные сбросы посреди такта
+            if current_beats_duration < MIN_SECTION_BEATS_QUANTIZATION:
+                print(f"[DEBUG] Musical Quantization: Merging section at {current_start:.2f}s "
+                      f"(duration: {current_beats_duration:.2f} beats < {MIN_SECTION_BEATS_QUANTIZATION} beats - musically incorrect)", file=sys.stderr)
+                
+                prev_section['beats'] += current_section['beats']
+                print(f"[DEBUG]   → Merged {current_section['beats']} beats into previous section at {prev_start:.2f}s "
+                      f"({prev_section['beats']} beats total)", file=sys.stderr)
+                continue  # Пропускаем добавление текущей секции
+            
+            # Вычисляем длительность предыдущей секции в секундах (для проверки MAX_SECTION_DURATION_FOR_MERGE)
             prev_section_duration = prev_section['beats'] * beat_interval
             
+            # ЭТАП 2: Фильтрация близких границ по времени (если не сработала Musical Quantization)
             if distance < MIN_BOUNDARY_DISTANCE and prev_section_duration < MAX_SECTION_DURATION_FOR_MERGE:
                 # Две границы слишком близко И предыдущая секция короткая - удаляем текущую
                 # Объединяем beats текущей секции с предыдущей
