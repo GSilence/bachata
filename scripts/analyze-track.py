@@ -211,14 +211,14 @@ def analyze_structure_essentia(audio_path):
         
         # Prominence (значимость пика) - игнорируем мелкую рябь
         # Вычисляем prominence как процент от диапазона кривой
-        # УМЕНЬШЕНО с 0.15 до 0.06 для повышения чувствительности (замечать мостики)
+        # УМЕНЬШЕНО до 0.02 (2% от диапазона) для максимальной чувствительности (замечать даже небольшие изменения)
         curve_range = np.max(novelty_curve) - np.min(novelty_curve)
-        prominence_threshold = curve_range * 0.06  # 6% от диапазона (было 15%) - более чувствительно
+        prominence_threshold = curve_range * 0.02  # 2% от диапазона - очень чувствительно для обнаружения мостиков
         
-        # УМЕНЬШЕНО distance до ~2 секунд (80 фреймов при hop_size=512, ~40 при hop_size=2048)
+        # УМЕНЬШЕНО distance до 40 фреймов (примерно 1 секунда)
         # Это позволит замечать короткие вставки (мостики)
-        min_distance_frames_short = int(sample_rate / hop_size * 2)  # 2 секунды вместо 4
-        min_distance_frames = min(min_distance_frames, min_distance_frames_short)  # Используем меньший
+        # Лучше найти лишние границы (которые потом отфильтруем), чем пропустить реальный мостик
+        min_distance_frames = 40  # Фиксированное значение ~1 секунда (независимо от hop_size)
         
         peaks, properties = find_peaks(novelty_curve,
                                       height=peak_height,
@@ -641,10 +641,12 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     # ПОСТ-ОБРАБОТКА: Фильтрация близких границ
     # Если две найденные границы находятся ближе чем 3 секунды друг к другу,
     # оставляем только одну (удаляем вторую и объединяем её beats с предыдущей секцией)
+    # ВАЖНО: НЕ объединяем секции, если предыдущая секция уже длиннее 4 секунд
     print(f"\n[DEBUG] Post-processing: Filtering boundaries closer than 3 seconds...", file=sys.stderr)
     print(f"[DEBUG] Total sections before post-processing: {len(grid)}", file=sys.stderr)
     
     MIN_BOUNDARY_DISTANCE = 3.0  # Минимум 3 секунды между границами
+    MAX_SECTION_DURATION_FOR_MERGE = 4.0  # Не объединяем секции длиннее 4 секунд
     
     if len(grid) > 1:
         filtered_grid = [grid[0]]  # Всегда оставляем первую секцию
@@ -657,15 +659,28 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
             
             distance = current_start - prev_start
             
-            if distance < MIN_BOUNDARY_DISTANCE:
-                # Две границы слишком близко - удаляем текущую
+            # Вычисляем длительность предыдущей секции в секундах
+            # Используем BPM из параметров функции detect_bridges
+            beat_interval = 60.0 / bpm
+            prev_section_duration = prev_section['beats'] * beat_interval
+            
+            if distance < MIN_BOUNDARY_DISTANCE and prev_section_duration < MAX_SECTION_DURATION_FOR_MERGE:
+                # Две границы слишком близко И предыдущая секция короткая - удаляем текущую
                 # Объединяем beats текущей секции с предыдущей
                 print(f"[DEBUG] Removing close boundary: {current_start:.2f}s (too close to {prev_start:.2f}s, "
-                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s)", file=sys.stderr)
+                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s, "
+                      f"prev section duration: {prev_section_duration:.2f}s < {MAX_SECTION_DURATION_FOR_MERGE}s)", file=sys.stderr)
                 
                 prev_section['beats'] += current_section['beats']
                 print(f"[DEBUG]   → Merged {current_section['beats']} beats into previous section at {prev_start:.2f}s "
                       f"({prev_section['beats']} beats total)", file=sys.stderr)
+            elif distance < MIN_BOUNDARY_DISTANCE and prev_section_duration >= MAX_SECTION_DURATION_FOR_MERGE:
+                # Границы близко, но предыдущая секция уже длинная - НЕ объединяем
+                # Это позволяет разбить "Гига-Куплет" на части
+                print(f"[DEBUG] Keeping boundary: {current_start:.2f}s (close to {prev_start:.2f}s, "
+                      f"distance: {distance:.2f}s < {MIN_BOUNDARY_DISTANCE}s, "
+                      f"BUT prev section duration: {prev_section_duration:.2f}s >= {MAX_SECTION_DURATION_FOR_MERGE}s - NOT merging)", file=sys.stderr)
+                filtered_grid.append(current_section)
             else:
                 # Нормальная секция - добавляем её
                 filtered_grid.append(current_section)
