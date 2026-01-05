@@ -229,40 +229,104 @@ export function generateBeatGridFromDownbeats(
     return generateFallbackBeatGrid(bpm, gridMap.offset || 0, duration);
   }
 
-  // Финальная корректировка: убеждаемся, что каждая ДОСТАТОЧНО ДЛИННАЯ секция начинается с 1
-  // Игнорируем микро-секции (короче 4 beats) - они не должны вызывать коррекцию
-  const MIN_SECTION_BEATS = 4; // Минимальная длина секции для коррекции
+  // УМНАЯ ЛОГИКА СБРОСА: "Танцевальная логика Бачаты"
+  // Сброс на "1" происходит только для длинных и стабильных секций
+  // Короткие мостики (4 бита) могут продолжать счет или сбрасывать логично
+  // Микро-секции (1-2 бита) полностью игнорируются
+  
+  const MIN_SECTION_BEATS_FOR_RESET = 8; // Минимальная длина для сброса (2 такта)
+  const SHORT_BRIDGE_BEATS = 4; // Короткий мостик - ровно 4 бита (1 такт)
+  const MICRO_SECTION_BEATS = 2; // Микро-секции (1-2 бита) - игнорируем полностью
 
   for (const section of sections) {
-    // Пропускаем микро-секции
-    if (section.beats < MIN_SECTION_BEATS) {
-      continue; // Не корректируем микро-секции
-    }
-
     const sectionStart = section.start;
     const tolerance = 0.2;
+
+    // ЗАПРЕТ НА МИКРО-СБРОСЫ: Игнорируем секции короче 2 битов
+    if (section.beats < MICRO_SECTION_BEATS) {
+      console.log(
+        `[BeatGrid] Ignoring micro-section: ${section.type} at ${sectionStart.toFixed(2)}s, ` +
+        `only ${section.beats} beats (too short for reset)`
+      );
+      continue; // Полностью игнорируем микро-секции
+    }
 
     // Находим ближайший beat к началу секции
     const beatAtStart = beatGrid.find(
       (beat) => Math.abs(beat.time - sectionStart) < tolerance
     );
 
-    if (beatAtStart && beatAtStart.number !== 1) {
-      // Корректируем: реальная секция (достаточно длинная) должна начинаться с 1
-      const sectionEnd = sectionStart + section.beats * beatInterval;
-      const sectionBeats = beatGrid.filter(
-        (beat) =>
-          beat.time >= sectionStart - tolerance &&
-          beat.time <= sectionEnd + tolerance
-      );
+    if (!beatAtStart) {
+      continue; // Не нашли beat в начале секции
+    }
 
-      // Пересчитываем beats в секции, начиная с 1
+    const currentBeatNumber = beatAtStart.number;
+    const sectionEnd = sectionStart + section.beats * beatInterval;
+    const sectionBeats = beatGrid.filter(
+      (beat) =>
+        beat.time >= sectionStart - tolerance &&
+        beat.time <= sectionEnd + tolerance
+    );
+
+    // ЛОГИКА СБРОСА:
+    if (section.beats >= MIN_SECTION_BEATS_FOR_RESET) {
+      // ДЛИННАЯ СЕКЦИЯ (> 8 битов): Всегда сбрасываем на "1"
+      // Это реальная граница Куплета/Припева
+      if (currentBeatNumber !== 1) {
+        console.log(
+          `[BeatGrid] Long section (${section.beats} beats) starts at ${sectionStart.toFixed(2)}s. ` +
+          `Resetting from ${currentBeatNumber} to 1.`
+        );
+        
+        // Пересчитываем beats в секции, начиная с 1
+        let beatNum = 1;
+        for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
+          if (beat.time >= sectionStart - tolerance) {
+            beat.number = beatNum;
+            beatNum = (beatNum % 8) + 1;
+          }
+        }
+      }
+    } else if (section.beats === SHORT_BRIDGE_BEATS && section.type === "bridge") {
+      // КОРОТКИЙ МОСТИК (ровно 4 бита): Логичный сброс на "1"
+      // 4 бита = законченный такт, логично начать с "1"
+      console.log(
+        `[BeatGrid] Short bridge (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
+        `Resetting to 1 (complete measure).`
+      );
+      
       let beatNum = 1;
       for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
         if (beat.time >= sectionStart - tolerance) {
           beat.number = beatNum;
           beatNum = (beatNum % 8) + 1;
         }
+      }
+    } else if (section.beats >= 4 && section.beats < MIN_SECTION_BEATS_FOR_RESET) {
+      // СРЕДНЯЯ СЕКЦИЯ (4-7 битов): Проверяем, нужен ли сброс
+      // Если текущий счет близок к "1" (1, 2, 8) - не сбрасываем, продолжаем
+      // Если текущий счет далек от "1" (3-7) - сбрасываем на "1"
+      const shouldReset = currentBeatNumber >= 3 && currentBeatNumber <= 7;
+      
+      if (shouldReset) {
+        console.log(
+          `[BeatGrid] Medium section (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
+          `Current beat is ${currentBeatNumber}, resetting to 1.`
+        );
+        
+        let beatNum = 1;
+        for (const beat of sectionBeats.sort((a, b) => a.time - b.time)) {
+          if (beat.time >= sectionStart - tolerance) {
+            beat.number = beatNum;
+            beatNum = (beatNum % 8) + 1;
+          }
+        }
+      } else {
+        console.log(
+          `[BeatGrid] Medium section (${section.beats} beats) at ${sectionStart.toFixed(2)}s. ` +
+          `Current beat is ${currentBeatNumber}, continuing count (no reset).`
+        );
+        // Продолжаем счет без сброса
       }
     }
   }

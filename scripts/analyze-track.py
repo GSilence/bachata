@@ -97,6 +97,7 @@ def calculate_rms(audio_data, sample_rate, start_time, end_time):
 def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
     """
     Детектирует мостики (bridges) в композиции по алгоритму "Mikhail's Logic"
+    С применением "Танцевальной логики Бачаты": фильтрация микро-секций и кратность 4 битам
     
     Args:
         downbeats: массив времен сильных долей (единиц)
@@ -106,7 +107,7 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
         bpm: BPM трека
     
     Returns:
-        list: список секций с типом (verse/bridge)
+        list: список секций с типом (verse/bridge), отфильтрованных и выровненных
     """
     if len(downbeats) < 2:
         return []
@@ -137,6 +138,9 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
         downbeat_time = downbeats[i]
         next_downbeat_time = downbeats[i + 1]
         
+        # Вычисляем количество битов в этом интервале
+        beats_in_interval = int(round(interval / (60.0 / bpm)))
+        
         # Проверяем, является ли интервал "коротким"
         if interval < short_interval_threshold:
             # Это потенциальный мостик или брейк
@@ -145,7 +149,7 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
             
             # Если громкость "ровная" (не пик) - это мостик
             if segment_rms < break_threshold:
-                # Завершаем предыдущую секцию
+                # Завершаем предыдущую секцию (если она есть)
                 if current_beats > 0:
                     grid.append({
                         "type": current_type,
@@ -154,8 +158,8 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
                     })
                 
                 # Начинаем мостик
-                # Вычисляем количество битов в мостике (обычно 4)
-                beats_in_bridge = int(round(interval / (60.0 / bpm)))
+                # Выравниваем количество битов до кратности 4 (минимум 4)
+                beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)  # Округляем вверх до кратности 4
                 grid.append({
                     "type": "bridge",
                     "start": downbeat_time,
@@ -166,14 +170,16 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
                 current_start = next_downbeat_time
                 current_type = "verse"
                 current_beats = 0
-            # Если это брейк (громкий участок), игнорируем и продолжаем verse
+            else:
+                # Если это брейк (громкий участок), игнорируем и продолжаем verse
+                if current_type == "verse" and current_beats == 0:
+                    current_start = downbeat_time
+                current_beats += beats_in_interval
         else:
             # Обычный интервал - продолжаем verse
             if current_type == "verse" and current_beats == 0:
                 current_start = downbeat_time
             
-            # Вычисляем количество битов в этом интервале
-            beats_in_interval = int(round(interval / (60.0 / bpm)))
             current_beats += beats_in_interval
     
     # Добавляем последнюю секцию
@@ -194,78 +200,127 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm):
             "beats": total_beats
         })
     
-    # ФИЛЬТРАЦИЯ МИКРО-СЕКЦИЙ
-    # В бачате музыкальная фраза (секция) не может быть короче 4 beats (минимум)
-    # Обычно секции кратны 8 beats (полный цикл танца)
-    # Игнорируем секции короче 4 beats - это либо ошибка анализа, либо короткая сбивка
+    # ФИЛЬТРАЦИЯ МИКРО-СЕКЦИЙ И ВЫРАВНИВАНИЕ ПО КРАТНОСТИ 4
+    # В бачате музыкальная фраза (секция) не может быть короче 4 beats (минимум один такт)
+    # Обычно секции кратны 8 beats (полный цикл танца), но минимум 4 beats
     MIN_SECTION_BEATS = 4  # Минимальная длина секции в beats
     
     filtered_grid = []
-    for section in grid:
-        if section['beats'] >= MIN_SECTION_BEATS:
-            filtered_grid.append(section)
-        else:
-            # Микро-секция: объединяем с предыдущей или следующей
+    for i, section in enumerate(grid):
+        beats_count = section['beats']
+        
+        # Если секция короче минимума - вливаем в предыдущую
+        if beats_count < MIN_SECTION_BEATS:
             print(f"  ⚠ Filtering out micro-section: {section['type']} at {section['start']:.2f}s, "
-                  f"only {section['beats']} beats (minimum is {MIN_SECTION_BEATS})", file=sys.stderr)
+                  f"only {beats_count} beats (minimum is {MIN_SECTION_BEATS})", file=sys.stderr)
             
             # Если есть предыдущая секция, увеличиваем её длительность
             if filtered_grid:
-                # Увеличиваем предыдущую секцию, чтобы покрыть микро-секцию
                 prev_section = filtered_grid[-1]
-                section_duration = section['beats'] * (60.0 / bpm)
-                prev_section['beats'] += section['beats']
-                print(f"    → Merged into previous {prev_section['type']} section", file=sys.stderr)
-            # Если нет предыдущей, просто пропускаем (начнем с следующей)
+                prev_section['beats'] += beats_count
+                print(f"    → Merged into previous {prev_section['type']} section "
+                      f"(now {prev_section['beats']} beats)", file=sys.stderr)
+            # Если нет предыдущей и это первая секция, пропускаем (начнем со следующей)
+            elif i < len(grid) - 1:
+                # Пытаемся влить в следующую секцию
+                next_section = grid[i + 1]
+                next_section['beats'] += beats_count
+                next_section['start'] = section['start']  # Сдвигаем начало следующей секции
+                print(f"    → Will merge into next {next_section['type']} section", file=sys.stderr)
+        else:
+            # Выравниваем до кратности 4 (округляем вниз для стабильности)
+            aligned_beats = (beats_count // 4) * 4
+            if aligned_beats < MIN_SECTION_BEATS:
+                aligned_beats = MIN_SECTION_BEATS
+            
+            if aligned_beats != beats_count:
+                print(f"  ↻ Aligning section: {section['type']} at {section['start']:.2f}s "
+                      f"from {beats_count} to {aligned_beats} beats (multiple of 4)", file=sys.stderr)
+            
+            filtered_grid.append({
+                "type": section['type'],
+                "start": section['start'],
+                "beats": aligned_beats
+            })
     
     # Если после фильтрации осталась только одна секция или ничего, создаем одну verse
     if len(filtered_grid) <= 1:
         duration = len(audio_data) / sample_rate
         total_beats = int(round(duration * bpm / 60.0))
+        # Выравниваем до кратности 4
+        total_beats = (total_beats // 4) * 4
         filtered_grid = [{
             "type": "verse",
             "start": 0.0,
-            "beats": total_beats
+            "beats": max(MIN_SECTION_BEATS, total_beats)
         }]
         print(f"  ⚠ After filtering, only {len(filtered_grid)} section(s) left. "
-              f"Using single verse section for entire track.", file=sys.stderr)
+              f"Using single verse section for entire track ({filtered_grid[0]['beats']} beats).", file=sys.stderr)
     
-    return filtered_grid
+    # Финальная проверка: убеждаемся, что все секции >= MIN_SECTION_BEATS
+    final_grid = []
+    for section in filtered_grid:
+        if section['beats'] >= MIN_SECTION_BEATS:
+            final_grid.append(section)
+        else:
+            # Последний шанс: вливаем в предыдущую
+            if final_grid:
+                final_grid[-1]['beats'] += section['beats']
+                print(f"  ⚠ Final merge: {section['type']} section merged into previous", file=sys.stderr)
+    
+    return final_grid if final_grid else filtered_grid
 
 
-def analyze_track_with_madmom(audio_path):
+def analyze_track_with_madmom(audio_path, drums_path=None):
     """
     Анализирует трек с использованием madmom
+    
+    Args:
+        audio_path: путь к основному аудио файлу
+        drums_path: опциональный путь к дорожке drums (для более точного анализа ритма)
     
     Returns:
         dict с ключами 'bpm', 'offset', 'grid'
     """
     try:
-        # Загружаем аудио в моно (mono=True по умолчанию в librosa)
-        y, sr = librosa.load(audio_path, sr=None, mono=True)
-        duration = len(y) / sr
+        # ПРИОРИТЕТ DRUMS: Если передан путь к drums, используем его для анализа ритма
+        # Это уберет ложные срабатывания от вокала
+        analysis_audio_path = drums_path if drums_path and os.path.exists(drums_path) else audio_path
+        
+        print(f"Using {'DRUMS' if analysis_audio_path == drums_path else 'ORIGINAL'} track for rhythm analysis", file=sys.stderr)
+        
+        # Загружаем аудио для анализа ритма (drums или оригинал)
+        y_analysis, sr = librosa.load(analysis_audio_path, sr=None, mono=True)
+        
+        # Загружаем оригинальное аудио для RMS анализа (нужно для detect_bridges)
+        y, sr_orig = librosa.load(audio_path, sr=None, mono=True)
+        duration = len(y) / sr_orig
         
         print(f"Analyzing track with madmom: {audio_path}", file=sys.stderr)
         print(f"Duration: {duration:.2f}s, Sample rate: {sr}Hz", file=sys.stderr)
-        print(f"Audio shape: {y.shape}, Channels: {'mono' if y.ndim == 1 else 'stereo'}", file=sys.stderr)
+        print(f"Analysis audio shape: {y_analysis.shape}, Channels: {'mono' if y_analysis.ndim == 1 else 'stereo'}", file=sys.stderr)
         
-        # Убеждаемся, что аудио в моно (1D массив)
+        # Убеждаемся, что аудио для анализа в моно (1D массив)
+        if y_analysis.ndim > 1:
+            y_analysis = np.mean(y_analysis, axis=0)
+            print("Converted analysis audio stereo to mono", file=sys.stderr)
+        
+        # Убеждаемся, что оригинальное аудио в моно (для RMS)
         if y.ndim > 1:
-            # Если все еще стерео, конвертируем в моно
             y = np.mean(y, axis=0)
-            print("Converted stereo to mono", file=sys.stderr)
+            print("Converted original audio stereo to mono", file=sys.stderr)
         
-        # Madmom процессоры ожидают путь к файлу, но могут загрузить стерео
-        # Создаем временный моно файл для madmom
+        # Madmom процессоры ожидают путь к файлу
+        # Создаем временный моно файл для madmom из аудио для анализа
         import tempfile
         import soundfile as sf
         
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
             tmp_path = tmp_file.name
         
-        # Сохраняем моно аудио во временный файл
-        sf.write(tmp_path, y, sr)
-        print(f"Created temporary mono file: {tmp_path}", file=sys.stderr)
+        # Сохраняем моно аудио для анализа во временный файл
+        sf.write(tmp_path, y_analysis, sr)
+        print(f"Created temporary mono file for madmom analysis: {tmp_path}", file=sys.stderr)
         
         try:
             # Создаем процессоры для детекции downbeats
@@ -427,8 +482,9 @@ def analyze_track_with_madmom(audio_path):
         print("=" * 80, file=sys.stderr)
         
         # Детектируем мостики
+        # Используем оригинальное аудио (y) и его sample_rate (sr_orig) для RMS анализа
         print("\nStep 5: Detecting bridge sections...", file=sys.stderr)
-        grid = detect_bridges(downbeats, all_beats, y, sr, bpm)
+        grid = detect_bridges(downbeats, all_beats, y, sr_orig, bpm)
         
         bridge_count = len([s for s in grid if s['type'] == 'bridge'])
         verse_count = len([s for s in grid if s['type'] == 'verse'])
@@ -468,9 +524,17 @@ def main():
         sys.exit(1)
     
     audio_path = sys.argv[1]
+    drums_path = None
+    
+    # Проверяем аргументы для drums
+    if len(sys.argv) >= 4 and sys.argv[2] == '--use-drums':
+        drums_path = sys.argv[3]
+        if not os.path.exists(drums_path):
+            print(f"Warning: Drums path does not exist: {drums_path}, using original audio", file=sys.stderr)
+            drums_path = None
     
     try:
-        result = analyze_track_with_madmom(audio_path)
+        result = analyze_track_with_madmom(audio_path, drums_path)
         print(json.dumps(result))
         
     except Exception as e:

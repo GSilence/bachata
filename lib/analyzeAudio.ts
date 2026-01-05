@@ -49,10 +49,12 @@ export interface FullAudioAnalysisResult extends AudioAnalysisResult {
  * 
  * @param audioPath - путь к аудио файлу
  * @param useNewScript - использовать ли новый скрипт analyze-track.py (по умолчанию true)
+ * @param drumsPath - опциональный путь к дорожке drums (для более точного анализа ритма)
  */
 export async function analyzeTrack(
   audioPath: string,
-  useNewScript: boolean = true
+  useNewScript: boolean = true,
+  drumsPath?: string
 ): Promise<FullAudioAnalysisResult> {
   if (!existsSync(audioPath)) {
     throw new Error(`Audio file not found: ${audioPath}`)
@@ -77,10 +79,17 @@ export async function analyzeTrack(
     throw new Error(`Analysis script not found: ${scriptPath}`)
   }
 
-  // Формируем команду
-  const command = `"${pythonPath}" "${scriptPath}" "${audioPath}"`
-
-  console.log(`Running audio analysis: ${command}`)
+  // Формируем команду с поддержкой drums
+  let command: string
+  if (drumsPath && existsSync(drumsPath)) {
+    // ПРИОРИТЕТ DRUMS: Используем дорожку drums для анализа ритма
+    // Это уберет ложные срабатывания от вокала
+    command = `"${pythonPath}" "${scriptPath}" "${audioPath}" --use-drums "${drumsPath}"`
+    console.log(`Running audio analysis with DRUMS priority: ${command}`)
+  } else {
+    command = `"${pythonPath}" "${scriptPath}" "${audioPath}"`
+    console.log(`Running audio analysis: ${command}`)
+  }
 
   try {
     const { stdout, stderr } = await execAsync(command, {
