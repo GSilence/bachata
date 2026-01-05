@@ -89,8 +89,13 @@ except ImportError as e:
 
 def analyze_structure_essentia(audio_path):
     """
-    Анализирует структуру трека с помощью Essentia
-    Находит границы секций (boundaries) где меняется гармония
+    Анализирует структуру трека с помощью Essentia используя NoveltyCurve
+    Находит границы секций (boundaries) где меняется гармония/структура музыки
+    
+    Использует стандартный алгоритм Music Segmentation:
+    1. Вычисляет MFCC (Mel-frequency cepstral coefficients)
+    2. Вычисляет NoveltyCurve на основе MFCC
+    3. Находит пики на кривой - это моменты смены музыкальных секций
     
     Args:
         audio_path: путь к аудио файлу
@@ -110,92 +115,105 @@ def analyze_structure_essentia(audio_path):
         
         print(f"[Essentia] Audio loaded: {len(audio)} samples, {duration:.2f}s", file=sys.stderr)
         
-        # Проверка размера трека - для треков длиннее 180 секунд используем оптимизированный алгоритм
-        # с downsampling и локальной самоподобие для экономии памяти
-        MAX_DURATION_FOR_FULL_MATRIX = 180  # секунд
+        # Параметры для анализа
+        # Для больших треков используем увеличенный hop_size для экономии памяти
+        MAX_DURATION_FOR_FULL_ANALYSIS = 180  # секунд
         
-        # Инициализируем переменные
-        frame_size = 2048
-        hop_size = 512  # По умолчанию
-        
-        if duration > MAX_DURATION_FOR_FULL_MATRIX:
-            print(f"[Essentia] Track duration ({duration:.1f}s) exceeds safe limit ({MAX_DURATION_FOR_FULL_MATRIX}s).", file=sys.stderr)
-            print(f"[Essentia] Using memory-efficient algorithm with downsampling...", file=sys.stderr)
-            
-            # Используем увеличенный hop_size для уменьшения количества кадров
-            hop_size = 2048  # Увеличиваем hop_size в 4 раза для экономии памяти
-            frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
-            
-            mfcc = es.MFCC()
-            windowing = es.Windowing(type='hann')
-            spectrum = es.Spectrum()
-            
-            mfccs = []
-            for frame in frames:
-                spec = spectrum(windowing(frame))
-                mfcc_coeffs, mfcc_bands = mfcc(spec)
-                mfccs.append(mfcc_coeffs)
-            
-            mfccs = np.array(mfccs)
-            print(f"[Essentia] Computed {len(mfccs)} MFCC frames (downsampled)", file=sys.stderr)
-            
-            # Для больших треков используем более эффективный метод без полной матрицы
-            # Вычисляем локальную самоподобие вместо полной матрицы
-            print("[Essentia] Computing local similarity (memory-efficient)...", file=sys.stderr)
-            
-            # Используем скользящее окно для вычисления локальной самоподобия
-            window_size = min(500, len(mfccs) // 10)  # Окно ~10% от длины, но не больше 500
-            row_similarity = []
-            
-            for i in range(len(mfccs)):
-                # Вычисляем подобие только с соседними кадрами в окне
-                start_idx = max(0, i - window_size // 2)
-                end_idx = min(len(mfccs), i + window_size // 2)
-                
-                # Косинусное расстояние только с окном
-                from scipy.spatial.distance import cdist
-                window_mfccs = mfccs[start_idx:end_idx]
-                distances = cdist([mfccs[i]], window_mfccs, metric='cosine')[0]
-                similarity = 1 - np.mean(distances)
-                row_similarity.append(similarity)
-            
-            row_similarity = np.array(row_similarity)
+        if duration > MAX_DURATION_FOR_FULL_ANALYSIS:
+            print(f"[Essentia] Track duration ({duration:.1f}s) exceeds safe limit ({MAX_DURATION_FOR_FULL_ANALYSIS}s).", file=sys.stderr)
+            print(f"[Essentia] Using downsampled analysis for memory efficiency...", file=sys.stderr)
+            frame_size = 2048
+            hop_size = 2048  # Увеличенный hop_size для экономии памяти
         else:
-            # Для коротких треков используем оригинальный алгоритм с полной матрицей
-            print("[Essentia] Computing MFCC features for structure analysis...", file=sys.stderr)
-            mfcc = es.MFCC()
-            windowing = es.Windowing(type='hann')
-            spectrum = es.Spectrum()
-            
-            # Обрабатываем аудио по кадрам
-            frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
-            
-            mfccs = []
-            for frame in frames:
-                spec = spectrum(windowing(frame))
-                mfcc_coeffs, mfcc_bands = mfcc(spec)
-                mfccs.append(mfcc_coeffs)
-            
-            mfccs = np.array(mfccs)
-            print(f"[Essentia] Computed {len(mfccs)} MFCC frames", file=sys.stderr)
-            
-            # Вычисляем матрицу само-подобия (self-similarity matrix)
-            print("[Essentia] Computing self-similarity matrix...", file=sys.stderr)
-            from scipy.spatial.distance import cdist
-            similarity_matrix = 1 - cdist(mfccs, mfccs, metric='cosine')
-            
-            # Находим границы секций используя алгоритм поиска изменений в матрице подобия
-            row_similarity = np.mean(similarity_matrix, axis=1)
+            frame_size = 2048
+            hop_size = 512  # Стандартный hop_size для точности
         
-        # Находим пики в производной (резкие изменения структуры)
-        similarity_diff = np.diff(row_similarity)
+        # Шаг 1: Вычисляем MFCC features
+        print("[Essentia] Computing MFCC features for structure analysis...", file=sys.stderr)
+        mfcc = es.MFCC()
+        windowing = es.Windowing(type='hann')
+        spectrum = es.Spectrum()
+        
+        frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
+        
+        mfccs = []
+        for frame in frames:
+            spec = spectrum(windowing(frame))
+            mfcc_coeffs, mfcc_bands = mfcc(spec)
+            mfccs.append(mfcc_coeffs)
+        
+        mfccs = np.array(mfccs)
+        print(f"[Essentia] Computed {len(mfccs)} MFCC frames", file=sys.stderr)
+        
+        # Шаг 2: Вычисляем NoveltyCurve
+        # NoveltyCurve показывает, насколько "новым" является каждый момент времени
+        # Пики на кривой соответствуют моментам смены музыкальных секций
+        print("[Essentia] Computing NoveltyCurve from MFCC...", file=sys.stderr)
+        
+        # Параметры для NoveltyCurve
+        # Kernel size определяет размер окна для сравнения
+        # Больший kernel = менее чувствителен к отдельным ударам, более чувствителен к смене квадратов
+        # Для бачаты: квадрат = 8 beats, при 120 BPM это ~4 секунды
+        # При hop_size=512: 4 секунды = ~345 кадров
+        # При hop_size=2048: 4 секунды = ~86 кадров
+        beats_per_bar = 4  # Бачата обычно 4/4
+        bars_per_section = 2  # Минимум 2 такта на секцию
+        seconds_per_section = (beats_per_bar * bars_per_section) * (60.0 / 120.0)  # Примерно 4 секунды при 120 BPM
+        frames_per_section = int(seconds_per_section * sample_rate / hop_size)
+        
+        # Kernel size должен быть достаточно большим, чтобы не реагировать на отдельные удары
+        # но достаточно маленьким, чтобы уловить смену секций
+        kernel_size = max(50, min(frames_per_section // 2, 200))  # От 50 до 200 кадров
+        
+        print(f"[Essentia] NoveltyCurve parameters: kernel_size={kernel_size}, hop_size={hop_size}", file=sys.stderr)
+        
+        # Вычисляем NoveltyCurve вручную, так как в Essentia нет прямой функции
+        # NoveltyCurve = сумма квадратов разностей между соседними окнами MFCC
+        novelty_curve = []
+        
+        for i in range(len(mfccs) - kernel_size):
+            # Сравниваем текущее окно с предыдущим
+            current_window = mfccs[i:i+kernel_size]
+            previous_window = mfccs[max(0, i-kernel_size):i] if i >= kernel_size else mfccs[0:i]
+            
+            if len(previous_window) > 0:
+                # Вычисляем средние значения MFCC для окон
+                current_mean = np.mean(current_window, axis=0)
+                previous_mean = np.mean(previous_window, axis=0)
+                
+                # Novelty = евклидово расстояние между средними
+                novelty = np.linalg.norm(current_mean - previous_mean)
+                novelty_curve.append(novelty)
+            else:
+                novelty_curve.append(0.0)
+        
+        # Добавляем нули в начало для выравнивания
+        novelty_curve = [0.0] * kernel_size + novelty_curve
+        novelty_curve = np.array(novelty_curve)
+        
+        print(f"[Essentia] NoveltyCurve computed: {len(novelty_curve)} points", file=sys.stderr)
+        print(f"[Essentia] NoveltyCurve range: [{np.min(novelty_curve):.4f}, {np.max(novelty_curve):.4f}]", file=sys.stderr)
+        
+        # Шаг 3: Находим пики на NoveltyCurve
+        # Пики соответствуют моментам смены музыкальных секций
+        print("[Essentia] Finding peaks in NoveltyCurve...", file=sys.stderr)
         
         from scipy.signal import find_peaks
-        peaks, properties = find_peaks(np.abs(similarity_diff), 
-                                      height=np.percentile(np.abs(similarity_diff), 75),
-                                      distance=int(sample_rate / hop_size * 2))  # Минимум 2 секунды между границами
         
-        # Преобразуем пики во временные метки
+        # Порог для пиков: используем процентиль для адаптации к разным трекам
+        # Более низкий порог = больше границ (более чувствительно)
+        peak_height = np.percentile(novelty_curve, 60)  # 60-й процентиль для чувствительности
+        
+        # Минимальное расстояние между пиками: минимум 2 секунды (чтобы не реагировать на каждый удар)
+        min_distance_frames = int(sample_rate / hop_size * 2)  # 2 секунды
+        
+        peaks, properties = find_peaks(novelty_curve,
+                                      height=peak_height,
+                                      distance=min_distance_frames)
+        
+        print(f"[Essentia] Found {len(peaks)} peaks in NoveltyCurve (height >= {peak_height:.4f})", file=sys.stderr)
+        
+        # Преобразуем индексы пиков во временные метки
         frame_times = np.arange(len(mfccs)) * (hop_size / sample_rate)
         boundaries = frame_times[peaks].tolist()
         
@@ -413,31 +431,31 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     if structure_section_starts is None:
         structure_section_starts = set()
     
-    # ВАЖНО: Если есть границы структуры от Librosa/Essentia - используем ТОЛЬКО их
-    # Полностью отключаем RMS анализ, чтобы избежать ложных срабатываний
-    use_structure_only = len(structure_section_starts) > 0
+    # ВАЖНО: Объединяем результаты Essentia (структурные границы) и RMS (громкость)
+    # Оба метода дополняют друг друга:
+    # - Essentia находит смену гармонии/структуры
+    # - RMS находит затихания/брейки (fade outs/breaks)
+    print(f"[DEBUG] Combined mode: Using {len(structure_section_starts)} structure boundaries from Essentia/Librosa", file=sys.stderr)
+    print(f"[DEBUG] RMS analysis ENABLED - combining structural boundaries with volume-based detection", file=sys.stderr)
     
-    if use_structure_only:
-        print(f"[DEBUG] Structure-based mode: Using {len(structure_section_starts)} structure boundaries from Librosa/Essentia", file=sys.stderr)
-        print(f"[DEBUG] RMS analysis DISABLED - trusting only structural boundaries", file=sys.stderr)
-    else:
-        print(f"[DEBUG] Fallback mode: No structure boundaries found, using RMS-based analysis", file=sys.stderr)
-        # Вычисляем средний интервал между сильными долями (обычно 8 битов = 4 такта)
-        intervals = np.diff(downbeats)
-        avg_interval = np.mean(intervals)
-        
-        # Вычисляем среднюю RMS энергию по всему треку
-        total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
-        
-        # Определяем порог для "короткого" интервала (обычно 4 бита вместо 8)
-        # Если интервал меньше 60% от среднего, это потенциальный мостик
-        short_interval_threshold = avg_interval * 0.6
-        
-        # Определяем порог для "громкого" участка (брейк)
-        # Если RMS больше 1.5x от среднего, это брейк, а не мостик
-        break_threshold = total_rms * 1.5
+    # Вычисляем средний интервал между сильными долями (обычно 8 битов = 4 такта)
+    intervals = np.diff(downbeats)
+    avg_interval = np.mean(intervals)
     
-    # Вычисляем интервалы (нужны для обоих режимов)
+    # Вычисляем среднюю RMS энергию по всему треку
+    total_rms = calculate_rms(audio_data, sample_rate, 0, len(audio_data) / sample_rate)
+    
+    # Определяем порог для "короткого" интервала (обычно 4 бита вместо 8)
+    # Если интервал меньше 60% от среднего, это потенциальный мостик
+    short_interval_threshold = avg_interval * 0.6
+    
+    # Определяем порог для "тихого" участка (break/fade out)
+    # Если RMS меньше 0.7x от среднего, это затихание/брейк
+    break_threshold = total_rms * 0.7
+    
+    print(f"[DEBUG] RMS thresholds: total_rms={total_rms:.4f}, break_threshold={break_threshold:.4f}", file=sys.stderr)
+    
+    # Вычисляем интервалы
     intervals = np.diff(downbeats)
     
     grid = []
@@ -445,144 +463,113 @@ def detect_bridges(downbeats, beats, audio_data, sample_rate, bpm, debug_data=No
     current_type = "verse"
     current_beats = 0
     
-    # РЕЖИМ 1: Используем ТОЛЬКО границы структуры (Librosa/Essentia)
-    if use_structure_only:
-        print(f"[DEBUG] ===== STRUCTURE-ONLY MODE: Creating sections ONLY at structure boundaries =====", file=sys.stderr)
+    # ОБЪЕДИНЕННЫЙ РЕЖИМ: Используем и Essentia границы, и RMS анализ
+    print(f"[DEBUG] ===== COMBINED MODE: Using Essentia boundaries + RMS analysis =====", file=sys.stderr)
+    
+    # Проходим по всем сильным долям
+    for i in range(len(downbeats) - 1):
+        interval = intervals[i]
+        downbeat_time = downbeats[i]
+        next_downbeat_time = downbeats[i + 1]
         
-        # Проходим по всем сильным долям
-        for i in range(len(downbeats) - 1):
-            interval = intervals[i]
-            downbeat_time = downbeats[i]
-            next_downbeat_time = downbeats[i + 1]
-            
-            # Вычисляем количество битов в этом интервале
-            beats_in_interval = int(round(interval / (60.0 / bpm)))
-            
-            # Проверяем, является ли этот downbeat границей структуры
-            is_structure_boundary = False
-            for struct_start in structure_section_starts:
-                if abs(downbeat_time - struct_start) < 0.2:  # В пределах 0.2 секунды
-                    is_structure_boundary = True
-                    print(f"[DEBUG] ✓ Structure boundary detected at {downbeat_time:.2f}s (from Librosa/Essentia)", file=sys.stderr)
-                    break
-            
-            # Если это граница структуры - создаем новую секцию
-            if is_structure_boundary:
-                # Завершаем предыдущую секцию (если она есть)
-                if current_beats > 0:
-                    prev_section = {
-                        "type": current_type,
-                        "start": current_start,
-                        "beats": current_beats
-                    }
-                    grid.append(prev_section)
-                    candidates_sections.append({
-                        "time": current_start,
-                        "type": current_type,
-                        "beats": current_beats,
-                        "reason": "structure_boundary_previous",
-                        "action": "added"
-                    })
-                    print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
-                          f"({current_beats} beats) - before structure boundary", file=sys.stderr)
+        # Вычисляем количество битов в этом интервале
+        beats_in_interval = int(round(interval / (60.0 / bpm)))
+        
+        # Проверяем, является ли этот downbeat границей структуры от Essentia
+        is_structure_boundary = False
+        for struct_start in structure_section_starts:
+            if abs(downbeat_time - struct_start) < 0.2:  # В пределах 0.2 секунды
+                is_structure_boundary = True
+                print(f"[DEBUG] ✓ Essentia structure boundary detected at {downbeat_time:.2f}s", file=sys.stderr)
+                break
+        
+        # Проверяем RMS для обнаружения затиханий/брейков
+        is_break_detected = False
+        segment_rms = None
+        
+        # Вычисляем RMS на этом участке
+        segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
+        
+        # Если RMS упал ниже порога - это затихание/брейк
+        if segment_rms < break_threshold:
+            is_break_detected = True
+            print(f"[DEBUG] ✓ RMS break detected at {downbeat_time:.2f}s (RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
+        
+        # Объединяем результаты: новая секция если есть граница Essentia ИЛИ RMS break
+        is_new_section = is_structure_boundary or is_break_detected
+        
+        if is_new_section:
+            # Завершаем предыдущую секцию (если она есть)
+            if current_beats > 0:
+                prev_section = {
+                    "type": current_type,
+                    "start": current_start,
+                    "beats": current_beats
+                }
+                grid.append(prev_section)
+                reason = []
+                if is_structure_boundary:
+                    reason.append("essentia_boundary")
+                if is_break_detected:
+                    reason.append("rms_break")
                 
-                # Начинаем новую verse секцию на границе структуры
-                current_start = downbeat_time
+                candidates_sections.append({
+                    "time": current_start,
+                    "type": current_type,
+                    "beats": current_beats,
+                    "reason": "_".join(reason) + "_previous",
+                    "action": "added"
+                })
+                print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
+                      f"({current_beats} beats) - before {'+'.join(reason)}", file=sys.stderr)
+            
+            # Определяем тип новой секции
+            if is_break_detected:
+                # Если это затихание - помечаем как bridge
+                # Выравниваем количество битов до кратности 4 (минимум 4)
+                beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)
+                
+                bridge_section = {
+                    "type": "bridge",
+                    "start": downbeat_time,
+                    "beats": beats_in_bridge
+                }
+                grid.append(bridge_section)
+                
+                reason_parts = []
+                if is_structure_boundary:
+                    reason_parts.append("essentia")
+                reason_parts.append("rms_break")
+                
+                candidates_sections.append({
+                    "time": downbeat_time,
+                    "type": "bridge",
+                    "beats": beats_in_bridge,
+                    "original_beats": beats_in_interval,
+                    "reason": "_".join(reason_parts),
+                    "action": "added"
+                })
+                
+                print(f"[DEBUG] DECISION: Added BRIDGE section at {downbeat_time:.2f}s "
+                      f"({beats_in_interval} beats -> {beats_in_bridge} beats, "
+                      f"RMS: {segment_rms:.4f} < {break_threshold:.4f})", file=sys.stderr)
+                
+                # После bridge начинаем новую verse секцию со следующего интервала
+                current_start = next_downbeat_time
                 current_type = "verse"
                 current_beats = 0
-                print(f"[DEBUG] DECISION: Starting new verse section at {downbeat_time:.2f}s (structure boundary)", file=sys.stderr)
-            
-            # Добавляем биты текущего интервала к текущей секции
+            else:
+                # Если это только структурная граница (без RMS break) - начинаем verse
+                current_type = "verse"
+                current_start = downbeat_time
+                current_beats = beats_in_interval
+                print(f"[DEBUG] DECISION: Starting VERSE section at {downbeat_time:.2f}s (Essentia boundary only)", file=sys.stderr)
+        else:
+            # Обычный интервал - продолжаем текущую секцию
             if current_type == "verse" and current_beats == 0:
                 current_start = downbeat_time
+            
             current_beats += beats_in_interval
-    
-    # РЕЖИМ 2: Fallback - используем старую RMS логику (если структура не найдена)
-    else:
-        print(f"[DEBUG] ===== FALLBACK MODE: Using RMS-based analysis (no structure boundaries) =====", file=sys.stderr)
-        
-        # Проходим по всем сильным долям
-        for i in range(len(downbeats) - 1):
-            interval = intervals[i]
-            downbeat_time = downbeats[i]
-            next_downbeat_time = downbeats[i + 1]
-            
-            # Вычисляем количество битов в этом интервале
-            beats_in_interval = int(round(interval / (60.0 / bpm)))
-            
-            # Проверяем, является ли интервал "коротким"
-            if interval < short_interval_threshold:
-                # Это потенциальный мостик или брейк
-                # Вычисляем RMS на этом участке
-                segment_rms = calculate_rms(audio_data, sample_rate, downbeat_time, next_downbeat_time)
-                
-                print(f"[DEBUG] Short interval detected at {downbeat_time:.2f}s. "
-                      f"RMS: {segment_rms:.4f}, Break threshold: {break_threshold:.4f}", file=sys.stderr)
-                
-                # Если громкость "ровная" (не пик) - это мостик
-                if segment_rms < break_threshold:
-                    # Завершаем предыдущую секцию (если она есть)
-                    if current_beats > 0:
-                        prev_section = {
-                            "type": current_type,
-                            "start": current_start,
-                            "beats": current_beats
-                        }
-                        grid.append(prev_section)
-                        candidates_sections.append({
-                            "time": current_start,
-                            "type": current_type,
-                            "beats": current_beats,
-                            "reason": "previous_section_end",
-                            "action": "added"
-                        })
-                        print(f"[DEBUG] DECISION: Added previous {current_type} section at {current_start:.2f}s "
-                              f"({current_beats} beats)", file=sys.stderr)
-                    
-                    # Начинаем мостик
-                    # Выравниваем количество битов до кратности 4 (минимум 4)
-                    beats_in_bridge = max(4, (beats_in_interval + 3) // 4 * 4)  # Округляем вверх до кратности 4
-                    bridge_section = {
-                        "type": "bridge",
-                        "start": downbeat_time,
-                        "beats": beats_in_bridge
-                    }
-                    grid.append(bridge_section)
-                    candidates_sections.append({
-                        "time": downbeat_time,
-                        "type": "bridge",
-                        "beats": beats_in_bridge,
-                        "original_beats": beats_in_interval,
-                        "reason": "short_interval_low_rms",
-                        "action": "added"
-                    })
-                    print(f"[DEBUG] DECISION: Added BRIDGE section at {downbeat_time:.2f}s "
-                          f"({beats_in_interval} beats -> {beats_in_bridge} beats after alignment)", file=sys.stderr)
-                    
-                    # Начинаем новую verse секцию после мостика
-                    current_start = next_downbeat_time
-                    current_type = "verse"
-                    current_beats = 0
-                else:
-                    # Если это брейк (громкий участок), игнорируем и продолжаем verse
-                    candidates_sections.append({
-                        "time": downbeat_time,
-                        "type": "break",
-                        "beats": beats_in_interval,
-                        "reason": "short_interval_high_rms",
-                        "action": "ignored"
-                    })
-                    print(f"[DEBUG] DECISION: Ignoring potential bridge at {downbeat_time:.2f}s "
-                          f"(high RMS: {segment_rms:.4f} > {break_threshold:.4f}) - treating as break", file=sys.stderr)
-                    if current_type == "verse" and current_beats == 0:
-                        current_start = downbeat_time
-                    current_beats += beats_in_interval
-            else:
-                # Обычный интервал - продолжаем verse
-                if current_type == "verse" and current_beats == 0:
-                    current_start = downbeat_time
-                
-                current_beats += beats_in_interval
     
     # Добавляем последнюю секцию
     if current_beats > 0:
