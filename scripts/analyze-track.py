@@ -83,6 +83,196 @@ except ImportError as e:
     sys.exit(1)
 
 
+class EnergyDropDetector:
+    """
+    Детектор провалов энергии для поиска тихих мостиков (Bridges) в бачате.
+    
+    Ищет участки, где пропадает вокал или падает энергия на ~4 счета,
+    характерные для мостиков в бачате.
+    """
+    
+    def __init__(self, audio_data, sample_rate, bpm, 
+                 vocal_range=(300, 3000),
+                 drop_threshold=0.6,
+                 min_duration_beats=3.0,
+                 max_duration_beats=5.0):
+        """
+        Инициализация детектора.
+        
+        Args:
+            audio_data: numpy array с аудио данными (моно)
+            sample_rate: частота дискретизации
+            bpm: BPM трека
+            vocal_range: кортеж (low, high) - диапазон частот голоса в Гц
+            drop_threshold: порог падения энергии (0.6 = 60% от локального среднего)
+            min_duration_beats: минимальная длительность провала в битах
+            max_duration_beats: максимальная длительность провала в битах
+        """
+        self.audio_data = audio_data
+        self.sample_rate = sample_rate
+        self.bpm = bpm
+        self.vocal_range = vocal_range
+        self.drop_threshold = drop_threshold
+        self.min_duration_beats = min_duration_beats
+        self.max_duration_beats = max_duration_beats
+        
+        # Вычисляем длительность бита в секундах
+        self.beat_interval = 60.0 / bpm
+        
+        print(f"[EnergyDrop] Initialized: BPM={bpm}, vocal_range={vocal_range}Hz, "
+              f"drop_threshold={drop_threshold}, duration_range=[{min_duration_beats}, {max_duration_beats}] beats",
+              file=sys.stderr)
+    
+    def find_bridges(self):
+        """
+        Находит мостики (провалы энергии) в аудио.
+        
+        Алгоритм:
+        A. Применяет Band-pass фильтр для выделения вокального диапазона
+        B. Вычисляет RMS огибающую отфильтрованного сигнала
+        C. Находит участки, где RMS падает ниже порога относительно скользящего среднего
+        D. Валидирует найденные участки по длительности
+        
+        Returns:
+            list: список временных меток (start_times) найденных провалов в секундах
+        """
+        try:
+            print(f"[EnergyDrop] Starting bridge detection...", file=sys.stderr)
+            
+            # Шаг A: Band-pass фильтрация для выделения вокального диапазона
+            print(f"[EnergyDrop] Step A: Applying band-pass filter ({self.vocal_range[0]}-{self.vocal_range[1]}Hz)...", file=sys.stderr)
+            nyquist = self.sample_rate / 2.0
+            low = self.vocal_range[0] / nyquist
+            high = self.vocal_range[1] / nyquist
+            
+            # Убеждаемся, что частоты в допустимом диапазоне [0, 1]
+            low = max(0.01, min(0.99, low))
+            high = max(0.01, min(0.99, high))
+            
+            if low >= high:
+                print(f"[EnergyDrop] WARNING: Invalid frequency range, skipping filter", file=sys.stderr)
+                filtered_audio = self.audio_data
+            else:
+                # Создаем Butterworth band-pass фильтр
+                sos = signal.butter(4, [low, high], btype='band', output='sos')
+                filtered_audio = signal.sosfilt(sos, self.audio_data)
+            
+            print(f"[EnergyDrop] Filter applied. Filtered audio shape: {filtered_audio.shape}", file=sys.stderr)
+            
+            # Шаг B: Вычисление RMS огибающей
+            # Размер окна = 0.5 бита
+            window_size_seconds = 0.5 * self.beat_interval
+            window_size_samples = int(window_size_seconds * self.sample_rate)
+            
+            # Минимум 10 сэмплов для окна
+            window_size_samples = max(10, window_size_samples)
+            
+            print(f"[EnergyDrop] Step B: Computing RMS envelope (window={window_size_samples} samples, {window_size_seconds:.3f}s)...", file=sys.stderr)
+            
+            # Вычисляем RMS для каждого окна
+            rms_envelope = []
+            num_windows = len(filtered_audio) // window_size_samples
+            
+            for i in range(num_windows):
+                start_idx = i * window_size_samples
+                end_idx = start_idx + window_size_samples
+                window = filtered_audio[start_idx:end_idx]
+                rms = np.sqrt(np.mean(window ** 2))
+                rms_envelope.append(rms)
+            
+            # Добавляем остаток
+            if len(filtered_audio) % window_size_samples > 0:
+                remainder = filtered_audio[num_windows * window_size_samples:]
+                if len(remainder) > 0:
+                    rms = np.sqrt(np.mean(remainder ** 2))
+                    rms_envelope.append(rms)
+            
+            rms_envelope = np.array(rms_envelope)
+            
+            # Временные метки для каждого окна RMS
+            rms_times = np.arange(len(rms_envelope)) * window_size_seconds
+            
+            print(f"[EnergyDrop] RMS envelope computed: {len(rms_envelope)} points, "
+                  f"range=[{rms_envelope.min():.6f}, {rms_envelope.max():.6f}]", file=sys.stderr)
+            
+            # Шаг C: Поиск провалов (ям) в RMS
+            # Используем скользящее среднее для контекста (~8 битов)
+            context_window_beats = 8.0
+            context_window_seconds = context_window_beats * self.beat_interval
+            context_window_samples = int(context_window_seconds / window_size_seconds)
+            context_window_samples = max(1, context_window_samples)
+            
+            print(f"[EnergyDrop] Step C: Finding energy drops (context window={context_window_samples} RMS samples, ~{context_window_beats} beats)...", file=sys.stderr)
+            
+            # Вычисляем скользящее среднее
+            if len(rms_envelope) < context_window_samples:
+                print(f"[EnergyDrop] WARNING: RMS envelope too short for context window, skipping", file=sys.stderr)
+                return []
+            
+            # Используем симметричное скользящее среднее для контекста
+            # Окно центрировано вокруг текущей точки (половина окна до, половина после)
+            half_window = context_window_samples // 2
+            moving_avg = np.zeros_like(rms_envelope)
+            for i in range(len(rms_envelope)):
+                start_idx = max(0, i - half_window)
+                end_idx = min(len(rms_envelope), i + half_window + 1)
+                moving_avg[i] = np.mean(rms_envelope[start_idx:end_idx])
+            
+            # Находим участки, где RMS падает ниже порога
+            threshold_values = moving_avg * self.drop_threshold
+            is_drop = rms_envelope < threshold_values
+            
+            print(f"[EnergyDrop] Found {np.sum(is_drop)} RMS samples below threshold", file=sys.stderr)
+            
+            # Группируем смежные провалы в непрерывные участки
+            drop_regions = []
+            in_drop = False
+            drop_start_idx = None
+            
+            for i in range(len(is_drop)):
+                if is_drop[i] and not in_drop:
+                    # Начало провала
+                    in_drop = True
+                    drop_start_idx = i
+                elif not is_drop[i] and in_drop:
+                    # Конец провала
+                    in_drop = False
+                    drop_regions.append((drop_start_idx, i - 1))
+            
+            # Если провал продолжается до конца
+            if in_drop:
+                drop_regions.append((drop_start_idx, len(is_drop) - 1))
+            
+            print(f"[EnergyDrop] Found {len(drop_regions)} potential drop regions", file=sys.stderr)
+            
+            # Шаг D: Валидация по длительности
+            print(f"[EnergyDrop] Step D: Validating drop regions by duration...", file=sys.stderr)
+            valid_bridges = []
+            
+            for start_idx, end_idx in drop_regions:
+                # Вычисляем длительность в битах
+                start_time = rms_times[start_idx]
+                end_time = rms_times[end_idx] + window_size_seconds  # Добавляем размер окна для конца
+                duration_seconds = end_time - start_time
+                duration_beats = duration_seconds / self.beat_interval
+                
+                # Проверяем, попадает ли длительность в вилку
+                if self.min_duration_beats <= duration_beats <= self.max_duration_beats:
+                    valid_bridges.append(start_time)
+                    print(f"[EnergyDrop] Valid bridge found: {start_time:.3f}s, duration={duration_beats:.2f} beats ({duration_seconds:.3f}s)", file=sys.stderr)
+                else:
+                    print(f"[EnergyDrop] Rejected drop region: {start_time:.3f}s, duration={duration_beats:.2f} beats (outside range [{self.min_duration_beats}, {self.max_duration_beats}])", file=sys.stderr)
+            
+            print(f"[EnergyDrop] Bridge detection complete. Found {len(valid_bridges)} valid bridges", file=sys.stderr)
+            return valid_bridges
+            
+        except Exception as e:
+            print(f"[EnergyDrop] ERROR during bridge detection: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return []
+
+
 def analyze_structure_essentia(audio_path):
     """
     Анализирует структуру трека с помощью Essentia используя NoveltyCurve
@@ -840,6 +1030,32 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
             'candidates_sections': []
         }
         
+        # Step 4.5: Детекция провалов энергии (мостиков) с помощью EnergyDropDetector
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("Step 4.5: Detecting energy drops (bridges) with EnergyDropDetector...", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        energy_drop_boundaries = []
+        try:
+            detector = EnergyDropDetector(
+                audio_data=y,
+                sample_rate=sr_orig,
+                bpm=bpm,
+                vocal_range=(300, 3000),
+                drop_threshold=0.6,
+                min_duration_beats=3.0,
+                max_duration_beats=5.0
+            )
+            energy_drop_boundaries = detector.find_bridges()
+            print(f"[Step 4.5] Energy drop detection complete. Found {len(energy_drop_boundaries)} bridge boundaries", file=sys.stderr)
+            debug_data['energy_drop_boundaries'] = [float(b) for b in energy_drop_boundaries]
+        except Exception as e:
+            print(f"[Step 4.5] WARNING: Energy drop detection failed: {e}", file=sys.stderr)
+            print(f"[Step 4.5] Continuing with Essentia analysis only...", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            energy_drop_boundaries = []
+            debug_data['energy_drop_boundaries'] = []
+        
         # Step 5: Анализ структуры с помощью Essentia/Librosa
         print("\n" + "=" * 80, file=sys.stderr)
         print("Step 5: Analyzing structure (Essentia/Librosa)...", file=sys.stderr)
@@ -854,6 +1070,13 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
             traceback.print_exc(file=sys.stderr)
             structure_boundaries = []
             debug_data['structure_boundaries'] = []
+        
+        # Объединяем границы от Essentia и EnergyDropDetector
+        print(f"[Step 5] Combining boundaries: {len(structure_boundaries)} from Essentia + {len(energy_drop_boundaries)} from EnergyDrop", file=sys.stderr)
+        all_structure_boundaries = list(set(structure_boundaries + energy_drop_boundaries))
+        all_structure_boundaries.sort()
+        print(f"[Step 5] Total combined boundaries: {len(all_structure_boundaries)}", file=sys.stderr)
+        structure_boundaries = all_structure_boundaries
         
         # Step 6: Объединение структуры с битами Madmom
         print("\n" + "=" * 80, file=sys.stderr)
