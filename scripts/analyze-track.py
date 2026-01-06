@@ -131,10 +131,11 @@ class EnergyDropDetector:
         A. Применяет Band-pass фильтр для выделения вокального диапазона
         B. Вычисляет RMS огибающую отфильтрованного сигнала
         C. Находит участки, где RMS падает ниже порога относительно скользящего среднего
-        D. Валидирует найденные участки по длительности
+        D. Валидирует найденные участки по длительности и фиксирует длину мостика = 4 бита
         
         Returns:
-            list: список временных меток (start_times) найденных провалов в секундах
+            list: список кортежей [(start_time, end_time), ...] найденных провалов в секундах.
+                  end_time = start_time + 4 * beat_interval (фиксированная длина мостика)
         """
         try:
             print(f"[EnergyDrop] Starting bridge detection...", file=sys.stderr)
@@ -252,14 +253,21 @@ class EnergyDropDetector:
             for start_idx, end_idx in drop_regions:
                 # Вычисляем длительность в битах
                 start_time = rms_times[start_idx]
-                end_time = rms_times[end_idx] + window_size_seconds  # Добавляем размер окна для конца
-                duration_seconds = end_time - start_time
+                detected_end_time = rms_times[end_idx] + window_size_seconds  # Добавляем размер окна для конца
+                duration_seconds = detected_end_time - start_time
                 duration_beats = duration_seconds / self.beat_interval
                 
                 # Проверяем, попадает ли длительность в вилку
                 if self.min_duration_beats <= duration_beats <= self.max_duration_beats:
-                    valid_bridges.append(start_time)
-                    print(f"[EnergyDrop] Valid bridge found: {start_time:.3f}s, duration={duration_beats:.2f} beats ({duration_seconds:.3f}s)", file=sys.stderr)
+                    # Принудительно фиксируем идеальную длину мостика = 4 бита
+                    # Это гарантирует, что секция будет правильно распознана как bridge
+                    ideal_bridge_beats = 4.0
+                    end_time = start_time + (ideal_bridge_beats * self.beat_interval)
+                    
+                    valid_bridges.append((start_time, end_time))
+                    print(f"[EnergyDrop] Valid bridge found: {start_time:.3f}s -> {end_time:.3f}s, "
+                          f"detected_duration={duration_beats:.2f} beats, "
+                          f"fixed_duration={ideal_bridge_beats:.2f} beats ({end_time - start_time:.3f}s)", file=sys.stderr)
                 else:
                     print(f"[EnergyDrop] Rejected drop region: {start_time:.3f}s, duration={duration_beats:.2f} beats (outside range [{self.min_duration_beats}, {self.max_duration_beats}])", file=sys.stderr)
             
@@ -1034,7 +1042,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         print("\n" + "=" * 80, file=sys.stderr)
         print("Step 4.5: Detecting energy drops (bridges) with EnergyDropDetector...", file=sys.stderr)
         print("=" * 80, file=sys.stderr)
-        energy_drop_boundaries = []
+        energy_drop_pairs = []
         try:
             detector = EnergyDropDetector(
                 audio_data=y,
@@ -1045,15 +1053,21 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                 min_duration_beats=3.0,
                 max_duration_beats=5.0
             )
-            energy_drop_boundaries = detector.find_bridges()
-            print(f"[Step 4.5] Energy drop detection complete. Found {len(energy_drop_boundaries)} bridge boundaries", file=sys.stderr)
-            debug_data['energy_drop_boundaries'] = [float(b) for b in energy_drop_boundaries]
+            energy_drop_pairs = detector.find_bridges()  # Теперь возвращает [(start, end), ...]
+            print(f"[Step 4.5] Energy drop detection complete. Found {len(energy_drop_pairs)} bridge pairs", file=sys.stderr)
+            
+            # Сохраняем пары в debug_data
+            debug_data['energy_drop_boundaries'] = [{'start': float(start), 'end': float(end)} for start, end in energy_drop_pairs]
+            
+            # Выводим информацию о найденных мостиках
+            for i, (start, end) in enumerate(energy_drop_pairs):
+                print(f"[Step 4.5] Bridge #{i+1}: {start:.3f}s -> {end:.3f}s (duration: {end - start:.3f}s)", file=sys.stderr)
         except Exception as e:
             print(f"[Step 4.5] WARNING: Energy drop detection failed: {e}", file=sys.stderr)
             print(f"[Step 4.5] Continuing with Essentia analysis only...", file=sys.stderr)
             import traceback
             traceback.print_exc(file=sys.stderr)
-            energy_drop_boundaries = []
+            energy_drop_pairs = []
             debug_data['energy_drop_boundaries'] = []
         
         # Step 5: Анализ структуры с помощью Essentia/Librosa
@@ -1072,8 +1086,15 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
             debug_data['structure_boundaries'] = []
         
         # Объединяем границы от Essentia и EnergyDropDetector
-        print(f"[Step 5] Combining boundaries: {len(structure_boundaries)} from Essentia + {len(energy_drop_boundaries)} from EnergyDrop", file=sys.stderr)
-        all_structure_boundaries = list(set(structure_boundaries + energy_drop_boundaries))
+        # Важно: добавляем И start, И end от каждого мостика, чтобы создать короткую секцию
+        energy_drop_boundary_times = []
+        for start, end in energy_drop_pairs:
+            energy_drop_boundary_times.append(start)
+            energy_drop_boundary_times.append(end)
+            print(f"[Step 5] Injecting bridge boundaries at {start:.3f}s and {end:.3f}s", file=sys.stderr)
+        
+        print(f"[Step 5] Combining boundaries: {len(structure_boundaries)} from Essentia + {len(energy_drop_pairs)} bridges ({len(energy_drop_boundary_times)} boundary times) from EnergyDrop", file=sys.stderr)
+        all_structure_boundaries = list(set(structure_boundaries + energy_drop_boundary_times))
         all_structure_boundaries.sort()
         print(f"[Step 5] Total combined boundaries: {len(all_structure_boundaries)}", file=sys.stderr)
         structure_boundaries = all_structure_boundaries
@@ -1131,6 +1152,9 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                 'raw_beats': debug_data['raw_beats'],
                 'raw_downbeats': debug_data['raw_downbeats'],
                 'candidates_sections': debug_data['candidates_sections'],
+                'energy_drop_boundaries': debug_data.get('energy_drop_boundaries', []),
+                'structure_boundaries': debug_data.get('structure_boundaries', []),
+                'merged_section_starts': debug_data.get('merged_section_starts', []),
                 'final_grid': grid,
                 'total_beats': len(all_beats),
                 'total_downbeats': len(downbeats)
