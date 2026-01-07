@@ -65,101 +65,50 @@ except ImportError as e:
     sys.exit(1)
 
 
-def calculate_global_offset(downbeats, bpm):
-    if not downbeats:
-        return 0.0
-    beat_interval = 60.0 / bpm
-    bar_interval = beat_interval * 4
-    reference_point = downbeats[0]
-    deviations = []
-    for db in downbeats:
-        n_bars = round((db - reference_point) / bar_interval)
-        ideal_time = reference_point + (n_bars * bar_interval)
-        deviations.append(db - ideal_time)
-    median_deviation = np.median(deviations)
-    global_offset = reference_point + median_deviation
-    while global_offset < 0: global_offset += bar_interval
-    while global_offset >= bar_interval: global_offset -= bar_interval
-    return global_offset
-
-
 def find_smart_drop_index(bass_values):
     """
-    Находит индекс бита, где начинается истинный "Счет 1" (Bass Drop).
-    
-    Алгоритм:
-    1. Находит "Явный Пик" (Anchor Candidate) - первый бит где rel_bass > 0.5
-       и держится высокой еще 1-2 бита (проверка на сустейн).
-    2. Проверяет "Атаку" (Pre-beat check) - если бит index-1 имеет энергию > 0.15
-       и в 2 раза громче index-2, сдвигает Anchor на index-1.
-    
-    Args:
-        bass_values: массив относительной энергии баса для каждого бита (нормализованный)
-    
-    Returns:
-        int: индекс бита, где начинается истинный "Счет 1"
+    Ищет индекс бита, где происходит 'The Drop' (вступление баса).
+    Возвращает индекс бита, который считается Счетом 1 музыкального квадрата.
     """
-    if len(bass_values) < 3:
+    n = len(bass_values)
+    if n == 0: 
         return 0
-    
-    # Шаг 1: Находим "Явный Пик" (Anchor Candidate)
-    anchor_idx = None
-    
-    for i in range(len(bass_values) - 2):
-        # Проверяем, что текущий бит превышает порог 0.5
-        if bass_values[i] > 0.5:
-            # Проверяем сустейн: следующий 1-2 бита тоже должны быть высокими
-            sustain_ok = True
-            if i + 1 < len(bass_values):
-                if bass_values[i + 1] < 0.3:  # Слишком резкий спад
-                    sustain_ok = False
-            if i + 2 < len(bass_values):
-                if bass_values[i + 2] < 0.25:  # Еще больше спадает
-                    sustain_ok = False
-            
-            if sustain_ok:
-                anchor_idx = i
-                break
-    
-    # Если не нашли явный пик, берем первый бит с энергией > 0.4
-    if anchor_idx is None:
-        for i in range(len(bass_values)):
-            if bass_values[i] > 0.4:
-                anchor_idx = i
-                break
-    
-    # Если все еще не нашли, берем первый бит
-    if anchor_idx is None:
-        anchor_idx = 0
-    
-    print(f"[SmartBassDrop] Anchor Candidate found at beat index {anchor_idx} (bass={bass_values[anchor_idx]:.4f})", file=sys.stderr)
-    
-    # Шаг 2: Проверяем "Атаку" (Pre-beat check)
-    if anchor_idx > 0:
-        prev_bass = bass_values[anchor_idx - 1]
-        
-        # Проверяем условия для сдвига на предыдущий бит
-        has_significant_energy = prev_bass > 0.15
-        
-        # Проверяем резкий скачок (в 2 раза громче относительно index-2)
-        is_sharp_jump = False
-        if anchor_idx > 1:
-            prev_prev_bass = bass_values[anchor_idx - 2]
-            if prev_prev_bass > 0:
-                ratio = prev_bass / prev_prev_bass
-                is_sharp_jump = ratio >= 2.0
-        else:
-            # Если нет index-2, считаем скачок если prev_bass > 0.2
-            is_sharp_jump = prev_bass > 0.2
-        
-        if has_significant_energy and is_sharp_jump:
-            print(f"[SmartBassDrop] Pre-beat attack detected! Shifting from beat {anchor_idx} to {anchor_idx - 1}", file=sys.stderr)
-            print(f"[SmartBassDrop]   Beat {anchor_idx - 1}: bass={prev_bass:.4f}", file=sys.stderr)
-            anchor_idx = anchor_idx - 1
-    
-    print(f"[SmartBassDrop] Final drop index: {anchor_idx} (bass={bass_values[anchor_idx]:.4f})", file=sys.stderr)
-    
-    return anchor_idx
+
+    # Нормализация
+    max_val = max(bass_values) if max(bass_values) > 0 else 1.0
+    norm_bass = [v / max_val for v in bass_values]
+
+    anchor = 0
+    found = False
+
+    # 1. Ищем явное "Тело" баса (громкий сустейн)
+    for i in range(2, n - 4):  # Начинаем с 2, чтобы проверить атаку сзади
+        curr = norm_bass[i]
+        # Проверяем поддержку (что бас не исчез сразу)
+        support = sum(norm_bass[j] for j in range(i+1, min(i+4, n))) / 3
+
+        if curr > 0.45 and support > 0.35:
+            anchor = i
+            found = True
+            break
+
+    if not found: 
+        return 0
+
+    # 2. Проверяем "Атаку" (Pre-beat)
+    # Если бит ПЕРЕД якорем тоже громкий и является резким скачком, то это и есть 'Раз'
+    if anchor > 0:
+        prev = norm_bass[anchor - 1]
+        pre_prev = norm_bass[anchor - 2] if anchor > 1 else 0.0
+
+        # Условие атаки: 
+        # 1. Бит не тихий (> 0.15)
+        # 2. Бит значительно громче предыдущего (> 2.0x) - значит тут начался звук
+        if prev > 0.15 and prev > (pre_prev * 2.0):
+            print(f"[SmartDrop] Shifted anchor from {anchor} to attack at {anchor-1}", file=sys.stderr)
+            return anchor - 1
+
+    return anchor
 
 
 def analyze_track_with_madmom(audio_path, drums_path=None):
@@ -280,53 +229,36 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         
         print(f"[SmartBassDrop] Computed {len(bass_values)} bass energy values (normalized)", file=sys.stderr)
         
-        # 5c. Находим индекс бита с истинным "Счетом 1"
+        # 5c. Находим индекс бита с истинным "Счетом 1" (Drop)
         drop_index = find_smart_drop_index(bass_values)
         
-        # 5d. Вычисляем offset на основе найденного индекса
-        if drop_index < len(all_beats):
-            offset = all_beats[drop_index]
+        # 5d. Стягивание сетки: находим первый "Счет 1" через остаток от деления на 8
+        # Если Drop на 20-м бите, то 20 % 8 = 4. Бит №4 — это первый "Счет 1" в треке.
+        first_one_index = drop_index % 8
+        
+        if first_one_index < len(all_beats):
+            offset = all_beats[first_one_index]
         elif len(all_beats) > 0:
             offset = all_beats[0]
         else:
             offset = 0.0
         
         offset = round(offset, 3)
-        print(f"[SmartBassDrop] Final offset: {offset:.3f}s (beat index {drop_index})", file=sys.stderr)
+        print(f"[SmartBassDrop] Drop found at beat index {drop_index}", file=sys.stderr)
+        print(f"[SmartBassDrop] First 'Count 1' (offset) at beat index {first_one_index}, time: {offset:.3f}s", file=sys.stderr)
 
-        # 6. Формирование сетки с back-calculation
+        # 6. Формирование сетки - нарезка по 8 счетов (2 такта) от offset
         print("\n" + "=" * 80, file=sys.stderr)
-        print("Step 6: Creating grid with back-calculation...", file=sys.stderr)
+        print("Step 6: Creating grid (8 beats per section)...", file=sys.stderr)
         print("=" * 80, file=sys.stderr)
         
         beat_interval = 60.0 / bpm
         section_duration_beats = 8  # Ровно 8 счетов (2 такта)
         section_duration_time = section_duration_beats * beat_interval
         
-        # Back-calculation: находим первый "Счет 1" до drop_index
-        # Если drop_index = 19, то бит 11 - это 1, бит 3 - это 1
-        # Шагаем назад по 8 битов от drop_index, пока не дойдем до начала трека
-        current_beat_idx = drop_index
-        
-        # Находим первый "Счет 1" (шагаем назад по 8 битов)
-        while current_beat_idx >= section_duration_beats:
-            current_beat_idx -= section_duration_beats
-        
-        # Теперь current_beat_idx указывает на первый "Счет 1" в треке
-        if 0 <= current_beat_idx < len(all_beats):
-            first_section_start = all_beats[current_beat_idx]
-        else:
-            # Если индекс выходит за границы, вычисляем время из offset
-            beats_back = drop_index - current_beat_idx
-            first_section_start = offset - beats_back * beat_interval
-            if first_section_start < 0:
-                first_section_start = 0.0
-        
-        print(f"[Grid] Drop index: {drop_index}, First section start: {first_section_start:.3f}s (beat index: {current_beat_idx})", file=sys.stderr)
-        
-        # Генерируем сетку, начиная с первого "Счета 1"
+        # Генерируем сетку, начиная с offset (который теперь указывает на начало трека)
         grid = []
-        current_time = first_section_start
+        current_time = offset
         
         while current_time < duration:
             grid.append({
