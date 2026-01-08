@@ -71,12 +71,10 @@ export class AudioEngine {
   private _isPlaying: boolean = false;
 
   // Beat tracking
-  private beatMap: number[] = [];
   private beatGrid: Beat[] = [];
   private currentBeatIndex: number = 0;
   private updateAnimationFrameId: number | null = null;
   private updateIntervalId: NodeJS.Timeout | null = null; // Для работы в фоне (неактивная вкладка)
-  private lastSectionCheckTime: number = -1; // Для отслеживания проверки секций
 
   // Voice filter для управления воспроизведением голоса
   private voiceFilter: "mute" | "on1" | "on1and5" | "full" = "full";
@@ -174,8 +172,6 @@ export class AudioEngine {
         `[AudioEngine] Using fallback beatGrid: ${this.beatGrid.length} beats, duration: ${duration}s`
       );
     }
-
-    this.buildBeatMap(track);
 
     // 4. Загрузка аудио
     if (this.isStemsMode && track.isProcessed) {
@@ -306,29 +302,6 @@ export class AudioEngine {
     }
   }
 
-  private buildBeatMap(track: Track) {
-    this.beatMap = [];
-    if (track.gridMap && track.gridMap.grid) {
-      for (const section of track.gridMap.grid) {
-        const beatsPerSecond = (track.gridMap.bpm / 60) * 4;
-        const beatInterval = 1 / beatsPerSecond;
-        for (let i = 0; i < section.beats; i++) {
-          this.beatMap.push(section.start + i * beatInterval);
-        }
-      }
-    } else {
-      const bpm = track.bpm || 120;
-      const offset = track.offset || 0;
-      const beatsPerSecond = (bpm / 60) * 4;
-      const beatInterval = 1 / beatsPerSecond;
-      const estimatedDuration = 180;
-      const totalBeats = Math.ceil(estimatedDuration * beatsPerSecond);
-      for (let i = 0; i < totalBeats; i++) {
-        this.beatMap.push(offset + i * beatInterval);
-      }
-    }
-  }
-
   unloadTrack() {
     this.stopUpdate();
     this._isPlaying = false;
@@ -361,7 +334,6 @@ export class AudioEngine {
 
     this.currentTrack = null;
     this.trackEndFired = false;
-    this.beatMap = [];
     this.beatGrid = [];
     this.currentBeatIndex = 0;
   }
@@ -730,14 +702,7 @@ export class AudioEngine {
       this.onTimeUpdate(currentTime);
     }
 
-    // 2. Проверка секций (Bridge/Verse) для корректировки счетчика
-    // Проверяем каждые 0.5 секунды, чтобы не перегружать систему
-    if (currentTime - this.lastSectionCheckTime > 0.5) {
-      this.checkAndCorrectSectionAlignment(currentTime);
-      this.lastSectionCheckTime = currentTime;
-    }
-
-    // 3. Обработка битов (Voice Counting)
+    // 2. Обработка битов (Voice Counting)
     if (this.beatGrid.length > 0) {
       while (
         this.currentBeatIndex < this.beatGrid.length &&
@@ -768,160 +733,10 @@ export class AudioEngine {
         }
         this.currentBeatIndex++;
       }
-    } else {
-      // Legacy beatMap
-      while (
-        this.currentBeatIndex < this.beatMap.length &&
-        this.beatMap[this.currentBeatIndex] <= currentTime
-      ) {
-        this.currentBeatIndex++;
-      }
     }
 
     // Continue loop - setInterval уже запущен в startUpdate()
     // Не нужно создавать новый интервал здесь
-  }
-
-  /**
-   * Проверяет и корректирует выравнивание счетчика на границах секций
-   * Применяет "Танцевальную логику Бачаты": не вызывает панический сброс
-   *
-   * Логика:
-   * - Сброс на "1" только для длинных секций (> 8 beats)
-   * - Короткие мостики (4 beats) могут сбрасывать логично
-   * - Микро-секции (1-2 beats) полностью игнорируются
-   * - Если коррекция незначительна (разница 1-2 бита) - не сбрасываем
-   *
-   * IMPORTANT: Не вызывает панический сброс, если коррекция незначительна.
-   * Счет должен идти плавно "1, 2, 3, 4, 5, 6, 7, 8" без постоянных сбросов.
-   */
-  private checkAndCorrectSectionAlignment(currentTime: number) {
-    if (!this.currentTrack?.gridMap?.grid || this.beatGrid.length === 0) {
-      return; // Нет данных о секциях
-    }
-
-    const sections = this.currentTrack.gridMap.grid;
-    const bpm = this.currentTrack.gridMap.bpm || this.currentTrack.bpm || 120;
-    const beatInterval = 60 / bpm;
-
-    // Пороги для "Танцевальной логики Бачаты"
-    const MIN_SECTION_BEATS_FOR_RESET = 8; // Минимальная длина для сброса (2 такта)
-    const SHORT_BRIDGE_BEATS = 4; // Короткий мостик
-    const MICRO_SECTION_BEATS = 2; // Микро-секции - игнорируем
-    const MAX_BEAT_DIFF_FOR_IGNORE = 2; // Если разница <= 2 бита, не сбрасываем
-
-    // Проверяем каждую секцию
-    for (const section of sections) {
-      const sectionStart = section.start;
-      const tolerance = 0.2; // Допуск 0.2 секунды
-
-      // ЗАПРЕТ НА МИКРО-СБРОСЫ: Полностью игнорируем секции короче 2 битов
-      if (section.beats < MICRO_SECTION_BEATS) {
-        continue; // Игнорируем микро-секции
-      }
-
-      // Если мы находимся в начале секции (в пределах tolerance)
-      if (Math.abs(currentTime - sectionStart) < tolerance) {
-        // Находим текущий beat в beatGrid
-        const currentBeat = this.beatGrid[this.currentBeatIndex];
-
-        if (!currentBeat) {
-          continue;
-        }
-
-        const currentBeatNumber = currentBeat.number;
-
-        // ЛОГИКА СБРОСА: Применяем "Танцевальную логику Бачаты"
-        let shouldReset = false;
-        let resetReason = "";
-
-        if (section.beats >= MIN_SECTION_BEATS_FOR_RESET) {
-          // ДЛИННАЯ СЕКЦИЯ (> 8 beats): Всегда сбрасываем на "1"
-          // Это реальная граница Куплета/Припева
-          if (currentBeatNumber !== 1) {
-            shouldReset = true;
-            resetReason = `Long section (${section.beats} beats) - real phrase boundary`;
-          }
-        } else if (
-          section.beats === SHORT_BRIDGE_BEATS &&
-          section.type === "bridge"
-        ) {
-          // КОРОТКИЙ МОСТИК (ровно 4 beats): Логичный сброс на "1"
-          // 4 бита = законченный такт
-          if (currentBeatNumber !== 1) {
-            shouldReset = true;
-            resetReason = `Short bridge (${section.beats} beats) - complete measure`;
-          }
-        } else if (
-          section.beats >= 4 &&
-          section.beats < MIN_SECTION_BEATS_FOR_RESET
-        ) {
-          // СРЕДНЯЯ СЕКЦИЯ (4-7 beats): Сбрасываем только если разница значительна
-          // Если текущий счет близок к "1" (1, 2, 8) - не сбрасываем
-          // Если текущий счет далек от "1" (3-7) - сбрасываем
-          const beatDiff = Math.min(
-            Math.abs(currentBeatNumber - 1),
-            Math.abs(currentBeatNumber - 9) // Учитываем цикл (8 -> 1)
-          );
-
-          if (beatDiff > MAX_BEAT_DIFF_FOR_IGNORE) {
-            shouldReset = true;
-            resetReason = `Medium section (${section.beats} beats) - significant difference (${beatDiff} beats)`;
-          }
-        }
-
-        // Применяем коррекцию только если нужно
-        if (shouldReset) {
-          console.log(
-            `[Section Correction] ${
-              section.type
-            } section at ${sectionStart.toFixed(2)}s ` +
-              `(${section.beats} beats). Current: ${currentBeatNumber}, Resetting to 1. ` +
-              `Reason: ${resetReason}`
-          );
-
-          // Находим ближайший beat к началу секции и корректируем его
-          let corrected = false;
-          for (let i = 0; i < this.beatGrid.length; i++) {
-            const beat = this.beatGrid[i];
-            if (Math.abs(beat.time - sectionStart) < tolerance) {
-              // Корректируем этот beat и последующие beats в секции
-              const sectionEnd = sectionStart + section.beats * beatInterval;
-              let beatNum = 1;
-
-              for (let j = i; j < this.beatGrid.length; j++) {
-                const secBeat = this.beatGrid[j];
-                if (
-                  secBeat.time >= sectionStart - tolerance &&
-                  secBeat.time <= sectionEnd + tolerance
-                ) {
-                  secBeat.number = beatNum;
-                  beatNum = (beatNum % 8) + 1;
-                } else if (secBeat.time > sectionEnd) {
-                  break;
-                }
-              }
-
-              corrected = true;
-              break;
-            }
-          }
-
-          if (corrected) {
-            // Синхронизируем currentBeatIndex с текущим временем
-            this.syncBeatCursor(currentTime);
-          }
-        } else if (currentBeatNumber !== 1) {
-          // Логируем, что сброс не нужен (для отладки)
-          console.log(
-            `[Section Alignment] ${
-              section.type
-            } section at ${sectionStart.toFixed(2)}s ` +
-              `(${section.beats} beats). Current: ${currentBeatNumber}, No reset needed.`
-          );
-        }
-      }
-    }
   }
 
   private playVoiceCount(beatNumber: number) {
