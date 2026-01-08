@@ -2,10 +2,10 @@
 """
 Умный анализ ритма с использованием Madmom.
 Версия:
-1. BPM: STRICT MEAN (Среднее арифметическое интервалов) - самый точный метод для 131 vs 130.
-2. Offset: Smart Bass Drop + Neural Validation.
-3. Grid: Back-calculation.
-4. FPS: 100 (Native).
+1. BPM: STRICT MEAN (Dictatorship). Мы верим только среднему арифметическому.
+   Медиана удалена. Global Tempo используется только для проверки x2/x0.5.
+2. Offset: Smart Bass Drop + Neural Validation (Сохранено).
+3. Grid: Back-calculation (Сохранено).
 """
 
 import sys
@@ -154,43 +154,47 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         # 3. BPM (STRICT MEAN LOGIC)
         print("Step 3: Calculating Precise BPM (Strict Mean)...", file=sys.stderr)
         try:
-            # 1. Считаем Mean Interval (Главный авторитет)
             if len(all_beats) > 1:
+                # А) Считаем "физический" BPM по среднему интервалу
                 intervals = np.diff(all_beats)
                 avg_interval = np.mean(intervals) 
                 bpm_mean = 60.0 / avg_interval
             else:
                 bpm_mean = 120.0
 
-            # 2. Считаем Global Tempo (только для проверки октавы)
+            # Б) Проверка на удвоение (Octave Error)
+            # Мы НЕ используем глобальный темп для замены, ТОЛЬКО для коэффициента
             tempo_proc = TempoEstimationProcessor(fps=100, min_bpm=60, max_bpm=190)
             tempos = tempo_proc(act)
-            bpm_global = tempos[0][0] if len(tempos) > 0 else bpm_mean
+            
+            if len(tempos) > 0:
+                bpm_global = tempos[0][0]
+                ratio = bpm_global / bpm_mean
+                
+                # Если глобальный темп в ~2 раза больше найденного среднего
+                if 1.8 < ratio < 2.2:
+                    print(f"[Analysis] Correction: Doubling BPM (Mean {bpm_mean:.2f} -> ~{bpm_global:.2f})", file=sys.stderr)
+                    bpm_mean *= 2
+                # Если глобальный темп в ~2 раза меньше
+                elif 0.4 < ratio < 0.6:
+                    print(f"[Analysis] Correction: Halving BPM (Mean {bpm_mean:.2f} -> ~{bpm_global:.2f})", file=sys.stderr)
+                    bpm_mean /= 2
+                else:
+                    print(f"[Analysis] Keeping Mean BPM: {bpm_mean:.2f} (Global matches or disagrees irrelevant)", file=sys.stderr)
 
-            # 3. Проверяем Октаву (Double/Half check)
-            # Если Mean=65, а Global=130, то умножаем Mean на 2.
-            # Если Mean=130, а Global=130, то оставляем Mean.
-            
-            ratio = bpm_global / bpm_mean
-            if 1.8 < ratio < 2.2:
-                print(f"[Analysis] Correction: Doubling BPM (Mean {bpm_mean:.2f} -> Global {bpm_global:.2f})", file=sys.stderr)
-                bpm_mean *= 2
-            elif 0.4 < ratio < 0.6:
-                print(f"[Analysis] Correction: Halving BPM (Mean {bpm_mean:.2f} -> Global {bpm_global:.2f})", file=sys.stderr)
-                bpm_mean /= 2
-            
-            # 4. ФИНАЛ: Всегда берем Mean
+            # В) Финализация
             bpm = int(round(bpm_mean))
-            print(f"[Analysis] Final BPM: {bpm} (Raw Mean: {bpm_mean:.4f})", file=sys.stderr)
+            print(f"[Analysis] Final BPM: {bpm}", file=sys.stderr)
 
         except Exception as e:
+            # Fallback (на случай если mean упадет, что маловероятно)
             print(f"[Analysis] Warning: BPM calc failed ({e}), using simple median", file=sys.stderr)
             if len(all_beats) > 1:
                 bpm = round(60.0 / np.mean(np.diff(all_beats)))
             else:
                 bpm = 120
 
-        # 4. Offset
+        # 4. Offset (Smart Bass Drop - Logic Locked)
         print("Step 4: Detecting Smart Bass Drop...", file=sys.stderr)
         try:
             sos = signal.butter(6, 200, 'low', fs=sr_orig, output='sos')
@@ -218,8 +222,12 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         
         grid = []
         current_time = offset
+        
+        # Backwards to 0
         while current_time > 0:
             current_time -= section_duration
+            
+        # Forwards to end
         while current_time < duration:
             end_time = current_time + section_duration
             if end_time > 0:
