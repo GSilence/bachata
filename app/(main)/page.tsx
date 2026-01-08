@@ -32,6 +32,7 @@ export default function PlaybackPage() {
 
   const [isClient, setIsClient] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
+  const [hasStarted, setHasStarted] = useState(false); // Флаг начала первого бита
 
   // Проверяем, что мы на клиенте
   useEffect(() => {
@@ -184,16 +185,37 @@ export default function PlaybackPage() {
     // Устанавливаем callback для обновления бита
     audioEngine.setOnBeatUpdate((beatNumber) => {
       setCurrentBeat(beatNumber);
+      setHasStarted(true); // Первый бит начался
     });
 
     // Также обновляем при загрузке трека
     const initialBeat = audioEngine.getCurrentBeat();
     setCurrentBeat(initialBeat);
+    
+    // Проверяем, начался ли уже первый бит (если трек уже играет)
+    // Используем setTimeout, чтобы дать время audioEngine обновиться
+    const checkHasStarted = () => {
+      const currentTime = audioEngine.getCurrentTime();
+      if (currentTrack?.gridMap) {
+        const offset = currentTrack.gridMap.offset || 0;
+        setHasStarted(currentTime >= offset && currentTime > 0);
+      } else if (currentTrack?.offset !== undefined) {
+        const offset = currentTrack.offset || 0;
+        setHasStarted(currentTime >= offset && currentTime > 0);
+      } else {
+        setHasStarted(false);
+      }
+    };
+    
+    // Проверяем сразу и через небольшую задержку (на случай, если трек только загружается)
+    checkHasStarted();
+    const timeoutId = setTimeout(checkHasStarted, 100);
 
     return () => {
+      clearTimeout(timeoutId);
       audioEngine.setOnBeatUpdate(null);
     };
-  }, [isClient]);
+  }, [isClient, currentTrack]);
 
   // Синхронизация voiceFilter с audioEngine
   useEffect(() => {
@@ -219,12 +241,14 @@ export default function PlaybackPage() {
 
   const handleStop = () => {
     stop(); // Используем метод из store (он сам обновит isPlaying и currentTime)
+    setHasStarted(false); // Сбрасываем флаг начала счета
   };
 
   const handleTrackSelect = (track: Track) => {
     // Use store's loadTrack which includes mandatory Stop logic
     loadTrack(track);
     stop(); // Stop playback when manually selecting track
+    setHasStarted(false); // Сбрасываем флаг начала счета при выборе нового трека
     // Сохраняем выбранный трек в localStorage (только ID, не весь объект)
     if (typeof window !== "undefined") {
       try {
@@ -311,7 +335,7 @@ export default function PlaybackPage() {
               data-block="beat-counter"
             >
               {isClient ? (
-                <BeatCounter currentBeat={currentBeat - 1} />
+                <BeatCounter currentBeat={currentBeat - 1} hasStarted={hasStarted} />
               ) : (
                 <div className="text-center py-8 text-gray-400">
                   Загрузка...
