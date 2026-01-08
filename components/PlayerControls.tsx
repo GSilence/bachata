@@ -97,15 +97,15 @@ export default function PlayerControls({
 
   return (
     <div 
-      className="space-y-6"
+      className="space-y-4 sm:space-y-6"
       data-component="player-controls"
     >
       {/* Play/Pause/Stop Buttons */}
-      <div className="flex justify-center items-center gap-4">
+      <div className="flex justify-center items-center gap-3 sm:gap-4">
         <button
           onClick={isPlaying ? onPause : onPlay}
           disabled={!currentTrack}
-          className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+          className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-colors shadow-lg ${
             !currentTrack
               ? "bg-gray-600 text-gray-400 cursor-not-allowed"
               : "bg-purple-600 text-white hover:bg-purple-700"
@@ -130,7 +130,7 @@ export default function PlayerControls({
         <button
           onClick={onStop}
           disabled={!currentTrack}
-          className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center transition-colors shadow-lg ${
             !currentTrack
               ? "bg-gray-600 text-gray-400 cursor-not-allowed"
               : "bg-red-600 text-white hover:bg-red-700"

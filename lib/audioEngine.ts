@@ -99,7 +99,7 @@ export class AudioEngine {
       const voicePath = `/audio/voice/${i}.mp3`;
       const howl = new Howl({
         src: [voicePath],
-        html5: true,
+        html5: true, // Используем HTML5 Audio для надежности
         preload: true,
         volume: this.voiceVolume / 100,
         onloaderror: (id, error) => {
@@ -152,11 +152,8 @@ export class AudioEngine {
     if (track.gridMap && track.gridMap.grid && track.gridMap.grid.length > 0) {
       // Используем gridMap для генерации точного beatGrid с учетом мостиков
       // Получаем длительность трека из gridMap (из результата анализа) или используем фоллбек
-      const duration = track.gridMap.duration || 180
-      this.beatGrid = generateBeatGridFromDownbeats(
-        track.gridMap,
-        duration
-      );
+      const duration = track.gridMap.duration || 180;
+      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
       console.log(
         `[AudioEngine] Generated beatGrid from gridMap: ${this.beatGrid.length} beats, ${track.gridMap.grid.length} sections, duration: ${duration}s`
       );
@@ -655,7 +652,23 @@ export class AudioEngine {
 
   setVoiceVolume(volume: number) {
     this.voiceVolume = Math.max(0, Math.min(100, volume));
-    this.voiceFiles.forEach((howl) => howl.volume(this.voiceVolume / 100));
+    // Увеличиваем базовую громкость на 250% (2.5x)
+    // Когда volume = 100%, реальная громкость = 250% (2.5)
+    // Когда volume = 50%, реальная громкость = 125% (1.25)
+    const baseVolume = this.voiceVolume / 100; // 0-1
+    const gainMultiplier = 2.5; // 250% базовая громкость
+
+    // Вычисляем реальную громкость с учетом множителя
+    // Ограничиваем до 1.0 (максимум Howler), но применяем множитель
+    // При 100%: baseVolume = 1.0, actualVolume = min(1.0, 2.5) = 1.0 (максимум Howler)
+    // При 40%: baseVolume = 0.4, actualVolume = min(1.0, 1.0) = 1.0 (максимум Howler)
+    // При 30%: baseVolume = 0.3, actualVolume = min(1.0, 0.75) = 0.75
+    const actualVolume = Math.min(1.0, baseVolume * gainMultiplier);
+
+    // Устанавливаем volume в Howler
+    this.voiceFiles.forEach((howl) => {
+      howl.volume(actualVolume);
+    });
   }
 
   setVoiceFilter(filter: "mute" | "on1" | "on1and5" | "full") {
@@ -829,14 +842,20 @@ export class AudioEngine {
             shouldReset = true;
             resetReason = `Long section (${section.beats} beats) - real phrase boundary`;
           }
-        } else if (section.beats === SHORT_BRIDGE_BEATS && section.type === "bridge") {
+        } else if (
+          section.beats === SHORT_BRIDGE_BEATS &&
+          section.type === "bridge"
+        ) {
           // КОРОТКИЙ МОСТИК (ровно 4 beats): Логичный сброс на "1"
           // 4 бита = законченный такт
           if (currentBeatNumber !== 1) {
             shouldReset = true;
             resetReason = `Short bridge (${section.beats} beats) - complete measure`;
           }
-        } else if (section.beats >= 4 && section.beats < MIN_SECTION_BEATS_FOR_RESET) {
+        } else if (
+          section.beats >= 4 &&
+          section.beats < MIN_SECTION_BEATS_FOR_RESET
+        ) {
           // СРЕДНЯЯ СЕКЦИЯ (4-7 beats): Сбрасываем только если разница значительна
           // Если текущий счет близок к "1" (1, 2, 8) - не сбрасываем
           // Если текущий счет далек от "1" (3-7) - сбрасываем
@@ -844,7 +863,7 @@ export class AudioEngine {
             Math.abs(currentBeatNumber - 1),
             Math.abs(currentBeatNumber - 9) // Учитываем цикл (8 -> 1)
           );
-          
+
           if (beatDiff > MAX_BEAT_DIFF_FOR_IGNORE) {
             shouldReset = true;
             resetReason = `Medium section (${section.beats} beats) - significant difference (${beatDiff} beats)`;
@@ -854,9 +873,11 @@ export class AudioEngine {
         // Применяем коррекцию только если нужно
         if (shouldReset) {
           console.log(
-            `[Section Correction] ${section.type} section at ${sectionStart.toFixed(2)}s ` +
-            `(${section.beats} beats). Current: ${currentBeatNumber}, Resetting to 1. ` +
-            `Reason: ${resetReason}`
+            `[Section Correction] ${
+              section.type
+            } section at ${sectionStart.toFixed(2)}s ` +
+              `(${section.beats} beats). Current: ${currentBeatNumber}, Resetting to 1. ` +
+              `Reason: ${resetReason}`
           );
 
           // Находим ближайший beat к началу секции и корректируем его
@@ -893,8 +914,10 @@ export class AudioEngine {
         } else if (currentBeatNumber !== 1) {
           // Логируем, что сброс не нужен (для отладки)
           console.log(
-            `[Section Alignment] ${section.type} section at ${sectionStart.toFixed(2)}s ` +
-            `(${section.beats} beats). Current: ${currentBeatNumber}, No reset needed.`
+            `[Section Alignment] ${
+              section.type
+            } section at ${sectionStart.toFixed(2)}s ` +
+              `(${section.beats} beats). Current: ${currentBeatNumber}, No reset needed.`
           );
         }
       }

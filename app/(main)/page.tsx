@@ -53,6 +53,10 @@ export default function PlaybackPage() {
       // Save AudioEngine reference in store (for compatibility)
       setAudioEngine(audioEngine);
 
+      // Устанавливаем начальную громкость voice из store
+      const { voiceVolume } = usePlayerStore.getState();
+      audioEngine.setVoiceVolume(voiceVolume);
+
       // If track already exists in store, load it via store
       const { currentTrack: existingTrack, tracks } = usePlayerStore.getState();
       if (existingTrack) {
@@ -287,11 +291,11 @@ export default function PlaybackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-8">
+    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-white mb-8">Воспроизведение</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-4 sm:mb-6 lg:mb-8 pl-12 lg:pl-0">Воспроизведение</h1>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* Основная секция - слева */}
           <div className="lg:col-span-2 space-y-6">
             {/* Информация о треке */}
@@ -344,6 +348,7 @@ export default function PlaybackPage() {
               <div
                 className="bg-gray-800 rounded-lg border border-gray-700"
                 data-block="stems-control"
+                style={{ display: 'none' }}
               >
                 <StemsControl />
               </div>
@@ -351,7 +356,7 @@ export default function PlaybackPage() {
           </div>
 
           {/* Боковая панель - справа */}
-          <div className="space-y-6" data-block="sidebar">
+          <div className="space-y-4 sm:space-y-6" data-block="sidebar">
             {/* Плейлист и настройки воспроизведения */}
             <div
               className="bg-gray-800 rounded-lg p-6 border border-gray-700"

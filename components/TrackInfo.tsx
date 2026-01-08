@@ -78,12 +78,12 @@ export default function TrackInfo({}: TrackInfoProps) {
 
   return (
     <div 
-      className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+      className="bg-gray-800 rounded-lg p-4 sm:p-6 border border-gray-700"
       data-component="track-info"
     >
       {/* Название и исполнитель */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-white mb-1">
+      <div className="mb-4 sm:mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">
           {currentTrack.title}
         </h2>
         {currentTrack.artist && (
@@ -92,7 +92,7 @@ export default function TrackInfo({}: TrackInfoProps) {
       </div>
 
       {/* Параметры */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* BPM */}
         <div>
           <label className="block text-sm font-medium text-gray-400 mb-2">
@@ -145,7 +145,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                 </span>
                 <button
                   onClick={() => setEditingBpm(true)}
-                  className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                  className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors hidden"
                   title="Редактировать BPM"
                 >
                   ✎
@@ -224,7 +224,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                 </span>
                 <button
                   onClick={() => setEditingOffset(true)}
-                  className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                  className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors hidden"
                   title="Редактировать Offset"
                 >
                   ✎

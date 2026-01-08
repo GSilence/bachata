@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -45,9 +46,39 @@ const navItems: NavItem[] = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
   return (
-    <aside className="w-64 bg-gray-900 border-r border-gray-800 h-screen fixed left-0 top-0 overflow-y-auto">
+    <>
+      {/* Mobile menu button */}
+      <button
+        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
+        aria-label="Toggle menu"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {isMobileMenuOpen ? (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          )}
+        </svg>
+      </button>
+
+      {/* Mobile overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      <aside className={`
+        w-64 bg-gray-900 border-r border-gray-800 h-screen fixed left-0 top-0 overflow-y-auto z-50
+        ${isMobileMenuOpen ? 'block' : 'hidden'} lg:block
+        transform transition-transform duration-300 ease-in-out
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
       {/* Logo */}
       <div className="p-6 border-b border-gray-800">
         <div className="flex items-center gap-2">
@@ -67,6 +98,7 @@ export default function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
                   className={`
                     flex items-center gap-3 px-4 py-3 rounded-lg transition-colors
                     ${
@@ -77,12 +109,14 @@ export default function Sidebar() {
                   `}
                 >
                   {item.icon}
-                  <span className="flex-1">{item.name}</span>
-                  {item.badge && (
-                    <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">
-                      {item.badge}
-                    </span>
-                  )}
+                  <span className="flex-1 flex flex-col">
+                    <span>{item.name}</span>
+                    {item.badge && (
+                      <span className="text-xs text-gray-400 mt-0.5">
+                        {item.badge}
+                      </span>
+                    )}
+                  </span>
                 </Link>
               </li>
             )
@@ -90,6 +124,7 @@ export default function Sidebar() {
         </ul>
       </nav>
     </aside>
+    </>
   )
 }
 
