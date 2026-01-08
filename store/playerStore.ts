@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { audioEngine } from "@/lib/audioEngine";
+import { restoreUserSettings, saveUserSettings } from "@/lib/userSettings";
 import type {
   PlayerState,
   Track,
@@ -37,17 +38,20 @@ const trackStorage = {
   },
 };
 
+// Восстанавливаем настройки пользователя при инициализации
+const restoredSettings = restoreUserSettings();
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => ({
-      // Initial state
+      // Initial state - используем восстановленные настройки или значения по умолчанию
       currentTrack: null,
       tracks: [],
       isPlaying: false,
       currentTime: 0,
       duration: 0,
-      musicVolume: 100,
-      voiceVolume: 100, // Базовая громкость (реальная громкость будет увеличена на 250% в audioEngine)
+      musicVolume: restoredSettings.musicVolume,
+      voiceVolume: restoredSettings.voiceVolume, // Базовая громкость (реальная громкость будет увеличена на 250% в audioEngine)
 
       // Управление дорожками
       isStemsMode: false, // По умолчанию используем цельный файл (экономия ресурсов)
@@ -64,8 +68,8 @@ export const usePlayerStore = create<PlayerState>()(
         other: 100,
       },
 
-      playMode: "sequential",
-      voiceFilter: "full",
+      playMode: restoredSettings.playMode,
+      voiceFilter: restoredSettings.voiceFilter,
       playlistFilter: "free",
       searchQuery: "",
 
@@ -131,12 +135,16 @@ export const usePlayerStore = create<PlayerState>()(
         set({ musicVolume: clampedVolume });
         // Sync with AudioEngine
         audioEngine.setMusicVolume(clampedVolume);
+        // Сохраняем настройки в localStorage
+        saveUserSettings({ musicVolume: clampedVolume });
       },
       setVoiceVolume: (volume) => {
         const clampedVolume = Math.max(0, Math.min(100, volume));
         set({ voiceVolume: clampedVolume });
         // Sync with AudioEngine
         audioEngine.setVoiceVolume(clampedVolume);
+        // Сохраняем настройки в localStorage
+        saveUserSettings({ voiceVolume: clampedVolume });
       },
       setStemsMode: (enabled) => {
         set({ isStemsMode: enabled });
@@ -167,11 +175,17 @@ export const usePlayerStore = create<PlayerState>()(
         const { stemsVolume: currentVolumes } = get();
         audioEngine.setStemsVolume(currentVolumes);
       },
-      setPlayMode: (mode) => set({ playMode: mode }),
+      setPlayMode: (mode) => {
+        set({ playMode: mode });
+        // Сохраняем настройки в localStorage
+        saveUserSettings({ playMode: mode });
+      },
       setVoiceFilter: (filter) => {
         set({ voiceFilter: filter });
         // Синхронизируем с audioEngine
         audioEngine.setVoiceFilter(filter);
+        // Сохраняем настройки в localStorage
+        saveUserSettings({ voiceFilter: filter });
       },
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),

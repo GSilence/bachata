@@ -53,9 +53,11 @@ export default function PlaybackPage() {
       // Save AudioEngine reference in store (for compatibility)
       setAudioEngine(audioEngine);
 
-      // Устанавливаем начальную громкость voice из store
-      const { voiceVolume } = usePlayerStore.getState();
+      // Устанавливаем все восстановленные настройки из store
+      const { musicVolume, voiceVolume, voiceFilter } = usePlayerStore.getState();
+      audioEngine.setMusicVolume(musicVolume);
       audioEngine.setVoiceVolume(voiceVolume);
+      audioEngine.setVoiceFilter(voiceFilter);
 
       // If track already exists in store, load it via store
       const { currentTrack: existingTrack, tracks } = usePlayerStore.getState();
