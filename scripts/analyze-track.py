@@ -2,10 +2,10 @@
 """
 Умный анализ ритма с использованием Madmom.
 Версия:
-1. BPM: STRICT MEAN (Dictatorship). Мы верим только среднему арифметическому.
-   Медиана удалена. Global Tempo используется только для проверки x2/x0.5.
-2. Offset: Smart Bass Drop + Neural Validation (Сохранено).
-3. Grid: Back-calculation (Сохранено).
+1. BPM: STRICT MEAN (Dictatorship).
+2. Offset: Combined Logic (Madmom Anchor + Bass Validation + Grid Lock).
+3. Offset Shift: Time Projection to Start (Shift by 8 beats).
+4. Grid: Based on Shifted Offset.
 """
 
 import sys
@@ -58,48 +58,76 @@ def get_rms_at_time(y, sr, time_sec, window_sec=0.05):
 
 def find_smart_drop_index(bass_values, beat_probs):
     """
-    Ищет "The Drop" с валидацией через нейросеть.
+    Новая логика поиска Offset (счета 1):
+    1. Ищем 'Якорь' - первый бит с высокой уверенностью Madmom (prob > Threshold).
+    2. Идем назад от Якоря и ищем вступление баса.
+    3. Бас валидируется: это не просто щелчок, за ним следует энергия.
+    4. Сетка валидируется: Якорь должен выпадать на 1 или 5 относительно найденного баса (Grid Lock).
     """
     n = len(bass_values)
     if n == 0: return 0
-    
-    max_val = max(bass_values) if max(bass_values) > 0 else 1.0
-    norm_bass = [v / max_val for v in bass_values]
-    
-    for i in range(n - 8): 
-        curr = norm_bass[i]
-        support = sum(norm_bass[j] for j in range(i+1, i+4)) / 3
-        
-        if curr > 0.45 and support > 0.35:
-            # Валидация нейросетью
-            lookahead = min(n, i + 16)
-            local_probs = beat_probs[i:lookahead]
-            
-            if not local_probs or max(local_probs) < 0.2:
-                print(f"[SmartDrop] Madmom silent, trusting bass at {i}", file=sys.stderr)
-                # Check attack
-                if i > 0:
-                     prev = norm_bass[i-1]
-                     if prev > 0.15 and prev > (norm_bass[i-2] * 2.0 if i>1 else 0):
-                         return i - 1
-                return i
-            
-            max_prob_idx_rel = np.argmax(local_probs)
-            max_prob_idx_abs = i + max_prob_idx_rel
-            dist = max_prob_idx_abs - i
-            
-            if dist % 4 == 0:
-                print(f"[SmartDrop] Confirmed candidate {i} by Madmom peak at {max_prob_idx_abs}", file=sys.stderr)
-                if i > 0:
-                     prev = norm_bass[i-1]
-                     if prev > 0.15 and prev > (norm_bass[i-2] * 2.0 if i>1 else 0):
-                         return i - 1
-                return i
-            else:
-                print(f"[SmartDrop] Candidate {i} REJECTED. Misaligned (Dist {dist})", file=sys.stderr)
-                continue
 
-    return 0
+    # КОНСТАНТЫ
+    CONFIDENCE_THRESHOLD = 0.3 
+    
+    # Нормализация баса для анализа
+    max_bass = max(bass_values) if max(bass_values) > 0 else 1.0
+    norm_bass = [v / max_bass for v in bass_values]
+    
+    # --- ШАГ 1: Поиск Якоря (Anchor) ---
+    anchor_idx = -1
+    for i in range(n):
+        if beat_probs[i] > CONFIDENCE_THRESHOLD:
+            anchor_idx = i
+            print(f"[SmartDrop] Found Anchor at index {i} (Prob: {beat_probs[i]:.2f})", file=sys.stderr)
+            break
+            
+    # Если уверенных битов нет вообще, берем просто самый вероятный во всем треке
+    if anchor_idx == -1:
+        anchor_idx = int(np.argmax(beat_probs))
+        print(f"[SmartDrop] No strong anchor found. Using max probability index: {anchor_idx}", file=sys.stderr)
+
+    # --- ШАГ 2: Поиск вступления (сканируем НАЗАД от якоря) ---
+    found_bass_start = -1
+    
+    # Идем от якоря назад к началу
+    for i in range(anchor_idx - 1, -1, -1):
+        curr = norm_bass[i]
+        prev = norm_bass[i-1] if i > 0 else 0.0
+        
+        # 2.1 Проверка на "Атаку"
+        is_attack = (curr > 0.15) and (curr > prev * 1.5)
+        
+        if is_attack:
+            # 2.2 Проверка "Не щелчок ли это?"
+            check_len = min(3, n - 1 - i)
+            if check_len > 0:
+                future_energy = sum(norm_bass[i+1 : i+1+check_len]) / check_len
+            else:
+                future_energy = curr
+
+            is_sustained = future_energy > 0.15
+            
+            if is_sustained:
+                # 2.3 Проверка Сетки (Strict Grid Lock)
+                # Расстояние между Anchor и Candidate
+                dist = anchor_idx - i
+                
+                # FIX: Strict Grid Consistency.
+                # Если dist % 4 == 0, то фаза совпадает (1 или 5).
+                if dist % 4 == 0:
+                    print(f"[SmartDrop] Found valid Bass Start at {i}. Dist to Anchor: {dist}. Bass: {curr:.2f}", file=sys.stderr)
+                    found_bass_start = i
+                    # Продолжаем искать более ранние вступления
+                else:
+                    pass
+
+    # --- ШАГ 3: Принятие решения ---
+    if found_bass_start != -1:
+        return found_bass_start
+    else:
+        print(f"[SmartDrop] No valid bass intro found backwards (with grid lock). Using Anchor {anchor_idx} as start.", file=sys.stderr)
+        return anchor_idx
 
 
 # ==========================================
@@ -132,9 +160,9 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
             
             rnn_fps = 100.0
             
-            # ТРЕКЕР БИТОВ: FPS=200 для точности оффсета
-            print(f"Step 2: Tracking beats (fps=200)...", file=sys.stderr)
-            beat_processor = DBNBeatTrackingProcessor(fps=200)
+            # ТРЕКЕР БИТОВ: FPS=100
+            print(f"Step 2: Tracking beats (fps=100)...", file=sys.stderr)
+            beat_processor = DBNBeatTrackingProcessor(fps=100)
             beat_times = beat_processor(act[:, 0])
             all_beats = [float(b) for b in beat_times]
             
@@ -155,15 +183,13 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         print("Step 3: Calculating Precise BPM (Strict Mean)...", file=sys.stderr)
         try:
             if len(all_beats) > 1:
-                # А) Считаем "физический" BPM по среднему интервалу
                 intervals = np.diff(all_beats)
                 avg_interval = np.mean(intervals) 
                 bpm_mean = 60.0 / avg_interval
             else:
                 bpm_mean = 120.0
 
-            # Б) Проверка на удвоение (Octave Error)
-            # Мы НЕ используем глобальный темп для замены, ТОЛЬКО для коэффициента
+            # Проверка на удвоение
             tempo_proc = TempoEstimationProcessor(fps=100, min_bpm=60, max_bpm=190)
             tempos = tempo_proc(act)
             
@@ -171,31 +197,27 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                 bpm_global = tempos[0][0]
                 ratio = bpm_global / bpm_mean
                 
-                # Если глобальный темп в ~2 раза больше найденного среднего
                 if 1.8 < ratio < 2.2:
                     print(f"[Analysis] Correction: Doubling BPM (Mean {bpm_mean:.2f} -> ~{bpm_global:.2f})", file=sys.stderr)
                     bpm_mean *= 2
-                # Если глобальный темп в ~2 раза меньше
                 elif 0.4 < ratio < 0.6:
                     print(f"[Analysis] Correction: Halving BPM (Mean {bpm_mean:.2f} -> ~{bpm_global:.2f})", file=sys.stderr)
                     bpm_mean /= 2
                 else:
-                    print(f"[Analysis] Keeping Mean BPM: {bpm_mean:.2f} (Global matches or disagrees irrelevant)", file=sys.stderr)
+                    print(f"[Analysis] Keeping Mean BPM: {bpm_mean:.2f}", file=sys.stderr)
 
-            # В) Финализация
             bpm = int(round(bpm_mean))
             print(f"[Analysis] Final BPM: {bpm}", file=sys.stderr)
 
         except Exception as e:
-            # Fallback (на случай если mean упадет, что маловероятно)
             print(f"[Analysis] Warning: BPM calc failed ({e}), using simple median", file=sys.stderr)
             if len(all_beats) > 1:
                 bpm = round(60.0 / np.mean(np.diff(all_beats)))
             else:
                 bpm = 120
 
-        # 4. Offset (Smart Bass Drop - Logic Locked)
-        print("Step 4: Detecting Smart Bass Drop...", file=sys.stderr)
+        # 4. Offset (New Combined Logic)
+        print("Step 4: Detecting Offset (Anchor + Bass + Grid)...", file=sys.stderr)
         try:
             sos = signal.butter(6, 200, 'low', fs=sr_orig, output='sos')
             y_bass = signal.sosfilt(sos, y_orig)
@@ -208,22 +230,34 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
             bass_values.append(val)
             
         drop_index = find_smart_drop_index(bass_values, beat_probs)
+        
         print(f"[Analysis] Drop found at beat index: {drop_index} (Time: {all_beats[drop_index]:.3f}s)", file=sys.stderr)
         
-        # 5. Grid
-        first_one_index = drop_index % 8
-        offset = all_beats[first_one_index]
-        print(f"[Analysis] Calculated Offset: {offset:.3f}s (Index {first_one_index})", file=sys.stderr)
+        # --- NEW LOGIC: SHIFT OFFSET TO START ---
+        # Смещаем найденный Offset в начало трека шагами по 8 битов (1 фраза).
+        # Цель: Найти самое раннее время, которое все еще >= 0, 
+        # при этом сохраняя фазу найденного "Счета 1" (drop_index).
+        
+        found_offset = all_beats[drop_index]
+        beat_interval = 60.0 / bpm
+        section_duration = 8 * beat_interval
+        
+        shifted_offset = found_offset
+        # Пока мы можем отступить назад на 8 битов и остаться в пределах трека (>= 0)
+        while shifted_offset - section_duration >= 0.0:
+            shifted_offset -= section_duration
+            
+        offset = shifted_offset
+        print(f"[Analysis] Shifted Offset to Start: {offset:.3f}s (Original found at {found_offset:.3f}s)", file=sys.stderr)
+        # ----------------------------------------
 
         print("Step 5: Generating Grid...", file=sys.stderr)
-        beat_interval = 60.0 / bpm
-        section_beats = 8
-        section_duration = section_beats * beat_interval
+        # Grid generation now essentially starts from the shifted offset
         
         grid = []
         current_time = offset
         
-        # Backwards to 0
+        # Backwards loop (safety mostly, in case shifted_offset is > section_duration for some reason)
         while current_time > 0:
             current_time -= section_duration
             
@@ -237,7 +271,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
                 grid.append({
                     "type": "verse",
                     "start": start_display,
-                    "beats": section_beats
+                    "beats": 8
                 })
             current_time += section_duration
 

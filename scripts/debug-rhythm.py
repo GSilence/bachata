@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Sherlock Report Generator v2
-- Исправлен BPM (median interval)
-- Добавлен анализ High Freq (Percussion/Guira)
-- Добавлена эвристика поиска "The Drop" (вступление баса)
-- Исправлена совместимость с NumPy 1.24+ (np.int patch)
+Sherlock Report Generator v4 (Synced with Analyzer)
+- Полная синхронизация ядра с analyze-track.py
+- FPS: 100 (Native Madmom)
+- BPM: Strict Mean
+- Filters: Те же настройки фильтров
 """
 
 import sys
@@ -12,29 +12,26 @@ import os
 import json
 import warnings
 
-# --- 1. CRITICAL PATCHES (MUST BE BEFORE IMPORTS) ---
+# --- 1. CRITICAL PATCHES (COPY FROM ANALYZER) ---
 import collections
 import collections.abc
 import numpy as np
 
-# Patch Collections for Python 3.10+
 if sys.version_info >= (3, 10):
     if not hasattr(collections, 'MutableSequence'):
         collections.MutableSequence = collections.abc.MutableSequence
 
-# Patch NumPy for Madmom (np.int, np.float deprecated in 1.20+)
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", FutureWarning)
-    if not hasattr(np, 'float'):
-        np.float = np.float64
-    if not hasattr(np, 'int'):
-        np.int = np.int64  # <--- ВОТ ЭТО ЛЕЧИТ ОШИБКУ
-    if not hasattr(np, 'bool'):
-        np.bool = bool
+    if not hasattr(np, 'float'): np.float = np.float64
+    if not hasattr(np, 'int'): np.int = np.int64
+    if not hasattr(np, 'bool'): np.bool = bool
 
-# --- 2. NOW IMPORT LIBRARIES ---
+# --- 2. IMPORTS ---
 import librosa
 from scipy import signal
+import soundfile as sf
+import tempfile
 
 try:
     from madmom.features import RNNDownBeatProcessor
@@ -58,35 +55,39 @@ def get_rms_at_time(y, sr, time_sec, window_sec=0.05):
 
 def apply_filters(y, sr):
     # Bass: < 200 Hz
-    sos_bass = signal.butter(6, 200, 'low', fs=sr, output='sos')
-    y_bass = signal.sosfilt(sos_bass, y)
-    
-    # Mid: 200 - 5000 Hz
-    sos_mid = signal.butter(6, [200, 5000], 'band', fs=sr, output='sos')
-    y_mid = signal.sosfilt(sos_mid, y)
+    try:
+        sos_bass = signal.butter(6, 200, 'low', fs=sr, output='sos')
+        y_bass = signal.sosfilt(sos_bass, y)
+    except:
+        y_bass = y
 
-    # High (Percussion/Guira): > 5000 Hz
-    sos_high = signal.butter(6, 5000, 'high', fs=sr, output='sos')
-    y_high = signal.sosfilt(sos_high, y)
+    # Mid: 200 - 5000 Hz
+    try:
+        sos_mid = signal.butter(6, [200, 5000], 'band', fs=sr, output='sos')
+        y_mid = signal.sosfilt(sos_mid, y)
+    except:
+        y_mid = y
+
+    # High: > 5000 Hz
+    try:
+        sos_high = signal.butter(6, 5000, 'high', fs=sr, output='sos')
+        y_high = signal.sosfilt(sos_high, y)
+    except:
+        y_high = y
     
     return y_bass, y_mid, y_high
 
 def find_energy_drop_index(dossier):
     """
-    Ищет индекс, где начинается стабильный бас (The Drop).
-    Логика: Найти первый бит, где Bass > 0.45 (относительный) 
-    И следующие 3 бита тоже имеют Bass > 0.35 (чтобы исключить случайный всплеск).
+    Простой поиск дропа для отчета (визуально).
+    В анализаторе используется более сложная логика, здесь упрощенно для 'predicted_count'.
     """
     for i in range(len(dossier) - 4):
         curr = dossier[i]['features']['rel_bass']
-        # Проверяем "поддержку" следующими 3 битами (чтобы убедиться, что бас не пропал)
+        # Support logic
         support = sum(dossier[j]['features']['rel_bass'] for j in range(i+1, i+4)) / 3
-        
-        # Пороги подобраны эмпирически для бачаты
-        if curr > 0.40 and support > 0.35:
+        if curr > 0.45 and support > 0.35:
             return i
-            
-    # Если явного дропа нет, возвращаем 0 (начало трека)
     return 0
 
 # ==========================================
@@ -95,87 +96,100 @@ def find_energy_drop_index(dossier):
 
 def generate_sherlock_report(audio_path):
     print(f"[Sherlock] Analyzing: {audio_path}...", file=sys.stderr)
+    
+    # 1. Loading (Exactly as in Analyzer)
     y, sr = librosa.load(audio_path, sr=None, mono=True)
     
-    # Madmom Analysis
-    proc = RNNDownBeatProcessor()
-    act = proc(audio_path)
+    # 2. Madmom Analysis (Synced Logic)
+    # Используем временный файл, как в анализаторе, для надежности
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+    sf.write(tmp_path, y, sr)
     
-    # Используем FPS=100 (стандарт Madmom RNN)
-    rnn_fps = 100.0
-    
-    beat_processor = DBNBeatTrackingProcessor(fps=rnn_fps)
-    beat_times = beat_processor(act[:, 0])
-    
-    # Accurate BPM Calculation (Median)
-    if len(beat_times) > 1:
-        intervals = np.diff(beat_times)
-        median_interval = np.median(intervals)
-        bpm = int(round(60.0 / median_interval))
+    try:
+        proc = RNNDownBeatProcessor()
+        act = proc(tmp_path)
+        
+        # ВАЖНО: FPS=100 (Native) - как в analyze-track.py
+        rnn_fps = 100.0
+        
+        beat_processor = DBNBeatTrackingProcessor(fps=rnn_fps)
+        beat_times = beat_processor(act[:, 0])
+        # Преобразуем в список float сразу, как в анализаторе
+        all_beats = [float(b) for b in beat_times]
+        
+    finally:
+        try: os.unlink(tmp_path)
+        except: pass
+
+    # 3. BPM Calculation (STRICT MEAN)
+    if len(all_beats) > 1:
+        intervals = np.diff(all_beats)
+        avg_interval = np.mean(intervals) 
+        bpm = int(round(60.0 / avg_interval))
     else:
         bpm = 120
     
-    print(f"[Sherlock] BPM: {bpm}", file=sys.stderr)
+    print(f"[Sherlock] BPM (Strict Mean): {bpm}", file=sys.stderr)
 
-    # Filters
-    print(f"[Sherlock] Filtering audio frequencies...", file=sys.stderr)
+    # 4. Feature Extraction
+    print(f"[Sherlock] Extracting features...", file=sys.stderr)
     y_bass, y_mid, y_high = apply_filters(y, sr)
     
-    # Calculate Maxima for Normalization
-    raw_bass_vals = []
-    raw_mid_vals = []
-    raw_high_vals = []
-    raw_vol_vals = []
+    # Normalization Maxima
+    raw_bass = []
+    raw_mid = []
+    raw_high = []
+    raw_vol = []
     
-    for t in beat_times:
-        raw_bass_vals.append(get_rms_at_time(y_bass, sr, t))
-        raw_mid_vals.append(get_rms_at_time(y_mid, sr, t))
-        raw_high_vals.append(get_rms_at_time(y_high, sr, t))
-        raw_vol_vals.append(get_rms_at_time(y, sr, t))
+    for t in all_beats:
+        raw_bass.append(get_rms_at_time(y_bass, sr, t))
+        raw_mid.append(get_rms_at_time(y_mid, sr, t))
+        raw_high.append(get_rms_at_time(y_high, sr, t))
+        raw_vol.append(get_rms_at_time(y, sr, t))
         
-    max_bass = max(raw_bass_vals) if raw_bass_vals else 1.0
-    max_mid = max(raw_mid_vals) if raw_mid_vals else 1.0
-    max_high = max(raw_high_vals) if raw_high_vals else 1.0
-    max_vol = max(raw_vol_vals) if raw_vol_vals else 1.0
+    max_bass = max(raw_bass) if raw_bass and max(raw_bass) > 0 else 1.0
+    max_mid = max(raw_mid) if raw_mid and max(raw_mid) > 0 else 1.0
+    max_high = max(raw_high) if raw_high and max(raw_high) > 0 else 1.0
+    max_vol = max(raw_vol) if raw_vol and max(raw_vol) > 0 else 1.0
 
     # Build Dossier
     dossier = []
-    for i, t in enumerate(beat_times):
+    for i, t in enumerate(all_beats):
         frame = int(t * rnn_fps)
         madmom_prob = float(act[frame, 1]) if frame < len(act) else 0.0
         
         dossier.append({
             "index": i,
-            "time": round(float(t), 2),
+            "time": round(t, 3), # Округляем до 3 знаков, как в анализаторе
             "madmom_prob": round(madmom_prob, 4),
             "features": {
-                "rel_bass": round(raw_bass_vals[i] / max_bass, 4),
-                "rel_mid": round(raw_mid_vals[i] / max_mid, 4),
-                "rel_high": round(raw_high_vals[i] / max_high, 4),
-                "rel_vol": round(raw_vol_vals[i] / max_vol, 4)
+                "rel_bass": round(raw_bass[i] / max_bass, 4),
+                "rel_mid": round(raw_mid[i] / max_mid, 4),
+                "rel_high": round(raw_high[i] / max_high, 4),
+                "rel_vol": round(raw_vol[i] / max_vol, 4)
             }
         })
 
-    # Predict The Drop (Anchor Point)
+    # Drop Detection (Simplified for display)
     drop_index = find_energy_drop_index(dossier)
-    print(f"[Sherlock] Detected Drop at Index: {drop_index} (Time: {dossier[drop_index]['time']}s)", file=sys.stderr)
     
-    # Calculate Predicted Counts relative to the Drop
-    # Drop index is ALWAYS considered Count 1 of a Phrase
+    # Structural Stats
+    total_beats = len(dossier)
+    total_eights = total_beats / 8.0
+
+    # Counts prediction
     for item in dossier:
-        # Расстояние от дропа в битах
         dist = item['index'] - drop_index
-        
-        # Математика счета 1-8
-        # Если dist = 0 -> (0 % 8) + 1 = 1
-        # Если dist = -1 -> (-1 % 8) + 1 = 7 + 1 = 8 (Работает верно!)
-        # Если dist = -4 -> (-4 % 8) + 1 = 4 + 1 = 5
         count_1_8 = (dist % 8) + 1
-        
         item['predicted_count'] = count_1_8
 
     report = {
         "bpm": bpm,
+        "structure": {
+            "total_beats": total_beats,
+            "total_eights": round(total_eights, 2)
+        },
         "predicted_drop_index": drop_index,
         "predicted_drop_time": dossier[drop_index]['time'] if dossier else 0,
         "baselines": {
@@ -189,11 +203,10 @@ def generate_sherlock_report(audio_path):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python generate-sherlock.py <audio_file> [output_file]", file=sys.stderr)
+        print("Usage: python debug-rhythm.py <audio_file> [output_file]", file=sys.stderr)
         sys.exit(1)
     
     audio_path = sys.argv[1]
-    # Автоматическое имя выходного файла, если не задано
     if len(sys.argv) >= 3:
         output_path = sys.argv[2]
     else:
@@ -208,8 +221,6 @@ def main():
         print(f"Report saved: {output_path}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == '__main__':
