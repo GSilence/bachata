@@ -122,9 +122,8 @@ export default function BeatCounter({
             {isPlaying ? (
               <div
                 onClick={handleNumberClick}
-                className="text-white text-center cursor-pointer"
+                className="text-white text-center cursor-pointer text-[20rem] md:text-[clamp(4rem,20vw,15rem)]"
                 style={{
-                  fontSize: "clamp(4rem, 20vw, 15rem)",
                   fontWeight: "bold",
                   textShadow: "0 0 40px rgba(192, 132, 252, 0.8)",
                 }}
@@ -134,19 +133,12 @@ export default function BeatCounter({
             ) : (
               <div
                 onClick={handleNumberClick}
-                className="text-white text-center cursor-pointer hover:text-purple-400 transition-colors"
-                style={{
-                  fontSize: "clamp(4rem, 20vw, 15rem)",
-                }}
+                className="text-white text-center cursor-pointer hover:text-purple-400 transition-colors w-[20rem] h-[20rem] md:w-[clamp(4rem,20vw,15rem)] md:h-[clamp(4rem,20vw,15rem)]"
               >
                 <svg
                   className="w-full h-full"
                   fill="currentColor"
                   viewBox="0 0 20 20"
-                  style={{
-                    maxWidth: "clamp(4rem, 20vw, 15rem)",
-                    maxHeight: "clamp(4rem, 20vw, 15rem)",
-                  }}
                 >
                   <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
                 </svg>

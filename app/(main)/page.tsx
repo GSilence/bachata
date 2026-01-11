@@ -334,7 +334,7 @@ export default function PlaybackPage() {
               </div>
 
               <div
-                className="bg-gray-800 rounded-lg p-12 border border-gray-700"
+                className="bg-gray-800 rounded-lg py-8 px-4 md:p-12 border border-gray-700"
                 data-block="beat-counter"
               >
                 {isClient ? (
