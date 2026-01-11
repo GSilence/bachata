@@ -34,3 +34,8 @@ body {
   background: rgb(107, 114, 128); /* gray-500 */
 }
 
+/* Hide scrollbar for playlist */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+

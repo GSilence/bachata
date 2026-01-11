@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
 import { usePlayerStore } from '@/store/playerStore'
 import type { Track } from '@/types'
 
@@ -18,9 +17,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     setSearchQuery,
   } = usePlayerStore()
   
-  const activeTrackRef = useRef<HTMLButtonElement | null>(null)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-
   // Фильтрация треков
   const filteredTracks = (Array.isArray(tracks) ? tracks : []).filter((track) => {
     // Фильтр по типу
@@ -39,35 +35,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
     return true
   })
-
-  // Автоматическая прокрутка к активному треку
-  useEffect(() => {
-    if (activeTrackRef.current && containerRef.current) {
-      const container = containerRef.current
-      const activeElement = activeTrackRef.current
-      
-      // Вычисляем позицию активного элемента относительно контейнера
-      const containerTop = container.scrollTop
-      const containerBottom = containerTop + container.clientHeight
-      const elementTop = activeElement.offsetTop
-      const elementBottom = elementTop + activeElement.offsetHeight
-      
-      // Прокручиваем только если элемент не виден
-      if (elementTop < containerTop) {
-        // Элемент выше видимой области
-        container.scrollTo({
-          top: elementTop - 10, // Небольшой отступ сверху
-          behavior: 'smooth'
-        })
-      } else if (elementBottom > containerBottom) {
-        // Элемент ниже видимой области
-        container.scrollTo({
-          top: elementBottom - container.clientHeight + 10, // Небольшой отступ снизу
-          behavior: 'smooth'
-        })
-      }
-    }
-  }, [currentTrack, filteredTracks])
 
   return (
     <div className="space-y-4">
@@ -112,8 +79,12 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
       {/* Список треков */}
       <div 
-        ref={containerRef}
-        className="space-y-2 max-h-96 overflow-y-auto"
+        className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide"
+        data-block="playlist"
+        style={{
+          scrollbarWidth: 'none', /* Firefox */
+          msOverflowStyle: 'none', /* IE and Edge */
+        }}
       >
         {tracks.length === 0 ? (
           <div className="text-center py-8">
@@ -128,7 +99,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
             return (
               <button
                 key={track.id}
-                ref={isActive ? activeTrackRef : null}
                 onClick={() => onTrackSelect(track)}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
                   isActive
@@ -144,14 +114,11 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                     {track.artist}
                   </div>
                 )}
-                <div className={`text-xs mt-1 ${isActive ? 'text-purple-200' : 'text-gray-500'}`}>
-                  BPM: {track.bpm} • {track.isFree ? 'Free' : 'Pro'}
-                  {track.isProcessed && (
-                    <span className="ml-2 text-green-400" title="Stems обработаны">
-                      🎵
-                    </span>
-                  )}
-                </div>
+                {track.isProcessed && (
+                  <span className="text-xs text-green-400 mt-1 inline-block" title="Stems обработаны">
+                    🎵
+                  </span>
+                )}
               </button>
             )
           })

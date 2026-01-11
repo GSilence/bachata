@@ -92,13 +92,11 @@ export default function TrackInfo({}: TrackInfoProps) {
       </div>
 
       {/* Параметры */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* BPM */}
-        <div>
-          <label className="block text-sm font-medium text-gray-400 mb-2">
-            BPM
-          </label>
+      <div className="space-y-2">
+        {/* BPM и Offset в одну строку */}
+        <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-400">BPM:</span>
             {editingBpm ? (
               <>
                 <input
@@ -163,19 +161,9 @@ export default function TrackInfo({}: TrackInfoProps) {
               </>
             )}
           </div>
-          {currentTrack.baseBpm && (
-            <p className="text-xs text-gray-500 mt-1">
-              Базовое: {currentTrack.baseBpm}
-            </p>
-          )}
-        </div>
 
-        {/* Offset */}
-        <div>
-          <label className="block text-sm font-medium text-gray-400 mb-2">
-            Offset
-          </label>
           <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-400">Offset:</span>
             {editingOffset ? (
               <>
                 <input
@@ -243,12 +231,6 @@ export default function TrackInfo({}: TrackInfoProps) {
               </>
             )}
           </div>
-          {currentTrack.baseOffset !== null &&
-            currentTrack.baseOffset !== undefined && (
-              <p className="text-xs text-gray-500 mt-1">
-                Базовое: {currentTrack.baseOffset.toFixed(2)}s
-              </p>
-            )}
         </div>
       </div>
     </div>

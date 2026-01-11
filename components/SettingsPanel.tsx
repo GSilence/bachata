@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { usePlayerStore } from '@/store/playerStore'
 import type { PlayMode, VoiceFilter } from '@/types'
 
@@ -10,6 +11,8 @@ interface SettingsPanelProps {
 
 export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }: SettingsPanelProps = {}) {
   const { playMode, voiceFilter, setPlayMode, setVoiceFilter } = usePlayerStore()
+  const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false)
+  const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false)
 
   const playModes: { value: PlayMode; label: string }[] = [
     { value: 'sequential', label: 'Sequential (По порядку)' },
@@ -33,10 +36,17 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
       {/* Mode Selection */}
       {(!showOnlyVoiceFilter || showOnlyPlayMode) && (
         <div data-setting="play-mode">
-          <label className="block text-sm font-medium text-gray-400 mb-2">
+          <button
+            onClick={() => setIsPlayModeExpanded(!isPlayModeExpanded)}
+            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-2 py-2 hover:text-white transition-colors"
+          >
+            <span>Mode (Режим воспроизведения)</span>
+            <span className="text-lg">{isPlayModeExpanded ? '−' : '+'}</span>
+          </button>
+          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-2">
             Mode (Режим воспроизведения)
           </label>
-          <div className="space-y-2">
+          <div className={`space-y-2 ${!isPlayModeExpanded ? 'hidden lg:block' : ''}`}>
             {playModes.map((mode) => (
               <label 
                 key={mode.value} 
@@ -61,10 +71,17 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
       {/* Voice Filter Selection */}
       {(!showOnlyPlayMode || showOnlyVoiceFilter) && (
         <div data-setting="voice-filter">
-          <label className="block text-sm font-medium text-gray-400 mb-2">
+          <button
+            onClick={() => setIsVoiceFilterExpanded(!isVoiceFilterExpanded)}
+            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-2 py-2 hover:text-white transition-colors"
+          >
+            <span>Voice Filter (Режим озвучки)</span>
+            <span className="text-lg">{isVoiceFilterExpanded ? '−' : '+'}</span>
+          </button>
+          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-2">
             Voice Filter (Режим озвучки)
           </label>
-          <div className="space-y-2">
+          <div className={`space-y-2 ${!isVoiceFilterExpanded ? 'hidden lg:block' : ''}`}>
             {voiceFilters.map((filter) => (
               <label 
                 key={filter.value} 

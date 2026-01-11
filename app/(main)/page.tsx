@@ -32,7 +32,9 @@ export default function PlaybackPage() {
 
   const [isClient, setIsClient] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
-  const [hasStarted, setHasStarted] = useState(false); // Флаг начала первого бита
+  const [beatCounterMode, setBeatCounterMode] = useState<
+    "inline" | "fullscreen"
+  >("inline");
 
   // Проверяем, что мы на клиенте
   useEffect(() => {
@@ -55,7 +57,8 @@ export default function PlaybackPage() {
       setAudioEngine(audioEngine);
 
       // Устанавливаем все восстановленные настройки из store
-      const { musicVolume, voiceVolume, voiceFilter } = usePlayerStore.getState();
+      const { musicVolume, voiceVolume, voiceFilter } =
+        usePlayerStore.getState();
       audioEngine.setMusicVolume(musicVolume);
       audioEngine.setVoiceVolume(voiceVolume);
       audioEngine.setVoiceFilter(voiceFilter);
@@ -185,37 +188,16 @@ export default function PlaybackPage() {
     // Устанавливаем callback для обновления бита
     audioEngine.setOnBeatUpdate((beatNumber) => {
       setCurrentBeat(beatNumber);
-      setHasStarted(true); // Первый бит начался
     });
 
     // Также обновляем при загрузке трека
     const initialBeat = audioEngine.getCurrentBeat();
     setCurrentBeat(initialBeat);
-    
-    // Проверяем, начался ли уже первый бит (если трек уже играет)
-    // Используем setTimeout, чтобы дать время audioEngine обновиться
-    const checkHasStarted = () => {
-      const currentTime = audioEngine.getCurrentTime();
-      if (currentTrack?.gridMap) {
-        const offset = currentTrack.gridMap.offset || 0;
-        setHasStarted(currentTime >= offset && currentTime > 0);
-      } else if (currentTrack?.offset !== undefined) {
-        const offset = currentTrack.offset || 0;
-        setHasStarted(currentTime >= offset && currentTime > 0);
-      } else {
-        setHasStarted(false);
-      }
-    };
-    
-    // Проверяем сразу и через небольшую задержку (на случай, если трек только загружается)
-    checkHasStarted();
-    const timeoutId = setTimeout(checkHasStarted, 100);
 
     return () => {
-      clearTimeout(timeoutId);
       audioEngine.setOnBeatUpdate(null);
     };
-  }, [isClient, currentTrack]);
+  }, [isClient]);
 
   // Синхронизация voiceFilter с audioEngine
   useEffect(() => {
@@ -241,14 +223,12 @@ export default function PlaybackPage() {
 
   const handleStop = () => {
     stop(); // Используем метод из store (он сам обновит isPlaying и currentTime)
-    setHasStarted(false); // Сбрасываем флаг начала счета
   };
 
   const handleTrackSelect = (track: Track) => {
     // Use store's loadTrack which includes mandatory Stop logic
     loadTrack(track);
     stop(); // Stop playback when manually selecting track
-    setHasStarted(false); // Сбрасываем флаг начала счета при выборе нового трека
     // Сохраняем выбранный трек в localStorage (только ID, не весь объект)
     if (typeof window !== "undefined") {
       try {
@@ -319,8 +299,6 @@ export default function PlaybackPage() {
   return (
     <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-4 sm:mb-6 lg:mb-8 pl-12 lg:pl-0">Воспроизведение</h1>
-
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* Основная секция - слева */}
           <div className="lg:col-span-2 space-y-6">
@@ -330,17 +308,50 @@ export default function PlaybackPage() {
             </div>
 
             {/* Визуализация счета */}
-            <div
-              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
-              data-block="beat-counter"
-            >
-              {isClient ? (
-                <BeatCounter currentBeat={currentBeat - 1} hasStarted={hasStarted} />
-              ) : (
-                <div className="text-center py-8 text-gray-400">
-                  Загрузка...
-                </div>
-              )}
+            <div className="space-y-4">
+              {/* Кнопки переключения режима - как закладки */}
+              <div className="flex gap-2 border-b border-gray-700">
+                <button
+                  onClick={() => setBeatCounterMode("inline")}
+                  className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+                    beatCounterMode === "inline"
+                      ? "border-purple-600 text-purple-400"
+                      : "border-transparent text-gray-400 hover:text-purple-400"
+                  }`}
+                >
+                  В строке
+                </button>
+                <button
+                  onClick={() => setBeatCounterMode("fullscreen")}
+                  className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+                    beatCounterMode === "fullscreen"
+                      ? "border-purple-600 text-purple-400"
+                      : "border-transparent text-gray-400 hover:text-purple-400"
+                  }`}
+                >
+                  Во весь экран
+                </button>
+              </div>
+
+              <div
+                className="bg-gray-800 rounded-lg p-12 border border-gray-700"
+                data-block="beat-counter"
+              >
+                {isClient ? (
+                  <BeatCounter
+                    currentBeat={currentBeat - 1}
+                    onPlay={handlePlay}
+                    onPause={handlePause}
+                    onStop={handleStop}
+                    displayMode={beatCounterMode}
+                    onDisplayModeChange={setBeatCounterMode}
+                  />
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    Загрузка...
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Управление воспроизведением */}
@@ -374,7 +385,7 @@ export default function PlaybackPage() {
               <div
                 className="bg-gray-800 rounded-lg border border-gray-700"
                 data-block="stems-control"
-                style={{ display: 'none' }}
+                style={{ display: "none" }}
               >
                 <StemsControl />
               </div>
