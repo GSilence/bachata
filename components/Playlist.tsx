@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect, useRef } from 'react'
 import { usePlayerStore } from '@/store/playerStore'
 import type { Track } from '@/types'
 
@@ -17,6 +18,9 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     setSearchQuery,
   } = usePlayerStore()
   
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [showScrollIndicator, setShowScrollIndicator] = useState(false)
+
   // Фильтрация треков
   const filteredTracks = (Array.isArray(tracks) ? tracks : []).filter((track) => {
     // Фильтр по типу
@@ -35,6 +39,40 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
     return true
   })
+
+  // Проверяем, есть ли прокрутка
+  useEffect(() => {
+    const checkScroll = () => {
+      if (scrollContainerRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
+        // Показываем индикатор, если есть контент ниже видимой области
+        setShowScrollIndicator(scrollTop + clientHeight < scrollHeight - 10)
+      }
+    }
+
+    checkScroll()
+    const container = scrollContainerRef.current
+    if (container) {
+      container.addEventListener('scroll', checkScroll)
+      // Проверяем при изменении размера или содержимого
+      const resizeObserver = new ResizeObserver(checkScroll)
+      resizeObserver.observe(container)
+      
+      return () => {
+        container.removeEventListener('scroll', checkScroll)
+        resizeObserver.disconnect()
+      }
+    }
+  }, [filteredTracks])
+
+  const scrollToBottom = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      })
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -79,7 +117,8 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
       {/* Список треков */}
       <div 
-        className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide"
+        ref={scrollContainerRef}
+        className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide relative"
         data-block="playlist"
         style={{
           scrollbarWidth: 'none', /* Firefox */
@@ -122,6 +161,31 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
               </button>
             )
           })
+        )}
+        
+        {/* Индикатор прокрутки */}
+        {showScrollIndicator && (
+          <div
+            onClick={scrollToBottom}
+            className="sticky bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-gray-800/90 to-transparent cursor-pointer hover:from-gray-800/95 transition-opacity"
+          >
+            <div className="flex flex-col items-center gap-1 text-gray-400 hover:text-purple-400 transition-colors">
+              <span className="text-xs">Прокрутить вниз</span>
+              <svg
+                className="w-5 h-5 animate-bounce"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 14l-7 7m0 0l-7-7m7 7V3"
+                />
+              </svg>
+            </div>
+          </div>
         )}
       </div>
     </div>
