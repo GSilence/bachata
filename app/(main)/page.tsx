@@ -374,7 +374,7 @@ export default function PlaybackPage() {
 
             {/* Режим озвучки (под Voice Volume) */}
             <div
-              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              className="bg-gray-800 rounded-lg py-2 px-6 lg:p-6 border border-gray-700"
               data-block="voice-filter"
             >
               <SettingsPanel showOnlyVoiceFilter />
@@ -396,7 +396,7 @@ export default function PlaybackPage() {
           <div className="space-y-4 sm:space-y-6" data-block="sidebar">
             {/* Плейлист и настройки воспроизведения */}
             <div
-              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
+              className="bg-gray-800 rounded-lg pt-2 pb-2 px-6 lg:p-6 border border-gray-700"
               data-block="play-mode"
             >
               <SettingsPanel showOnlyPlayMode />

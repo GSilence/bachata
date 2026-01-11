@@ -1,31 +1,35 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { usePlayerStore } from '@/store/playerStore'
-import type { PlayMode, VoiceFilter } from '@/types'
+import { useState } from "react";
+import { usePlayerStore } from "@/store/playerStore";
+import type { PlayMode, VoiceFilter } from "@/types";
 
 interface SettingsPanelProps {
-  showOnlyVoiceFilter?: boolean
-  showOnlyPlayMode?: boolean
+  showOnlyVoiceFilter?: boolean;
+  showOnlyPlayMode?: boolean;
 }
 
-export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }: SettingsPanelProps = {}) {
-  const { playMode, voiceFilter, setPlayMode, setVoiceFilter } = usePlayerStore()
-  const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false)
-  const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false)
+export default function SettingsPanel({
+  showOnlyVoiceFilter,
+  showOnlyPlayMode,
+}: SettingsPanelProps = {}) {
+  const { playMode, voiceFilter, setPlayMode, setVoiceFilter } =
+    usePlayerStore();
+  const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
+  const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false);
 
   const playModes: { value: PlayMode; label: string }[] = [
-    { value: 'sequential', label: 'Sequential (По порядку)' },
-    { value: 'random', label: 'Random (Случайно)' },
-    { value: 'loop', label: 'Loop (Один трек)' },
-  ]
+    { value: "sequential", label: "Sequential (По порядку)" },
+    { value: "random", label: "Random (Случайно)" },
+    { value: "loop", label: "Loop (Один трек)" },
+  ];
 
   const voiceFilters: { value: VoiceFilter; label: string }[] = [
-    { value: 'mute', label: 'Mute (Только музыка)' },
-    { value: 'on1', label: 'On 1 (Голос говорит "One" на первую долю)' },
-    { value: 'on1and5', label: 'On 1 & 5 (Голос говорит "One" и "Five")' },
-    { value: 'full', label: 'Full (Счет 1-8)' },
-  ]
+    { value: "mute", label: "Mute (Только музыка)" },
+    { value: "on1", label: 'On 1 (Голос говорит "One" на первую долю)' },
+    { value: "on1and5", label: 'On 1 & 5 (Голос говорит "One" и "Five")' },
+    { value: "full", label: "Full (Счет 1-8)" },
+  ];
 
   return (
     <div className="space-y-6" data-component="settings-panel">
@@ -38,18 +42,22 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
         <div data-setting="play-mode">
           <button
             onClick={() => setIsPlayModeExpanded(!isPlayModeExpanded)}
-            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-2 py-2 hover:text-white transition-colors"
+            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-0 lg:mb-2 hover:text-white transition-colors"
           >
             <span>Mode (Режим воспроизведения)</span>
-            <span className="text-lg">{isPlayModeExpanded ? '−' : '+'}</span>
+            <span className="text-lg">{isPlayModeExpanded ? "−" : "+"}</span>
           </button>
-          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-2">
+          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-4">
             Mode (Режим воспроизведения)
           </label>
-          <div className={`space-y-2 ${!isPlayModeExpanded ? 'hidden lg:block' : ''}`}>
+          <div
+            className={`space-y-2 pt-4 pb-2 lg:pt-0 lg:pb-0 ${
+              !isPlayModeExpanded ? "hidden lg:block" : ""
+            }`}
+          >
             {playModes.map((mode) => (
-              <label 
-                key={mode.value} 
+              <label
+                key={mode.value}
                 className="flex items-center cursor-pointer hover:text-white"
                 data-option={mode.value}
               >
@@ -73,18 +81,22 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
         <div data-setting="voice-filter">
           <button
             onClick={() => setIsVoiceFilterExpanded(!isVoiceFilterExpanded)}
-            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-2 py-2 hover:text-white transition-colors"
+            className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-0 lg:mb-2 hover:text-white transition-colors"
           >
             <span>Voice Filter (Режим озвучки)</span>
-            <span className="text-lg">{isVoiceFilterExpanded ? '−' : '+'}</span>
+            <span className="text-lg">{isVoiceFilterExpanded ? "−" : "+"}</span>
           </button>
-          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-2">
+          <label className="hidden lg:block text-sm font-medium text-gray-400 mb-4">
             Voice Filter (Режим озвучки)
           </label>
-          <div className={`space-y-2 ${!isVoiceFilterExpanded ? 'hidden lg:block' : ''}`}>
+          <div
+            className={`space-y-2 pt-4 pb-2 lg:pt-0 lg:pb-0 ${
+              !isVoiceFilterExpanded ? "hidden lg:block" : ""
+            }`}
+          >
             {voiceFilters.map((filter) => (
-              <label 
-                key={filter.value} 
+              <label
+                key={filter.value}
                 className="flex items-center cursor-pointer hover:text-white"
                 data-option={filter.value}
               >
@@ -103,6 +115,5 @@ export default function SettingsPanel({ showOnlyVoiceFilter, showOnlyPlayMode }:
         </div>
       )}
     </div>
-  )
+  );
 }
-
