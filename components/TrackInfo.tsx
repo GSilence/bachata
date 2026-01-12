@@ -2,17 +2,21 @@
 
 import { useState, useEffect } from "react";
 import { usePlayerStore } from "@/store/playerStore";
+import { useRouter } from "next/navigation";
 
 interface TrackInfoProps {}
 
 export default function TrackInfo({}: TrackInfoProps) {
-  const { currentTrack, setCurrentTrack } = usePlayerStore();
+  const { currentTrack, setCurrentTrack, tracks, setTracks, stop } =
+    usePlayerStore();
+  const router = useRouter();
   const [editingBpm, setEditingBpm] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
   const [tempBpm, setTempBpm] = useState(currentTrack?.bpm.toString() || "120");
   const [tempOffset, setTempOffset] = useState(
     currentTrack?.offset.toString() || "0"
   );
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Обновляем временные значения при смене трека
   useEffect(() => {
@@ -76,19 +80,107 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
+  const handleDelete = async () => {
+    if (!currentTrack || isDeleting) return;
+
+    // Подтверждение удаления
+    if (
+      !confirm(
+        `Вы уверены, что хотите удалить трек "${currentTrack.title}"? Это действие нельзя отменить.`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeleting(true);
+
+    try {
+      // Останавливаем воспроизведение если удаляется текущий трек
+      stop();
+
+      // Удаляем трек через API
+      const response = await fetch(`/api/tracks/${currentTrack.id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to delete track");
+      }
+
+      // Удаляем трек из списка в store
+      const updatedTracks = tracks.filter((t) => t.id !== currentTrack.id);
+      setTracks(updatedTracks);
+
+      // Очищаем currentTrack если удалили текущий
+      setCurrentTrack(null);
+
+      // Обновляем страницу для перезагрузки списка треков
+      router.refresh();
+    } catch (error) {
+      console.error("Error deleting track:", error);
+      alert(
+        `Ошибка при удалении трека: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
-    <div 
+    <div
       className="bg-gray-800 rounded-lg p-4 sm:p-6 border border-gray-700"
       data-component="track-info"
     >
       {/* Название и исполнитель */}
-      <div className="mb-4 sm:mb-6">
-        <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">
-          {currentTrack.title}
-        </h2>
-        {currentTrack.artist && (
-          <p className="text-gray-400">{currentTrack.artist}</p>
-        )}
+      <div className="mb-4 sm:mb-6 flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">
+            {currentTrack.title}
+          </h2>
+          {currentTrack.artist && (
+            <p className="text-gray-400">{currentTrack.artist}</p>
+          )}
+        </div>
+        <button
+          onClick={handleDelete}
+          disabled={isDeleting}
+          className="p-2 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Удалить трек"
+          aria-label="Удалить трек"
+        >
+          {isDeleting ? (
+            <svg
+              className="w-5 h-5 animate-spin"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          ) : (
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          )}
+        </button>
       </div>
 
       {/* Параметры */}

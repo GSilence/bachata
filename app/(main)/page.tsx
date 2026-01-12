@@ -229,71 +229,7 @@ export default function PlaybackPage() {
     // Use store's loadTrack which includes mandatory Stop logic
     loadTrack(track);
     stop(); // Stop playback when manually selecting track
-    // Сохраняем выбранный трек в localStorage (только ID, не весь объект)
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("player-storage");
-        let parsed: { state?: { savedTrackId?: number } } = { state: {} };
-
-        if (stored) {
-          // Проверяем, что это валидная JSON строка, а не [object Object]
-          // localStorage.getItem всегда возвращает string | null, но может быть "[object Object]"
-          if (
-            stored === "[object Object]" ||
-            stored.trim() === "[object Object]"
-          ) {
-            console.warn(
-              "localStorage содержит невалидные данные '[object Object]', очищаем..."
-            );
-            try {
-              localStorage.removeItem("player-storage");
-            } catch (clearError) {
-              console.error(
-                "Failed to clear corrupted localStorage:",
-                clearError
-              );
-            }
-            parsed = { state: {} };
-          } else {
-            try {
-              parsed = JSON.parse(stored);
-            } catch (parseError) {
-              // localStorage corruption detected - clear it and start fresh
-              console.error(
-                "localStorage corruption in handleTrackSelect, clearing:",
-                parseError
-              );
-              try {
-                localStorage.removeItem("player-storage");
-              } catch (clearError) {
-                console.error(
-                  "Failed to clear corrupted localStorage:",
-                  clearError
-                );
-              }
-              parsed = { state: {} };
-            }
-          }
-        }
-
-        // Ensure state object exists
-        if (!parsed.state) {
-          parsed.state = {};
-        }
-
-        // Save only the track ID (not the entire track object)
-        parsed.state.savedTrackId = track.id;
-        localStorage.setItem("player-storage", JSON.stringify(parsed));
-      } catch (e) {
-        console.warn("Failed to save track to storage:", e);
-        // Try to clear corrupted storage
-        try {
-          localStorage.removeItem("player-storage");
-        } catch (clearError) {
-          console.error("Failed to clear corrupted localStorage:", clearError);
-        }
-      }
-    }
+    // Zustand persist автоматически сохранит savedTrackId через partialize функцию
   };
 
   return (

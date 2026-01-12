@@ -408,13 +408,13 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
     const stored = trackStorage.getItem("player-storage");
     if (!stored) return null;
 
-    // Проверяем, что это валидная JSON строка, а не [object Object]
-    if (typeof stored !== "string" || stored === "[object Object]") {
-      console.warn("localStorage содержит невалидные данные, очищаем...");
+    // Проверяем, что это валидная JSON строка
+    if (typeof stored !== "string") {
+      // Если это не строка, значит что-то не так - очищаем
       try {
         trackStorage.removeItem("player-storage");
-      } catch (clearError) {
-        console.error("Failed to clear corrupted localStorage:", clearError);
+      } catch {
+        // Игнорируем ошибки очистки
       }
       return null;
     }
@@ -422,16 +422,12 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
     let parsed;
     try {
       parsed = JSON.parse(stored);
-    } catch (parseError) {
-      // localStorage corruption detected - clear it to prevent crash loop
-      console.error(
-        "localStorage corruption detected, clearing 'player-storage':",
-        parseError
-      );
+    } catch {
+      // Если не удалось распарсить - очищаем поврежденные данные
       try {
         trackStorage.removeItem("player-storage");
-      } catch (clearError) {
-        console.error("Failed to clear corrupted localStorage:", clearError);
+      } catch {
+        // Игнорируем ошибки очистки
       }
       return null;
     }
@@ -439,17 +435,14 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
     // Zustand persist сохраняет данные в формате { state: { ... }, version: ... }
     const savedTrackId = parsed?.state?.savedTrackId;
 
-    if (savedTrackId) {
+    if (savedTrackId && typeof savedTrackId === "number") {
       const track = tracks.find((t) => t.id === savedTrackId);
       return track || null;
     }
   } catch (error) {
-    console.warn("Failed to restore track from storage:", error);
-    // If any other error occurs, try to clear the corrupted data
-    try {
-      trackStorage.removeItem("player-storage");
-    } catch (clearError) {
-      console.error("Failed to clear corrupted localStorage:", clearError);
+    // Тихо игнорируем ошибки восстановления
+    if (process.env.NODE_ENV === "development") {
+      console.warn("Failed to restore track from storage:", error);
     }
   }
 
