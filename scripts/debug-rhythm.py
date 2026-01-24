@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
-Sherlock ver-2.01 (Atomic Inspector + Delta & HPSS)
-- Logic:
-  1. NO Grid Construction. Pure Data Extraction.
-  2. Features:
-     - 3-Band Energy (Low, Mid, High)
-     - Madmom RNN Probabilities
-     - NEW: Total Energy (Full Mix)
-     - NEW: HPSS (Harmonic vs Percussive separation)
-     - NEW: Delta % (Change relative to previous beat)
+Sherlock v2.06 (Phantom Filter)
+- Logic Fix: Added 'Phantom Beat' check for the calculated start.
+  If the start beat has very low Madmom Score (< 0.1) AND low Stability,
+  we assume it's noise/artifact and shift to the next grid point.
 """
 
 import sys
@@ -22,7 +17,7 @@ import uuid
 import collections
 import collections.abc
 
-# --- COMPATIBILITY FIXES ---
+# ... (Imports and Signal Processing helpers remain same as v2.05) ...
 if sys.version_info >= (3, 10):
     if not hasattr(collections, 'MutableSequence'):
         collections.MutableSequence = collections.abc.MutableSequence
@@ -43,47 +38,28 @@ except ImportError as e:
     print(f"Error: madmom is required. ({e})", file=sys.stderr)
     sys.exit(1)
 
-# ==========================================
-# SIGNAL PROCESSING TOOLS
-# ==========================================
-
-def get_rms_from_chunk(chunk):
-    """Safe RMS calculation for a small audio array."""
+def get_rms(chunk):
     if len(chunk) == 0: return 0.0
     return float(np.sqrt(np.mean(chunk**2)))
 
 def get_band_energy(y, sr, time_sec, freq_range, window_sec=0.1):
-    """
-    Extracts a chunk, filters it (if needed), returns RMS.
-    freq_range: (low, high). Pass None to skip a bound.
-    """
     half_window = int((window_sec * sr) / 2)
     center_sample = int(time_sec * sr)
     start = max(0, center_sample - half_window)
     end = min(len(y), center_sample + half_window)
-    
     if start >= end: return 0.0
     chunk = y[start:end]
-    
-    # Too short to filter reliably? Return raw.
-    if len(chunk) < 100: 
-        return get_rms_from_chunk(chunk)
-
-    # Filter design
+    if len(chunk) < 100: return get_rms(chunk)
     sos = None
-    if freq_range[0] is not None and freq_range[1] is not None:
+    if freq_range[0] and freq_range[1]:
         sos = signal.butter(4, [freq_range[0], freq_range[1]], btype='band', fs=sr, output='sos')
-    elif freq_range[0] is not None:
+    elif freq_range[0]:
         sos = signal.butter(4, freq_range[0], btype='high', fs=sr, output='sos')
-    elif freq_range[1] is not None:
+    elif freq_range[1]:
         sos = signal.butter(4, freq_range[1], btype='low', fs=sr, output='sos')
-        
     if sos is not None:
-        filtered_chunk = signal.sosfilt(sos, chunk)
-        return get_rms_from_chunk(filtered_chunk)
-    else:
-        # No filter requested -> Raw Energy
-        return get_rms_from_chunk(chunk)
+        return get_rms(signal.sosfilt(sos, chunk))
+    return get_rms(chunk)
 
 def get_spectral_flatness(y, sr, time_sec, window_sec=0.1):
     half_window = int((window_sec * sr) / 2)
@@ -91,211 +67,210 @@ def get_spectral_flatness(y, sr, time_sec, window_sec=0.1):
     start = max(0, center_sample - half_window)
     end = min(len(y), center_sample + half_window)
     if start >= end: return 0.0
-    
     chunk = y[start:end]
     n_fft = min(512, len(chunk))
     if n_fft == 0: return 0.0
-    flatness = librosa.feature.spectral_flatness(y=chunk, n_fft=n_fft)
-    return float(np.mean(flatness))
+    return float(np.mean(librosa.feature.spectral_flatness(y=chunk, n_fft=n_fft)))
 
 def get_chunk_at_time(y, sr, time_sec, window_sec=0.1):
-    """Helper to just get the raw audio chunk at time t."""
     half_window = int((window_sec * sr) / 2)
     center_sample = int(time_sec * sr)
     start = max(0, center_sample - half_window)
     end = min(len(y), center_sample + half_window)
     return y[start:end]
 
-# ==========================================
-# MAIN INVESTIGATION LOGIC
-# ==========================================
-
-def process_audio_file(audio_path, output_path=None):
+def analyze_track(audio_path, output_path=None):
     if not output_path:
         base, _ = os.path.splitext(audio_path)
-        output_path = base + "_sherlock_2.01.json"
+        output_path = base + "_sherlock_v2.06.json"
         
-    print(f"\n[Sherlock ver-2.01] 🔍 Inspecting: {os.path.basename(audio_path)}")
+    print(f"\n[Sherlock v2.06] 👻 Phantom Filter: {os.path.basename(audio_path)}")
     
     tmp_filename = f"sherlock_{uuid.uuid4().hex}.wav"
     tmp_path = os.path.join(tempfile.gettempdir(), tmp_filename)
     
     try:
-        # 1. LOAD AUDIO
         y, sr = librosa.load(audio_path, sr=None, mono=True)
         duration = librosa.get_duration(y=y, sr=sr)
-        
-        # 1.1 HPSS DECOMPOSITION (New Feature)
-        # Separating Harmonic (Melody/Bass) from Percussive (Beats/Clicks)
-        print(f"[Sherlock] Running Harmonic-Percussive Separation...")
         y_harm, y_perc = librosa.effects.hpss(y, margin=1.0)
         
-        # 2. MADMOM ANALYSIS
-        print(f"[Sherlock] Running Neural Networks...")
         sf.write(tmp_path, y, sr)
-        
         rnn_proc = RNNDownBeatProcessor()
         activations = rnn_proc(tmp_path) 
-        
         beat_proc = DBNBeatTrackingProcessor(fps=100)
         beat_times = beat_proc(activations[:, 0])
-        
         all_beats = [float(b) for b in beat_times]
         
-        if not all_beats:
-            print("[Error] No beats detected.")
-            return
+        if not all_beats: return
 
-        # 3. FORENSIC ANALYSIS PER BEAT
-        print(f"[Sherlock] Examining {len(all_beats)} beats with extended metrics...")
+        beats_data = []
+        prev_stats = {"low": 0.0, "mid": 0.0, "high": 0.0, "total": 0.0}
         
-        raw_data = []
-        
-        # Keep track of previous beat stats for "Delta" calculation
-        prev_stats = {
-            "low": 0.0, "mid": 0.0, "high": 0.0, "total": 0.0
-        }
-
         for i, t in enumerate(all_beats):
-            # A. Basic Bands
             e_low = get_band_energy(y, sr, t, (None, 200)) 
             e_mid = get_band_energy(y, sr, t, (200, 2000))
             e_high = get_band_energy(y, sr, t, (4000, None))
-            
-            # B. NEW: Total Energy (No filter)
             e_total = get_band_energy(y, sr, t, (None, None))
             
-            # C. NEW: Decomposition Energy (HPSS)
-            # We cut chunks manually from the pre-separated arrays
             chunk_h = get_chunk_at_time(y_harm, sr, t)
             chunk_p = get_chunk_at_time(y_perc, sr, t)
-            e_harm = get_rms_from_chunk(chunk_h)
-            e_perc = get_rms_from_chunk(chunk_p)
-            
-            # D. Flatness
+            e_harm = get_rms(chunk_h)
+            e_perc = get_rms(chunk_p)
             flat = get_spectral_flatness(y, sr, t)
+            frame_idx = min(int(t * 100), len(activations)-1)
+            prob_downbeat = float(activations[frame_idx, 1])
             
-            # E. Madmom Probabilities
-            frame_idx = int(t * 100)
-            if frame_idx >= len(activations): frame_idx = len(activations) - 1
-            prob_downbeat = float(activations[frame_idx, 1]) 
-            
-            # F. Timing Delta
             delta_time = 0.0
             local_bpm = 0.0
             if i > 0:
                 delta_time = t - all_beats[i-1]
-                if delta_time > 0:
-                    local_bpm = 60.0 / delta_time
-            
-            # G. NEW: Calculate Percentage Changes (Deltas) vs Previous Beat
-            # Formula: (Current - Prev) / Prev * 100
-            def get_pct_change(curr, prev):
-                if prev < 0.000001: return 0.0 # Avoid division by zero
-                return ((curr - prev) / prev) * 100.0
+                if delta_time > 0: local_bpm = 60.0 / delta_time
 
-            diff_low = get_pct_change(e_low, prev_stats["low"])
-            diff_mid = get_pct_change(e_mid, prev_stats["mid"])
-            diff_high = get_pct_change(e_high, prev_stats["high"])
-            diff_total = get_pct_change(e_total, prev_stats["total"])
+            def pct(curr, prev): 
+                if prev < 1e-6: return 0.0
+                return ((curr - prev)/prev)*100
             
-            # Update prev for next loop
+            diffs = {
+                "low": pct(e_low, prev_stats['low']),
+                "mid": pct(e_mid, prev_stats['mid']),
+                "high": pct(e_high, prev_stats['high']),
+                "total": pct(e_total, prev_stats['total'])
+            }
             prev_stats = {"low": e_low, "mid": e_mid, "high": e_high, "total": e_total}
-            
-            raw_data.append({
-                "index": i,
-                "time": t,
-                "e_low": e_low,
-                "e_mid": e_mid,
-                "e_high": e_high,
-                "e_total": e_total,     # New
-                "e_harm": e_harm,       # New
-                "e_perc": e_perc,       # New
-                "flat": flat,
-                "rnn_downbeat": prob_downbeat,
-                "delta_time": delta_time,
-                "bpm": local_bpm,
-                "diffs": {              # New Block
-                    "low": diff_low,
-                    "mid": diff_mid,
-                    "high": diff_high,
-                    "total": diff_total
-                }
+
+            beats_data.append({
+                "id": i, "time": t,
+                "low": e_low, "mid": e_mid, "high": e_high, "total": e_total,
+                "harm": e_harm, "perc": e_perc, "flat": flat,
+                "madmom_score": prob_downbeat,
+                "delta": delta_time, "bpm": local_bpm,
+                "diffs": diffs
             })
 
-        # Calculate Max values for Normalization
-        max_low = max([x['e_low'] for x in raw_data]) if raw_data else 1.0
-        max_mid = max([x['e_mid'] for x in raw_data]) if raw_data else 1.0
-        max_high = max([x['e_high'] for x in raw_data]) if raw_data else 1.0
-        max_total = max([x['e_total'] for x in raw_data]) if raw_data else 1.0
-        max_harm = max([x['e_harm'] for x in raw_data]) if raw_data else 1.0
-        max_perc = max([x['e_perc'] for x in raw_data]) if raw_data else 1.0
-        
-        # Avoid zero division
-        max_low = max_low if max_low > 0 else 1.0
-        max_mid = max_mid if max_mid > 0 else 1.0
-        max_high = max_high if max_high > 0 else 1.0
-        max_total = max_total if max_total > 0 else 1.0
-        max_harm = max_harm if max_harm > 0 else 1.0
-        max_perc = max_perc if max_perc > 0 else 1.0
+        limit_idx = min(len(beats_data), 100)
+        max_vals = {}
+        for k in ['low', 'mid', 'high', 'total', 'harm', 'perc']:
+            m = max([b[k] for b in beats_data[:limit_idx]]) if beats_data else 1.0
+            max_vals[k] = m if m > 0 else 1.0
 
-        # 4. FINALIZE REPORT
-        final_beats = []
-        for d in raw_data:
-            final_beats.append({
-                "id": d['index'],
-                "time": round(d['time'], 3),
-                "is_likely_downbeat": d['rnn_downbeat'] > 0.1,
-                
+        for b in beats_data:
+            for k in max_vals:
+                b[f"norm_{k}"] = round(b[k] / max_vals[k], 3)
+
+        # --- JUDGE LOGIC (v2.06) ---
+        anchor_beat = None
+        anchor_reason = ""
+        crescendo_lock = False
+        
+        # 1. Find Anchor
+        for i in range(len(beats_data) - 4):
+            b = beats_data[i]
+            if b['norm_low'] > 0.5 and b['madmom_score'] > 0.4:
+                anchor_beat = b
+                anchor_reason = "Bass Anchor"
+                break
+            if i < 4 and b['madmom_score'] > 0.5 and b['norm_total'] > 0.3:
+                anchor_beat = b
+                anchor_reason = "Rhythm Anchor"
+                break
+        
+        if not anchor_beat and beats_data:
+            anchor_beat = beats_data[0]
+            anchor_reason = "Fallback"
+
+        # 2. Check Crescendo
+        if anchor_beat:
+            idx = anchor_beat['id']
+            if idx + 4 < len(beats_data):
+                next_phrase_beat = beats_data[idx + 4]
+                ratio = next_phrase_beat['norm_low'] / (anchor_beat['norm_low'] + 0.01)
+                is_downbeat = next_phrase_beat['madmom_score'] > 0.4
+                if ratio > 1.5 and is_downbeat:
+                    anchor_beat = next_phrase_beat
+                    anchor_reason += " + Crescendo"
+                    crescendo_lock = True
+
+        # 3. Backtrack
+        final_start_beat = anchor_beat
+        if anchor_beat and not crescendo_lock: 
+            curr_idx = anchor_beat['id']
+            while curr_idx - 4 >= 0:
+                prev_idx = curr_idx - 4
+                prev_beat = beats_data[prev_idx]
+                if prev_beat['norm_total'] < 0.1: 
+                    break
+                curr_idx = prev_idx
+                final_start_beat = prev_beat
+                anchor_reason += " -> Backtracked"
+        elif crescendo_lock:
+             anchor_reason += " (Backtrack Locked)"
+
+        # 4. PHANTOM CHECK (New in v2.06)
+        # If the final beat looks suspicious (low Madmom score), push it forward.
+        if final_start_beat:
+            # Threshold: Madmom < 0.1 means "Not a beat"
+            if final_start_beat['madmom_score'] < 0.1:
+                 # Check if next beat is better? No, we must shift by GRID (usually 1 beat is weird).
+                 # Actually, usually phantom beats are just wrong detections. 
+                 # Let's check the immediate next beat (id+1).
+                 # If we are at index 0, maybe index 1 is the real one.
+                 next_idx = final_start_beat['id'] + 1
+                 if next_idx < len(beats_data):
+                     next_b = beats_data[next_idx]
+                     if next_b['madmom_score'] > 0.1:
+                         print(f"   -> Phantom Start Detected (Beat {final_start_beat['id']} Score {final_start_beat['madmom_score']:.4f}). Shifting to Beat {next_b['id']}.")
+                         final_start_beat = next_b
+                         anchor_reason += " -> Phantom Shift (+1)"
+
+        if final_start_beat:
+            print(f"   >>> VERDICT: Start at Beat {final_start_beat['id']} ({final_start_beat['time']:.2f}s)")
+            print(f"   >>> REASON: {anchor_reason}")
+
+        # Save
+        final_beats_export = []
+        for b in beats_data:
+            final_beats_export.append({
+                "id": b['id'],
+                "time": round(b['time'], 3),
+                "is_start": (final_start_beat and b['id'] == final_start_beat['id']),
+                "madmom_score_1": round(b['madmom_score'], 4),
                 "energy_stats": {
-                    "low": round(d['e_low'] / max_low, 3),
-                    "mid": round(d['e_mid'] / max_mid, 3),
-                    "high": round(d['e_high'] / max_high, 3),
-                    "total_mix": round(d['e_total'] / max_total, 3), # NEW: Normalized Total
-                    "flatness": round(d['flat'], 4)
+                    "low": b['norm_low'], "mid": b['norm_mid'], "high": b['norm_high'], 
+                    "total_mix": b['norm_total'], "flatness": round(b['flat'], 4)
                 },
-                
-                "decomposition": { # NEW BLOCK
-                    "harmonic": round(d['e_harm'] / max_harm, 3),
-                    "percussive": round(d['e_perc'] / max_perc, 3),
-                    # Ratio > 1 means very percussive, < 1 means melodic
-                    "perc_harm_ratio": round(d['e_perc'] / (d['e_harm'] + 0.0001), 2)
+                "decomposition": {
+                    "harmonic": b['norm_harm'], "percussive": b['norm_perc'],
+                    "perc_harm_ratio": round(b['perc']/(b['harm']+0.0001), 2)
                 },
-                
-                "change_vs_prev_pct": { # NEW BLOCK
-                    "low": round(d['diffs']['low'], 1),
-                    "mid": round(d['diffs']['mid'], 1),
-                    "high": round(d['diffs']['high'], 1),
-                    "total": round(d['diffs']['total'], 1)
+                "change_vs_prev_pct": {
+                    "low": round(b['diffs']['low'], 1), "mid": round(b['diffs']['mid'], 1),
+                    "high": round(b['diffs']['high'], 1), "total": round(b['diffs']['total'], 1)
                 },
-                
-                "madmom_score_1": round(d['rnn_downbeat'], 4),
                 "timing": {
-                    "delta": round(d['delta_time'], 3),
-                    "bpm": int(d['bpm'])
+                    "delta": round(b['delta'], 3), "bpm": int(b['bpm'])
                 }
             })
-
-        avg_bpm = np.mean([x['bpm'] for x in raw_data if x['bpm'] > 0])
-        
+            
         report = {
             "meta": {
-                "version": "Sherlock ver-2.01",
                 "filename": os.path.basename(audio_path),
                 "duration": round(duration, 2),
-                "total_beats": len(final_beats),
-                "avg_bpm": int(avg_bpm)
+                "total_beats": len(final_beats_export),
+                "avg_bpm": int(np.mean([x['bpm'] for x in beats_data if x['bpm']>0])) if beats_data else 0
             },
-            "beats": final_beats
+            "verdict": {
+                "start_beat_id": final_start_beat['id'] if final_start_beat else -1,
+                "start_time": final_start_beat['time'] if final_start_beat else 0.0,
+                "reason": anchor_reason
+            },
+            "beats": final_beats_export
         }
         
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2)
             
-        print(f"[Success] Saved -> {output_path}")
-
     except Exception as e:
-        print(f"[Error] Processing failed: {e}")
+        print(f"[Error] {e}")
         import traceback
         traceback.print_exc()
     finally:
@@ -305,22 +280,13 @@ def process_audio_file(audio_path, output_path=None):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python debug-rhythm.py <file_or_folder>", file=sys.stderr)
+        print("Usage: python sherlock_v2_06.py <file>")
         sys.exit(1)
-    
-    input_path = sys.argv[1]
-    
-    if os.path.isdir(input_path):
-        types = ('*.mp3', '*.wav', '*.flac', '*.m4a')
-        files = []
-        for ext in types:
-            files.extend(glob.glob(os.path.join(input_path, ext)))
-        for f in files:
-            process_audio_file(f)
-    elif os.path.isfile(input_path):
-        process_audio_file(input_path)
+    path = sys.argv[1]
+    if os.path.isdir(path):
+        for f in glob.glob(os.path.join(path, "*.mp3")): analyze_track(f)
     else:
-        print("Error: Invalid path.")
+        analyze_track(path)
 
 if __name__ == '__main__':
     main()

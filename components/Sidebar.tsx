@@ -80,7 +80,6 @@ const navItems: NavItem[] = [
         />
       </svg>
     ),
-    badge: "В разработке",
   },
 ];
 
