@@ -79,12 +79,20 @@ export class AudioEngine {
   // Voice filter для управления воспроизведением голоса
   private voiceFilter: "mute" | "on1" | "on1and5" | "full" = "full";
 
-  // Voice count files
+  // Voice count files (Howl — запасной путь)
   private voiceFiles: Map<number, Howl> = new Map();
   private voiceVolume: number = 100;
 
+  // Web Audio для счёта: планирование заранее, чтобы работало при неактивной вкладке
+  private voiceCtx: AudioContext | null = null;
+  private voiceBuffers: Map<number, AudioBuffer> = new Map();
+  private voiceGain: GainNode | null = null;
+  private lastScheduledVoiceBeatIndex: number = -1;
+  private static readonly SCHEDULE_AHEAD_SEC = 1.5;
+
   private constructor() {
     this.preloadVoiceFiles();
+    this.initVoiceWebAudio();
   }
 
   private preloadVoiceFiles() {
@@ -105,6 +113,38 @@ export class AudioEngine {
         },
       });
       this.voiceFiles.set(i, howl);
+    }
+  }
+
+  private initVoiceWebAudio() {
+    if (typeof window === "undefined") return;
+    try {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!Ctx) return;
+      this.voiceCtx = new Ctx();
+      this.voiceGain = this.voiceCtx.createGain();
+      this.voiceGain.connect(this.voiceCtx.destination);
+      this.voiceGain.gain.value = Math.min(1, (this.voiceVolume / 100) * 2.5);
+      this.loadVoiceBuffers();
+    } catch {
+      // Web Audio недоступен — остаётся Howl
+    }
+  }
+
+  private async loadVoiceBuffers() {
+    if (!this.voiceCtx) return;
+    for (let i = 1; i <= 8; i++) {
+      try {
+        const r = await fetch(`/audio/voice/${i}.mp3`);
+        const ab = await r.arrayBuffer();
+        const buf = await this.voiceCtx.decodeAudioData(ab);
+        this.voiceBuffers.set(i, buf);
+      } catch {
+        // один файл не загрузился — остаёмся на Howl
+      }
     }
   }
 
@@ -329,6 +369,7 @@ export class AudioEngine {
     this.trackEndFired = false;
     this.beatGrid = [];
     this.currentBeatIndex = 0;
+    this.lastScheduledVoiceBeatIndex = -1;
   }
 
   play() {
@@ -355,6 +396,11 @@ export class AudioEngine {
     // 3. Sync and Start Loop
     const currentTime = this.getCurrentTime();
 
+    // Разблокируем Web Audio на жесте пользователя (нужно для iOS)
+    if (this.voiceCtx?.state === "suspended") {
+      this.voiceCtx.resume();
+    }
+
     // Sync cursor
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
 
@@ -366,6 +412,9 @@ export class AudioEngine {
         this.currentBeatIndex = immediateBeatIndex + 1;
       }
     }
+
+    // С какого бита планировать счёт вперёд (Web Audio)
+    this.lastScheduledVoiceBeatIndex = this.currentBeatIndex - 1;
 
     // 4. Start update loop (it will now stay alive because _isPlaying is true)
     this.startUpdate();
@@ -387,6 +436,7 @@ export class AudioEngine {
     } else if (this.musicTrack) {
       this.musicTrack.pause();
     }
+    this.lastScheduledVoiceBeatIndex = -1;
     this.stopUpdate();
   }
 
@@ -412,6 +462,7 @@ export class AudioEngine {
     }
     this.trackEndFired = false;
     this.currentBeatIndex = 0;
+    this.lastScheduledVoiceBeatIndex = -1;
     this.stopUpdate();
 
     // Notify UI of reset to 0
@@ -533,6 +584,8 @@ export class AudioEngine {
     // Notify UI immediately (smooth scrubbing)
     if (this.onTimeUpdate) this.onTimeUpdate(clampedTime);
 
+    this.lastScheduledVoiceBeatIndex = this.currentBeatIndex - 1;
+
     if (wasPlaying) {
       this.startUpdate();
     }
@@ -630,7 +683,9 @@ export class AudioEngine {
     // При 30%: baseVolume = 0.3, actualVolume = min(1.0, 0.75) = 0.75
     const actualVolume = Math.min(1.0, baseVolume * gainMultiplier);
 
-    // Устанавливаем volume в Howler
+    if (this.voiceGain) {
+      this.voiceGain.gain.value = actualVolume;
+    }
     this.voiceFiles.forEach((howl) => {
       howl.volume(actualVolume);
     });
@@ -728,36 +783,93 @@ export class AudioEngine {
       }
     }
 
+    // Планируем счёт вперёд (Web Audio), чтобы звенело даже при неактивной вкладке
+    this.scheduleVoiceAhead();
+
     // Continue loop - setInterval уже запущен в startUpdate()
     // Не нужно создавать новый интервал здесь
   }
 
-  private playVoiceCount(beatNumber: number) {
-    if (beatNumber < 1 || beatNumber > 8) return;
-
-    // Применяем voice filter
-    let shouldPlay = false;
-
+  private shouldPlayVoiceForBeat(beatNumber: number): boolean {
     switch (this.voiceFilter) {
       case "mute":
-        shouldPlay = false;
-        break;
+        return false;
       case "on1":
-        shouldPlay = beatNumber === 1;
-        break;
+        return beatNumber === 1;
       case "on1and5":
-        shouldPlay = beatNumber === 1 || beatNumber === 5;
-        break;
+        return beatNumber === 1 || beatNumber === 5;
       case "full":
-        shouldPlay = true;
-        break;
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Планирует один удар счёта на точное время (стена-часы). Работает при неактивной вкладке. */
+  private scheduleVoiceAt(beatNumber: number, whenWallSec: number) {
+    if (beatNumber < 1 || beatNumber > 8 || !this.voiceCtx || !this.voiceGain)
+      return;
+    const buf = this.voiceBuffers.get(beatNumber);
+    if (!buf) return;
+    try {
+      const src = this.voiceCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.voiceGain);
+      src.start(whenWallSec);
+    } catch {
+      // игнорируем сбои планирования
+    }
+  }
+
+  /** Планирует удары счёта на 1.5 с вперёд. Вызов из update() даже при троттлинге вкладки даёт буфер. */
+  private scheduleVoiceAhead() {
+    if (
+      !this.voiceCtx ||
+      this.voiceBuffers.size < 8 ||
+      !this.voiceGain ||
+      this.beatGrid.length === 0
+    ) {
+      return;
+    }
+    const nowTrack = this.getCurrentTime();
+    const nowWall = this.voiceCtx.currentTime;
+    const horizon = nowTrack + AudioEngine.SCHEDULE_AHEAD_SEC;
+
+    // При откате (seek назад) не планируем повторно уже пройденные биты
+    while (
+      this.lastScheduledVoiceBeatIndex >= 0 &&
+      this.beatGrid[this.lastScheduledVoiceBeatIndex]?.time > nowTrack + 0.05
+    ) {
+      this.lastScheduledVoiceBeatIndex--;
     }
 
-    if (!shouldPlay) return;
+    for (
+      let i = this.lastScheduledVoiceBeatIndex + 1;
+      i < this.beatGrid.length;
+      i++
+    ) {
+      const beat = this.beatGrid[i];
+      if (beat.time > horizon) break;
+      if (this.shouldPlayVoiceForBeat(beat.number)) {
+        this.scheduleVoiceAt(beat.number, nowWall + (beat.time - nowTrack));
+      }
+      this.lastScheduledVoiceBeatIndex = i;
+    }
+  }
 
+  private playVoiceCount(beatNumber: number) {
+    if (beatNumber < 1 || beatNumber > 8) return;
+    if (!this.shouldPlayVoiceForBeat(beatNumber)) return;
+
+    // Приоритет: Web Audio (буфер в браузере, точное время, работает в фоне)
+    if (this.voiceCtx && this.voiceBuffers.has(beatNumber)) {
+      this.scheduleVoiceAt(beatNumber, this.voiceCtx.currentTime);
+      return;
+    }
+
+    // Запасной путь: Howl
     const voiceFile = this.voiceFiles.get(beatNumber);
     if (voiceFile) {
-      // Опционально: не прерывать, если голос тот же, но здесь лучше прерывать для четкости
       voiceFile.stop();
       voiceFile.play();
     }
