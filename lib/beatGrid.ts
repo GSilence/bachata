@@ -12,7 +12,7 @@ import type { Beat, GridMap } from "@/types";
 export function generateFallbackBeatGrid(
   bpm: number,
   offset: number,
-  duration: number
+  duration: number,
 ): Beat[] {
   const beatGrid: Beat[] = [];
 
@@ -46,7 +46,7 @@ export function generateFallbackBeatGrid(
 
 /**
  * Generates beat grid using "Master Grid + Labeling" approach
- * 
+ *
  * Strategy:
  * 1. Generate a perfect metronome skeleton (Master Grid) based on BPM and offset
  *    - Time between beats is ALWAYS constant (60 / bpm)
@@ -67,7 +67,7 @@ export function generateFallbackBeatGrid(
  */
 export function generateBeatGridFromDownbeats(
   gridMap: GridMap,
-  duration: number
+  duration: number,
 ): Beat[] {
   const bpm = gridMap.bpm;
   const offset = gridMap.offset || 0;
@@ -75,11 +75,6 @@ export function generateBeatGridFromDownbeats(
 
   // Интервал между beats = 60 / bpm (константа для идеального метронома)
   const beatInterval = 60 / bpm;
-
-  console.log(
-    `[BeatGrid] Generating Master Grid: BPM=${bpm}, offset=${offset.toFixed(3)}s, ` +
-    `beatInterval=${beatInterval.toFixed(3)}s, duration=${duration.toFixed(2)}s`
-  );
 
   // ============================================
   // ШАГ 1: ГЕНЕРАЦИЯ СКЕЛЕТА (Master Grid)
@@ -100,15 +95,8 @@ export function generateBeatGridFromDownbeats(
     time = offset + beatIndex * beatInterval;
   }
 
-  console.log(
-    `[BeatGrid] Master Grid generated: ${skeletonBeats.length} beats, ` +
-    `first=${skeletonBeats[0]?.time.toFixed(3)}s, ` +
-    `last=${skeletonBeats[skeletonBeats.length - 1]?.time.toFixed(3)}s`
-  );
-
   // Проверка: если скелет пустой, используем fallback
   if (skeletonBeats.length === 0) {
-    console.warn("[BeatGrid] Master Grid is empty, using fallback");
     return generateFallbackBeatGrid(bpm, offset, duration);
   }
 
@@ -117,7 +105,6 @@ export function generateBeatGridFromDownbeats(
   // ============================================
   // Если нет секций, просто нумеруем по порядку (1-8)
   if (sections.length === 0) {
-    console.log("[BeatGrid] No sections found, using sequential numbering (1-8)");
     let beatNumber = 1;
     for (const beat of skeletonBeats) {
       beat.number = beatNumber;
@@ -133,7 +120,7 @@ export function generateBeatGridFromDownbeats(
   interface SectionInfo {
     startBeatIndex: number;
     endBeatIndex: number;
-    section: typeof sortedSections[0];
+    section: (typeof sortedSections)[0];
   }
   const sectionInfos: SectionInfo[] = [];
 
@@ -141,9 +128,8 @@ export function generateBeatGridFromDownbeats(
   for (let i = 0; i < sortedSections.length; i++) {
     const section = sortedSections[i];
     const sectionStart = section.start;
-    const sectionEnd = i < sortedSections.length - 1
-      ? sortedSections[i + 1].start
-      : duration;
+    const sectionEnd =
+      i < sortedSections.length - 1 ? sortedSections[i + 1].start : duration;
 
     // Находим ближайший beat к началу секции
     let nearestBeatIndex = -1;
@@ -157,12 +143,7 @@ export function generateBeatGridFromDownbeats(
       }
     }
 
-    if (nearestBeatIndex === -1) {
-      console.warn(
-        `[BeatGrid] Could not find nearest beat for section at ${sectionStart.toFixed(2)}s`
-      );
-      continue;
-    }
+    if (nearestBeatIndex === -1) continue;
 
     // Находим последний beat в секции (до начала следующей секции или до конца трека)
     let endBeatIndex = skeletonBeats.length - 1;
@@ -178,18 +159,15 @@ export function generateBeatGridFromDownbeats(
       endBeatIndex: endBeatIndex,
       section: section,
     });
-
-    console.log(
-      `[BeatGrid] Section ${i + 1}/${sortedSections.length}: ${section.type} at ${sectionStart.toFixed(2)}s, ` +
-      `nearest beat at ${skeletonBeats[nearestBeatIndex].time.toFixed(3)}s (distance: ${minDistance.toFixed(3)}s), ` +
-      `beats: ${section.beats}, beat range: [${nearestBeatIndex}, ${endBeatIndex}]`
-    );
   }
 
   // ШАГ 2.2: Нумеруем все beats
   // Сначала нумеруем beats до первой секции
   let currentBeatNum = 1;
-  let firstSectionStartIndex = sectionInfos.length > 0 ? sectionInfos[0].startBeatIndex : skeletonBeats.length;
+  let firstSectionStartIndex =
+    sectionInfos.length > 0
+      ? sectionInfos[0].startBeatIndex
+      : skeletonBeats.length;
 
   for (let i = 0; i < firstSectionStartIndex; i++) {
     skeletonBeats[i].number = currentBeatNum;
@@ -200,8 +178,12 @@ export function generateBeatGridFromDownbeats(
   for (const sectionInfo of sectionInfos) {
     // Сбрасываем на "1" на начале секции
     let beatNum = 1;
-    
-    for (let i = sectionInfo.startBeatIndex; i <= sectionInfo.endBeatIndex; i++) {
+
+    for (
+      let i = sectionInfo.startBeatIndex;
+      i <= sectionInfo.endBeatIndex;
+      i++
+    ) {
       skeletonBeats[i].number = beatNum;
       beatNum = (beatNum % 8) + 1;
     }
@@ -213,34 +195,13 @@ export function generateBeatGridFromDownbeats(
     const lastBeatNum = skeletonBeats[lastSectionInfo.endBeatIndex].number;
     currentBeatNum = (lastBeatNum % 8) + 1;
 
-    for (let i = lastSectionInfo.endBeatIndex + 1; i < skeletonBeats.length; i++) {
+    for (
+      let i = lastSectionInfo.endBeatIndex + 1;
+      i < skeletonBeats.length;
+      i++
+    ) {
       skeletonBeats[i].number = currentBeatNum;
       currentBeatNum = (currentBeatNum % 8) + 1;
-    }
-  }
-
-  console.log(
-    `[BeatGrid] Generated ${skeletonBeats.length} beats for duration ${duration.toFixed(2)}s (BPM: ${bpm})`
-  );
-  if (skeletonBeats.length > 0) {
-    console.log(
-      `[BeatGrid] First beat: time=${skeletonBeats[0].time.toFixed(3)}s, number=${skeletonBeats[0].number}`
-    );
-    console.log(
-      `[BeatGrid] Last beat: time=${skeletonBeats[skeletonBeats.length - 1].time.toFixed(3)}s, number=${skeletonBeats[skeletonBeats.length - 1].number}`
-    );
-
-    // Проверяем константность интервалов
-    if (skeletonBeats.length > 1) {
-      const intervals: number[] = [];
-      for (let i = 1; i < Math.min(10, skeletonBeats.length); i++) {
-        intervals.push(skeletonBeats[i].time - skeletonBeats[i - 1].time);
-      }
-      const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-      const maxDeviation = Math.max(...intervals.map((iv) => Math.abs(iv - avgInterval)));
-      console.log(
-        `[BeatGrid] Beat interval check: avg=${avgInterval.toFixed(3)}s, maxDeviation=${maxDeviation.toFixed(3)}s`
-      );
     }
   }
 

@@ -124,7 +124,12 @@ export class AudioEngine {
       bass: boolean;
       other: boolean;
     },
-    stemsVolume?: { vocals: number; drums: number; bass: number; other: number }
+    stemsVolume?: {
+      vocals: number;
+      drums: number;
+      bass: number;
+      other: number;
+    },
   ) {
     if (!track.pathOriginal) {
       console.warn("Cannot load track: pathOriginal is missing");
@@ -152,15 +157,9 @@ export class AudioEngine {
       // Получаем длительность трека из gridMap (из результата анализа) или используем фоллбек
       const duration = track.gridMap.duration || 180;
       this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
-      console.log(
-        `[AudioEngine] Generated beatGrid from gridMap: ${this.beatGrid.length} beats, ${track.gridMap.grid.length} sections, duration: ${duration}s`
-      );
     } else if (track.beatGrid && track.beatGrid.length > 0) {
       // Используем предварительно сгенерированный beatGrid (если есть)
       this.beatGrid = track.beatGrid;
-      console.log(
-        `[AudioEngine] Using pre-generated beatGrid: ${this.beatGrid.length} beats`
-      );
     } else {
       // Fallback: генерируем простой beatGrid без учета мостиков
       // Используем duration из gridMap если есть, иначе фоллбек
@@ -168,9 +167,6 @@ export class AudioEngine {
       const bpm = track.bpm || 120;
       const offset = track.offset || 0;
       this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
-      console.log(
-        `[AudioEngine] Using fallback beatGrid: ${this.beatGrid.length} beats, duration: ${duration}s`
-      );
     }
 
     // 4. Загрузка аудио
@@ -218,10 +214,7 @@ export class AudioEngine {
           // Регенерируем beatGrid с правильной длительностью
           this.beatGrid = generateBeatGridFromDownbeats(
             this.currentTrack.gridMap,
-            duration
-          );
-          console.log(
-            `[AudioEngine] Updated beatGrid with actual duration from stems: ${duration}s, ${this.beatGrid.length} beats`
+            duration,
           );
         }
       }
@@ -243,7 +236,7 @@ export class AudioEngine {
     const createStem = (
       src: string,
       volume: number,
-      enabled: boolean
+      enabled: boolean,
     ): Howl => {
       return new Howl({
         src: [src],
@@ -266,22 +259,22 @@ export class AudioEngine {
     this.stemsTracks.vocals = createStem(
       track.pathVocals!,
       this.stemsVolume.vocals,
-      this.stemsEnabled.vocals
+      this.stemsEnabled.vocals,
     );
     this.stemsTracks.drums = createStem(
       track.pathDrums!,
       this.stemsVolume.drums,
-      this.stemsEnabled.drums
+      this.stemsEnabled.drums,
     );
     this.stemsTracks.bass = createStem(
       track.pathBass!,
       this.stemsVolume.bass,
-      this.stemsEnabled.bass
+      this.stemsEnabled.bass,
     );
     this.stemsTracks.other = createStem(
       track.pathOther!,
       this.stemsVolume.other,
-      this.stemsEnabled.other
+      this.stemsEnabled.other,
     );
 
     // Используем vocals как мастер для события окончания
@@ -558,7 +551,7 @@ export class AudioEngine {
       drums: number;
       bass: number;
       other: number;
-    }>
+    }>,
   ) {
     this.stemsVolume = { ...this.stemsVolume, ...stems };
     this.applyVolume();
@@ -570,7 +563,7 @@ export class AudioEngine {
       drums: boolean;
       bass: boolean;
       other: boolean;
-    }>
+    }>,
   ) {
     this.stemsEnabled = { ...this.stemsEnabled, ...stems };
     this.applyVolume();
@@ -610,7 +603,7 @@ export class AudioEngine {
         this.currentTrack,
         this.isStemsMode,
         this.stemsEnabled,
-        this.stemsVolume
+        this.stemsVolume,
       );
 
       if (currentTime > 0) {
@@ -771,31 +764,14 @@ export class AudioEngine {
   }
 
   private startUpdate() {
-    // Используем setInterval для работы в фоне (неактивная вкладка)
     if (this.updateIntervalId !== null) return;
 
-    // Проверяем видимость страницы для оптимизации частоты обновлений
-    const interval =
-      typeof document !== "undefined" && document.hidden ? 50 : 16;
+    // Всегда ~60fps (16ms), в т.ч. при неактивной вкладке/потушенном экране:
+    // на мобильных при throttling 50ms мы чаще промахиваемся по битам и счёт молчит.
+    // Музыка идёт из того же сеанса — счёт должен продолжать звенеть, пока пользователь не выключил его.
+    const interval = 16;
     this.updateIntervalId = setInterval(() => this.update(), interval);
-
-    // Также слушаем изменения видимости для оптимизации частоты обновлений
-    if (typeof document !== "undefined" && !this.visibilityHandler) {
-      const handleVisibilityChange = () => {
-        if (this.updateIntervalId !== null && this._isPlaying) {
-          clearInterval(this.updateIntervalId);
-          this.updateIntervalId = null;
-          // Перезапускаем с новой частотой
-          const newInterval = document.hidden ? 50 : 16;
-          this.updateIntervalId = setInterval(() => this.update(), newInterval);
-        }
-      };
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-      this.visibilityHandler = handleVisibilityChange;
-    }
   }
-
-  private visibilityHandler: (() => void) | null = null;
 
   private stopUpdate() {
     if (this.updateIntervalId !== null) {
@@ -805,11 +781,6 @@ export class AudioEngine {
     if (this.updateAnimationFrameId !== null) {
       cancelAnimationFrame(this.updateAnimationFrameId);
       this.updateAnimationFrameId = null;
-    }
-    // Удаляем обработчик видимости
-    if (this.visibilityHandler && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", this.visibilityHandler);
-      this.visibilityHandler = null;
     }
   }
 

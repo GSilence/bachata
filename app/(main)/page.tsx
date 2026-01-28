@@ -244,6 +244,7 @@ export default function PlaybackPage() {
         >
           <svg
             className="w-12 h-12 text-purple-400 animate-spin mb-4"
+            style={{ animationDirection: "reverse" }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
