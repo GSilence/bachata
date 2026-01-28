@@ -400,6 +400,11 @@ export class AudioEngine {
     if (this.voiceCtx?.state === "suspended") {
       this.voiceCtx.resume();
     }
+    // Включаем выход счёта (отключается при паузе, чтобы не было запаздывающих ударов)
+    if (this.voiceGain && this.voiceCtx) {
+      this.voiceGain.disconnect();
+      this.voiceGain.connect(this.voiceCtx.destination);
+    }
 
     // Sync cursor
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
@@ -437,6 +442,10 @@ export class AudioEngine {
       this.musicTrack.pause();
     }
     this.lastScheduledVoiceBeatIndex = -1;
+    // Отключаем выход счёта: уже запланированные удары не должны доигрываться после паузы
+    if (this.voiceGain) {
+      this.voiceGain.disconnect();
+    }
     this.stopUpdate();
   }
 
@@ -750,7 +759,10 @@ export class AudioEngine {
       this.onTimeUpdate(currentTime);
     }
 
-    // 2. Обработка битов (Voice Counting)
+    // 2. Обработка битов: UI (onBeatUpdate) всегда; звук — только один источник, иначе эхо.
+    // При Web Audio звук идёт только из scheduleVoiceAhead(); при Howl — из playVoiceCount().
+    const useWebAudioVoice = this.voiceBuffers.size >= 8;
+
     if (this.beatGrid.length > 0) {
       while (
         this.currentBeatIndex < this.beatGrid.length &&
@@ -758,32 +770,25 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
-          this.playVoiceCount(beat.number);
-          // Уведомляем UI о новом бите
-          if (this.onBeatUpdate) {
-            this.onBeatUpdate(beat.number);
-          }
+          if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+          if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         }
         this.currentBeatIndex++;
       }
 
-      // Check next beat "very soon" logic
       if (
         this.currentBeatIndex < this.beatGrid.length &&
         this.beatGrid[this.currentBeatIndex].time > currentTime &&
         this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
-        this.playVoiceCount(beat.number);
-        // Уведомляем UI о новом бите
-        if (this.onBeatUpdate) {
-          this.onBeatUpdate(beat.number);
-        }
+        if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+        if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         this.currentBeatIndex++;
       }
     }
 
-    // Планируем счёт вперёд (Web Audio), чтобы звенело даже при неактивной вкладке
+    // Планируем счёт вперёд (Web Audio). Единственный источник звука при useWebAudioVoice.
     this.scheduleVoiceAhead();
 
     // Continue loop - setInterval уже запущен в startUpdate()
