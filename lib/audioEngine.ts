@@ -92,7 +92,8 @@ export class AudioEngine {
 
   private constructor() {
     this.preloadVoiceFiles();
-    this.initVoiceWebAudio();
+    // Web Audio для счёта отключён: воспроизведение давало искажения/шипение.
+    // this.initVoiceWebAudio();
   }
 
   private preloadVoiceFiles() {
@@ -400,12 +401,6 @@ export class AudioEngine {
     if (this.voiceCtx?.state === "suspended") {
       this.voiceCtx.resume();
     }
-    // Включаем выход счёта (отключается при паузе, чтобы не было запаздывающих ударов)
-    if (this.voiceGain && this.voiceCtx) {
-      this.voiceGain.disconnect();
-      this.voiceGain.connect(this.voiceCtx.destination);
-    }
-
     // Sync cursor
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
 
@@ -442,10 +437,6 @@ export class AudioEngine {
       this.musicTrack.pause();
     }
     this.lastScheduledVoiceBeatIndex = -1;
-    // Отключаем выход счёта: уже запланированные удары не должны доигрываться после паузы
-    if (this.voiceGain) {
-      this.voiceGain.disconnect();
-    }
     this.stopUpdate();
   }
 
@@ -759,10 +750,7 @@ export class AudioEngine {
       this.onTimeUpdate(currentTime);
     }
 
-    // 2. Обработка битов: UI (onBeatUpdate) всегда; звук — только один источник, иначе эхо.
-    // При Web Audio звук идёт только из scheduleVoiceAhead(); при Howl — из playVoiceCount().
-    const useWebAudioVoice = this.voiceBuffers.size >= 8;
-
+    // 2. Обработка битов (Voice Counting + UI)
     if (this.beatGrid.length > 0) {
       while (
         this.currentBeatIndex < this.beatGrid.length &&
@@ -770,7 +758,7 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
-          if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+          this.playVoiceCount(beat.number);
           if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         }
         this.currentBeatIndex++;
@@ -782,14 +770,11 @@ export class AudioEngine {
         this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
-        if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+        this.playVoiceCount(beat.number);
         if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         this.currentBeatIndex++;
       }
     }
-
-    // Планируем счёт вперёд (Web Audio). Единственный источник звука при useWebAudioVoice.
-    this.scheduleVoiceAhead();
 
     // Continue loop - setInterval уже запущен в startUpdate()
     // Не нужно создавать новый интервал здесь
@@ -866,13 +851,8 @@ export class AudioEngine {
     if (beatNumber < 1 || beatNumber > 8) return;
     if (!this.shouldPlayVoiceForBeat(beatNumber)) return;
 
-    // Приоритет: Web Audio (буфер в браузере, точное время, работает в фоне)
-    if (this.voiceCtx && this.voiceBuffers.has(beatNumber)) {
-      this.scheduleVoiceAt(beatNumber, this.voiceCtx.currentTime);
-      return;
-    }
-
-    // Запасной путь: Howl
+    // Только Howl: воспроизведение через Web Audio давало искажения/шипение
+    // (вероятно ресемплинг или формат при decodeAudioData).
     const voiceFile = this.voiceFiles.get(beatNumber);
     if (voiceFile) {
       voiceFile.stop();
