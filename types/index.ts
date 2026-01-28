@@ -18,8 +18,8 @@ export interface GridMap {
 }
 
 export interface Beat {
-  time: number;    // Timestamp in seconds
-  number: number;  // The beat number (1-8) to speak
+  time: number; // Timestamp in seconds
+  number: number; // The beat number (1-8) to speak
   hasVoice: boolean; // Should we play voice? (Breaks/Bridges might have logic)
 }
 
@@ -43,6 +43,7 @@ export interface Track {
   isProcessed: boolean;
   gridMap: GridMap | null; // сложная структура с grid (verse/bridge секции) от madmom анализа
   beatGrid: Beat[] | null; // Pre-calculated beat grid for rhythm counting
+  analyzerType?: "basic" | "extended" | null; // какой анализатор использовался: basic / extended
 }
 
 export interface PlayerState {
@@ -82,10 +83,14 @@ export interface PlayerState {
   playlistFilter: PlaylistFilter;
   searchQuery: string;
 
+  // Переоценка расклада (блокирует страницу, не сохраняется)
+  isReanalyzing: boolean;
+
   // AudioEngine reference (не сохраняется в localStorage)
   audioEngine: any | null;
 
   // Actions
+  setReanalyzing: (value: boolean) => void;
   setCurrentTrack: (track: Track | null) => void;
   setTracks: (tracks: Track[]) => void;
   setIsPlaying: (isPlaying: boolean) => void;

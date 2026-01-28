@@ -7,14 +7,21 @@ import { useRouter } from "next/navigation";
 interface TrackInfoProps {}
 
 export default function TrackInfo({}: TrackInfoProps) {
-  const { currentTrack, setCurrentTrack, tracks, setTracks, stop } =
-    usePlayerStore();
+  const {
+    currentTrack,
+    setCurrentTrack,
+    tracks,
+    setTracks,
+    stop,
+    isReanalyzing,
+    setReanalyzing,
+  } = usePlayerStore();
   const router = useRouter();
   const [editingBpm, setEditingBpm] = useState(false);
   const [editingOffset, setEditingOffset] = useState(false);
   const [tempBpm, setTempBpm] = useState(currentTrack?.bpm.toString() || "120");
   const [tempOffset, setTempOffset] = useState(
-    currentTrack?.offset.toString() || "0"
+    currentTrack?.offset.toString() || "0",
   );
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -86,7 +93,7 @@ export default function TrackInfo({}: TrackInfoProps) {
     // Подтверждение удаления
     if (
       !confirm(
-        `Вы уверены, что хотите удалить трек "${currentTrack.title}"? Это действие нельзя отменить.`
+        `Вы уверены, что хотите удалить трек "${currentTrack.title}"? Это действие нельзя отменить.`,
       )
     ) {
       return;
@@ -122,10 +129,40 @@ export default function TrackInfo({}: TrackInfoProps) {
       alert(
         `Ошибка при удалении трека: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
       );
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleReanalyze = async (analyzer: "basic" | "extended") => {
+    if (!currentTrack || isReanalyzing) return;
+    setReanalyzing(true);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/reanalyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analyzer }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка перезапуска анализа");
+      const listRes = await fetch("/api/tracks");
+      const list = await listRes.json();
+      if (Array.isArray(list)) setTracks(list);
+      const updated = list?.find(
+        (t: { id: number }) => t.id === currentTrack.id,
+      );
+      if (updated) setCurrentTrack(updated);
+    } catch (e) {
+      console.error("Reanalyze failed:", e);
+      alert(
+        `Ошибка при перезапуске анализа: ${
+          e instanceof Error ? e.message : "Unknown error"
+        }`,
+      );
+    } finally {
+      setReanalyzing(false);
     }
   };
 
@@ -181,6 +218,68 @@ export default function TrackInfo({}: TrackInfoProps) {
             </svg>
           )}
         </button>
+      </div>
+
+      {/* Расклад анализа и кнопки перезапуска */}
+      <div className="mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-gray-400">Расклад:</span>
+        <span className="text-sm text-white">
+          {currentTrack.analyzerType === "extended"
+            ? "Расширенный"
+            : currentTrack.analyzerType === "basic"
+              ? "Базовый"
+              : "не указан"}
+        </span>
+        <div className="flex items-center gap-2 ml-2">
+          <button
+            type="button"
+            onClick={() => handleReanalyze("basic")}
+            disabled={isReanalyzing}
+            title="Перезапустить базовый анализ (BPM/Offset)"
+            className="text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem]"
+          >
+            {isReanalyzing ? (
+              <svg
+                className="w-4 h-4 animate-spin shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            ) : null}
+            {isReanalyzing ? "Анализ…" : "Базовый анализ"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleReanalyze("extended")}
+            disabled={isReanalyzing}
+            title="Перезапустить расширенный анализ (BPM/Offset/Grid)"
+            className="text-xs px-2 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem]"
+          >
+            {isReanalyzing ? (
+              <svg
+                className="w-4 h-4 animate-spin shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            ) : null}
+            {isReanalyzing ? "Анализ…" : "Расширенный анализ"}
+          </button>
+        </div>
       </div>
 
       {/* Параметры */}

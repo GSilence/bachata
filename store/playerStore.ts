@@ -72,11 +72,13 @@ export const usePlayerStore = create<PlayerState>()(
       voiceFilter: restoredSettings.voiceFilter,
       playlistFilter: "free",
       searchQuery: "",
+      isReanalyzing: false,
 
       // AudioEngine reference (kept for compatibility, but we import directly now)
       audioEngine: null,
 
       // Actions
+      setReanalyzing: (value) => set({ isReanalyzing: value }),
       setCurrentTrack: (track) => {
         if (!track) {
           set({
@@ -167,7 +169,7 @@ export const usePlayerStore = create<PlayerState>()(
               Object.entries(stems).map(([key, value]) => [
                 key,
                 Math.max(0, Math.min(100, value)),
-              ])
+              ]),
             ),
           },
         }));
@@ -262,14 +264,14 @@ export const usePlayerStore = create<PlayerState>()(
         if (filteredTracks.length === 0) return;
 
         const currentIndex = filteredTracks.findIndex(
-          (t) => t.id === currentTrack.id
+          (t) => t.id === currentTrack.id,
         );
         console.log(
-          `playNext: currentTrack=${currentTrack.title} (id=${currentTrack.id}), currentIndex=${currentIndex}, playMode=${playMode}, filteredCount=${filteredTracks.length}, wasPlaying=${isPlaying}`
+          `playNext: currentTrack=${currentTrack.title} (id=${currentTrack.id}), currentIndex=${currentIndex}, playMode=${playMode}, filteredCount=${filteredTracks.length}, wasPlaying=${isPlaying}`,
         );
         console.log(
           `Filtered tracks:`,
-          filteredTracks.map((t) => `${t.title} (id=${t.id})`)
+          filteredTracks.map((t) => `${t.title} (id=${t.id})`),
         );
 
         let nextTrack: Track | null = null;
@@ -282,12 +284,12 @@ export const usePlayerStore = create<PlayerState>()(
           }
           nextTrack = filteredTracks[randomIndex];
           console.log(
-            `Random: selected index=${randomIndex}, track=${nextTrack?.title} (id=${nextTrack?.id})`
+            `Random: selected index=${randomIndex}, track=${nextTrack?.title} (id=${nextTrack?.id})`,
           );
         } else if (playMode === "loop") {
           // Остаемся на том же треке - перезагружаем его
           console.log(
-            `Loop: restarting track=${currentTrack.title} (id=${currentTrack.id})`
+            `Loop: restarting track=${currentTrack.title} (id=${currentTrack.id})`,
           );
           nextTrack = currentTrack;
         } else {
@@ -295,7 +297,7 @@ export const usePlayerStore = create<PlayerState>()(
           if (currentIndex === -1) {
             // Текущий трек не найден в отфильтрованном списке - выбираем первый
             console.warn(
-              "Current track not found in filtered list, selecting first track"
+              "Current track not found in filtered list, selecting first track",
             );
             if (filteredTracks.length > 0) {
               nextTrack = filteredTracks[0];
@@ -304,10 +306,10 @@ export const usePlayerStore = create<PlayerState>()(
             const nextIndex = (currentIndex + 1) % filteredTracks.length;
             nextTrack = filteredTracks[nextIndex];
             console.log(
-              `Sequential: currentIndex=${currentIndex}, nextIndex=${nextIndex}, total=${filteredTracks.length}`
+              `Sequential: currentIndex=${currentIndex}, nextIndex=${nextIndex}, total=${filteredTracks.length}`,
             );
             console.log(
-              `Sequential: currentTrack=${currentTrack.title} (id=${currentTrack.id}), nextTrack=${nextTrack?.title} (id=${nextTrack?.id})`
+              `Sequential: currentTrack=${currentTrack.title} (id=${currentTrack.id}), nextTrack=${nextTrack?.title} (id=${nextTrack?.id})`,
             );
           }
         }
@@ -396,8 +398,8 @@ export const usePlayerStore = create<PlayerState>()(
           audioEngine: null,
         };
       },
-    }
-  )
+    },
+  ),
 );
 
 // Функция для восстановления трека из сохраненного ID

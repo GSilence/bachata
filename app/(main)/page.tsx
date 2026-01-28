@@ -28,6 +28,7 @@ export default function PlaybackPage() {
     play,
     pause,
     stop,
+    isReanalyzing,
   } = usePlayerStore();
 
   const [isClient, setIsClient] = useState(false);
@@ -68,7 +69,7 @@ export default function PlaybackPage() {
       if (existingTrack) {
         console.log(
           "Loading existing track after AudioEngine init:",
-          existingTrack.title
+          existingTrack.title,
         );
         loadTrack(existingTrack);
       } else if (!existingTrack && tracks.length > 0) {
@@ -233,7 +234,31 @@ export default function PlaybackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8 relative">
+      {isReanalyzing && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm"
+          aria-modal="true"
+          aria-busy="true"
+          aria-label="Идёт переоценка расклада"
+        >
+          <svg
+            className="w-12 h-12 text-purple-400 animate-spin mb-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          <p className="text-white font-medium">Переоценка расклада…</p>
+          <p className="text-gray-400 text-sm mt-1">Не закрывайте страницу</p>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* Основная секция - слева */}
