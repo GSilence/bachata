@@ -5,6 +5,11 @@ import {
   generateBeatGridFromDownbeats,
 } from "./beatGrid";
 
+// Debug flags
+let hasLoggedVoicePlayback = false;
+// ТЕСТ: Отключить Silent Anchor чтобы проверить, вызывает ли он шум
+const DISABLE_SILENT_ANCHOR_TEST = false;
+
 export class AudioEngine {
   // Singleton instance
   private static instance: AudioEngine | null = null;
@@ -90,10 +95,18 @@ export class AudioEngine {
   private lastScheduledVoiceBeatIndex: number = -1;
   private static readonly SCHEDULE_AHEAD_SEC = 1.5;
 
+  // Активные BufferSource nodes для немедленной остановки при паузе
+  private activeVoiceSources: Set<AudioBufferSourceNode> = new Set();
+
+  // Silent Anchor: держит AudioContext активным в фоне
+  private silentOscillator: OscillatorNode | null = null;
+  private silentGain: GainNode | null = null;
+  private isSilentAnchorRunning: boolean = false;
+
   private constructor() {
     this.preloadVoiceFiles();
-    // Web Audio для счёта отключён: воспроизведение давало искажения/шипение.
-    // this.initVoiceWebAudio();
+    // Web Audio для счёта: теперь с правильным gain (без искажений)
+    this.initVoiceWebAudio();
   }
 
   private preloadVoiceFiles() {
@@ -103,7 +116,7 @@ export class AudioEngine {
     }
 
     for (let i = 1; i <= 8; i++) {
-      const voicePath = `/audio/voice/${i}.mp3`;
+      const voicePath = `/audio/voice/${i}.m4a`;
       const howl = new Howl({
         src: [voicePath],
         html5: true, // Используем HTML5 Audio для надежности
@@ -125,10 +138,16 @@ export class AudioEngine {
         (window as unknown as { webkitAudioContext?: typeof AudioContext })
           .webkitAudioContext;
       if (!Ctx) return;
-      this.voiceCtx = new Ctx();
+
+      // КРИТИЧНО: Создаем AudioContext с 44100 Hz чтобы избежать resampling!
+      // Наши файлы 44100 Hz, поэтому никакой конвертации → чистый звук
+      this.voiceCtx = new Ctx({ sampleRate: 44100 });
+
+      // Создаем gain node
       this.voiceGain = this.voiceCtx.createGain();
+      this.voiceGain.gain.value = this.voiceVolume / 100;
       this.voiceGain.connect(this.voiceCtx.destination);
-      this.voiceGain.gain.value = Math.min(1, (this.voiceVolume / 100) * 2.5);
+
       this.loadVoiceBuffers();
     } catch {
       // Web Audio недоступен — остаётся Howl
@@ -137,16 +156,56 @@ export class AudioEngine {
 
   private async loadVoiceBuffers() {
     if (!this.voiceCtx) return;
+    console.log(`[AudioEngine] Loading voice buffers via Web Audio...`);
+    console.log(`[AudioEngine] AudioContext sample rate: ${this.voiceCtx.sampleRate} Hz`);
+
     for (let i = 1; i <= 8; i++) {
       try {
-        const r = await fetch(`/audio/voice/${i}.mp3`);
+        const r = await fetch(`/audio/voice/${i}.m4a`);
         const ab = await r.arrayBuffer();
         const buf = await this.voiceCtx.decodeAudioData(ab);
         this.voiceBuffers.set(i, buf);
-      } catch {
-        // один файл не загрузился — остаёмся на Howl
+
+        if (i === 1) {
+          // Анализируем первый буфер подробно
+          const channelData = buf.getChannelData(0);
+          let maxPeak = 0;
+          let minPeak = 0;
+          let hasNaN = false;
+
+          for (let j = 0; j < channelData.length; j++) {
+            const sample = channelData[j];
+            if (isNaN(sample)) {
+              hasNaN = true;
+              break;
+            }
+            if (sample > maxPeak) maxPeak = sample;
+            if (sample < minPeak) minPeak = sample;
+          }
+
+          console.log(`[AudioEngine] Buffer ${i} decoded:`, {
+            sampleRate: buf.sampleRate,
+            channels: buf.numberOfChannels,
+            duration: buf.duration.toFixed(3),
+            length: buf.length,
+            maxPeak: maxPeak.toFixed(4),
+            minPeak: minPeak.toFixed(4),
+            peakToPeak: (maxPeak - minPeak).toFixed(4),
+            hasNaN,
+            fileSize: `${(ab.byteLength / 1024).toFixed(1)} KB`,
+          });
+
+          // ПРЕДУПРЕЖДЕНИЕ: если пики близки к 1.0, файл может клипировать
+          if (maxPeak > 0.95 || minPeak < -0.95) {
+            console.warn(`[AudioEngine] ⚠️ Buffer ${i} has high peaks (>0.95), may clip!`);
+          }
+        }
+      } catch (err) {
+        console.warn(`[AudioEngine] Failed to load voice buffer ${i}:`, err);
       }
     }
+    console.log(`[AudioEngine] Loaded ${this.voiceBuffers.size}/8 voice buffers`);
+    console.log(`[AudioEngine] Current voiceGain value: ${this.voiceGain?.gain.value}`);
   }
 
   static getInstance(): AudioEngine {
@@ -373,7 +432,7 @@ export class AudioEngine {
     this.lastScheduledVoiceBeatIndex = -1;
   }
 
-  play() {
+  async play() {
     // 1. Set INTENT to play immediately (fixes UI race condition)
     this._isPlaying = true;
 
@@ -398,8 +457,10 @@ export class AudioEngine {
     const currentTime = this.getCurrentTime();
 
     // Разблокируем Web Audio на жесте пользователя (нужно для iOS)
+    // ВАЖНО: ждем завершения resume() перед воспроизведением!
     if (this.voiceCtx?.state === "suspended") {
-      this.voiceCtx.resume();
+      await this.voiceCtx.resume();
+      console.log("[AudioEngine] AudioContext resumed, state:", this.voiceCtx.state);
     }
     // Sync cursor
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
@@ -437,6 +498,10 @@ export class AudioEngine {
       this.musicTrack.pause();
     }
     this.lastScheduledVoiceBeatIndex = -1;
+
+    // ВАЖНО: останавливаем все запланированные биты немедленно
+    this.stopAllScheduledVoices();
+
     this.stopUpdate();
   }
 
@@ -463,6 +528,10 @@ export class AudioEngine {
     this.trackEndFired = false;
     this.currentBeatIndex = 0;
     this.lastScheduledVoiceBeatIndex = -1;
+
+    // ВАЖНО: останавливаем все запланированные биты немедленно
+    this.stopAllScheduledVoices();
+
     this.stopUpdate();
 
     // Notify UI of reset to 0
@@ -556,6 +625,11 @@ export class AudioEngine {
     const wasPlaying = this._isPlaying;
 
     this.stopUpdate();
+
+    // КРИТИЧНО: Останавливаем все запланированные биты при перемотке!
+    // Иначе они будут играть в запланированное время, даже если мы перемотали вперед/назад
+    this.stopAllScheduledVoices();
+
     const clampedTime = Math.max(0, Math.min(time, dur));
 
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
@@ -670,18 +744,8 @@ export class AudioEngine {
 
   setVoiceVolume(volume: number) {
     this.voiceVolume = Math.max(0, Math.min(100, volume));
-    // Увеличиваем базовую громкость на 250% (2.5x)
-    // Когда volume = 100%, реальная громкость = 250% (2.5)
-    // Когда volume = 50%, реальная громкость = 125% (1.25)
-    const baseVolume = this.voiceVolume / 100; // 0-1
-    const gainMultiplier = 2.5; // 250% базовая громкость
-
-    // Вычисляем реальную громкость с учетом множителя
-    // Ограничиваем до 1.0 (максимум Howler), но применяем множитель
-    // При 100%: baseVolume = 1.0, actualVolume = min(1.0, 2.5) = 1.0 (максимум Howler)
-    // При 40%: baseVolume = 0.4, actualVolume = min(1.0, 1.0) = 1.0 (максимум Howler)
-    // При 30%: baseVolume = 0.3, actualVolume = min(1.0, 0.75) = 0.75
-    const actualVolume = Math.min(1.0, baseVolume * gainMultiplier);
+    // Прямая громкость без лимитов
+    const actualVolume = this.voiceVolume / 100;
 
     if (this.voiceGain) {
       this.voiceGain.gain.value = actualVolume;
@@ -750,7 +814,10 @@ export class AudioEngine {
       this.onTimeUpdate(currentTime);
     }
 
-    // 2. Обработка битов (Voice Counting + UI)
+    // 2. Обработка битов: UI (onBeatUpdate) всегда; звук — только один источник, иначе эхо.
+    // При Web Audio звук идёт только из scheduleVoiceAhead(); при Howl — из playVoiceCount().
+    const useWebAudioVoice = this.voiceBuffers.size >= 8;
+
     if (this.beatGrid.length > 0) {
       while (
         this.currentBeatIndex < this.beatGrid.length &&
@@ -758,7 +825,7 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
-          this.playVoiceCount(beat.number);
+          if (!useWebAudioVoice) this.playVoiceCount(beat.number);
           if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         }
         this.currentBeatIndex++;
@@ -770,11 +837,14 @@ export class AudioEngine {
         this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
-        this.playVoiceCount(beat.number);
+        if (!useWebAudioVoice) this.playVoiceCount(beat.number);
         if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
         this.currentBeatIndex++;
       }
     }
+
+    // Планируем счёт вперёд (Web Audio). Единственный источник звука при useWebAudioVoice.
+    this.scheduleVoiceAhead();
 
     // Continue loop - setInterval уже запущен в startUpdate()
     // Не нужно создавать новый интервал здесь
@@ -795,19 +865,72 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Останавливает все запланированные биты немедленно.
+   * Вызывается при паузе/стопе чтобы счет не продолжал играть.
+   */
+  private stopAllScheduledVoices() {
+    this.activeVoiceSources.forEach((src) => {
+      try {
+        src.stop();
+        src.disconnect();
+      } catch {
+        // Source может быть уже остановлен
+      }
+    });
+    this.activeVoiceSources.clear();
+  }
+
   /** Планирует один удар счёта на точное время (стена-часы). Работает при неактивной вкладке. */
   private scheduleVoiceAt(beatNumber: number, whenWallSec: number) {
     if (beatNumber < 1 || beatNumber > 8 || !this.voiceCtx || !this.voiceGain)
       return;
     const buf = this.voiceBuffers.get(beatNumber);
     if (!buf) return;
+
+    // Логируем первые несколько воспроизведений для диагностики
+    if (beatNumber === 1 && !hasLoggedVoicePlayback) {
+      console.log(`[AudioEngine] First voice playback (beat ${beatNumber}):`, {
+        voiceGain: this.voiceGain.gain.value,
+        bufferSampleRate: buf.sampleRate,
+        ctxSampleRate: this.voiceCtx.sampleRate,
+        ctxState: this.voiceCtx.state,
+        silentAnchorRunning: this.isSilentAnchorRunning,
+        activeSources: this.activeVoiceSources.size,
+      });
+      hasLoggedVoicePlayback = true;
+    }
+
     try {
       const src = this.voiceCtx.createBufferSource();
       src.buffer = buf;
+
+      // ДИАГНОСТИКА: Логируем детали только для первых 3 битов
+      if (beatNumber <= 3 && hasLoggedVoicePlayback && this.activeVoiceSources.size < 3) {
+        console.log(`[AudioEngine] BufferSource beat ${beatNumber}:`, {
+          playbackRate: src.playbackRate.value,
+          detune: src.detune.value,
+          loop: src.loop,
+          bufferDuration: buf.duration.toFixed(3),
+          scheduledAt: whenWallSec.toFixed(3),
+          ctxCurrentTime: this.voiceCtx.currentTime.toFixed(3),
+          activeSources: this.activeVoiceSources.size,
+        });
+      }
+
       src.connect(this.voiceGain);
+
+      // Добавляем в активные sources для возможности остановки
+      this.activeVoiceSources.add(src);
+
+      // Автоматически удаляем после завершения
+      src.onended = () => {
+        this.activeVoiceSources.delete(src);
+      };
+
       src.start(whenWallSec);
-    } catch {
-      // игнорируем сбои планирования
+    } catch (err) {
+      console.warn(`[AudioEngine] Failed to schedule voice ${beatNumber}:`, err);
     }
   }
 
@@ -851,8 +974,13 @@ export class AudioEngine {
     if (beatNumber < 1 || beatNumber > 8) return;
     if (!this.shouldPlayVoiceForBeat(beatNumber)) return;
 
-    // Только Howl: воспроизведение через Web Audio давало искажения/шипение
-    // (вероятно ресемплинг или формат при decodeAudioData).
+    // Приоритет: Web Audio (буфер в браузере, точное время, работает в фоне)
+    if (this.voiceCtx && this.voiceBuffers.has(beatNumber)) {
+      this.scheduleVoiceAt(beatNumber, this.voiceCtx.currentTime);
+      return;
+    }
+
+    // Запасной путь: Howl (если Web Audio не загружен)
     const voiceFile = this.voiceFiles.get(beatNumber);
     if (voiceFile) {
       voiceFile.stop();
@@ -881,8 +1009,89 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Запускает Silent Anchor для поддержания AudioContext активным в фоне.
+   * Использует тот же voiceCtx, что и Voice Counting.
+   */
+  startSilentAnchor() {
+    if (DISABLE_SILENT_ANCHOR_TEST) {
+      console.log("[AudioEngine] ⚠️ Silent Anchor DISABLED for testing");
+      return;
+    }
+
+    if (this.isSilentAnchorRunning || !this.voiceCtx) {
+      if (!this.voiceCtx) {
+        console.warn("[AudioEngine] Cannot start silent anchor: voiceCtx not initialized");
+      }
+      return;
+    }
+
+    try {
+      console.log(`[AudioEngine] Starting silent anchor (AudioContext state: ${this.voiceCtx.state})`);
+
+      // Resume AudioContext if suspended
+      if (this.voiceCtx.state === "suspended") {
+        this.voiceCtx.resume().catch((err) => {
+          console.warn("[AudioEngine] Failed to resume AudioContext:", err);
+        });
+      }
+
+      // Create oscillator (20Hz - below human hearing)
+      this.silentOscillator = this.voiceCtx.createOscillator();
+      this.silentOscillator.type = "sine";
+      this.silentOscillator.frequency.value = 20;
+
+      // Create gain (very quiet)
+      this.silentGain = this.voiceCtx.createGain();
+      this.silentGain.gain.value = 0.001; // 0.1% volume
+
+      // Connect: Oscillator -> Gain -> Destination
+      this.silentOscillator.connect(this.silentGain);
+      this.silentGain.connect(this.voiceCtx.destination);
+
+      // Start
+      this.silentOscillator.start();
+      this.isSilentAnchorRunning = true;
+      console.log("[AudioEngine] Silent anchor started successfully");
+    } catch (error) {
+      console.warn("[AudioEngine] Failed to start silent anchor:", error);
+    }
+  }
+
+  /**
+   * Останавливает Silent Anchor.
+   */
+  stopSilentAnchor() {
+    if (!this.isSilentAnchorRunning) return;
+
+    try {
+      if (this.silentOscillator) {
+        this.silentOscillator.stop();
+        this.silentOscillator.disconnect();
+        this.silentOscillator = null;
+      }
+
+      if (this.silentGain) {
+        this.silentGain.disconnect();
+        this.silentGain = null;
+      }
+
+      this.isSilentAnchorRunning = false;
+    } catch (error) {
+      console.warn("Failed to stop silent anchor:", error);
+    }
+  }
+
+  /**
+   * Проверяет, запущен ли Silent Anchor.
+   */
+  isSilentAnchorActive(): boolean {
+    return this.isSilentAnchorRunning;
+  }
+
   destroy() {
     this.stop();
+    this.stopSilentAnchor(); // Остановить Silent Anchor при уничтожении
     this.unloadTrack();
     this.onTrackEnd = null;
     this.onTimeUpdate = null;

@@ -9,6 +9,11 @@ import StemsControl from "@/components/StemsControl";
 import TrackInfo from "@/components/TrackInfo";
 import Playlist from "@/components/Playlist";
 import { audioEngine } from "@/lib/audioEngine";
+import {
+  initMediaSession,
+  setMediaSessionMetadata,
+  setMediaSessionPlaybackState,
+} from "@/lib/media-session";
 import { restoreTrackFromStorage } from "@/store/playerStore";
 import type { Track } from "@/types";
 
@@ -16,6 +21,8 @@ export default function PlaybackPage() {
   const {
     currentTrack,
     tracks,
+    currentTime,
+    duration,
     voiceFilter,
     stemsEnabled,
     stemsVolume,
@@ -29,6 +36,7 @@ export default function PlaybackPage() {
     pause,
     stop,
     isReanalyzing,
+    isPlaying,
   } = usePlayerStore();
 
   const [isClient, setIsClient] = useState(false);
@@ -90,6 +98,31 @@ export default function PlaybackPage() {
       }
     };
   }, [isClient, setAudioEngine, loadTrack]);
+
+  // Media Session + silent anchor для фонового воспроизведения (счёт в фоне / с экрана блокировки)
+  useEffect(() => {
+    if (!isClient || typeof window === "undefined") return;
+    initMediaSession({
+      play: () => usePlayerStore.getState().play(),
+      pause: () => usePlayerStore.getState().pause(),
+    });
+  }, [isClient]);
+
+  useEffect(() => {
+    if (!currentTrack) {
+      setMediaSessionPlaybackState("none");
+      audioEngine.stopSilentAnchor();
+      return;
+    }
+    // Обновляем метаданные только при смене трека или длительности, НЕ на каждое обновление времени
+    setMediaSessionMetadata(currentTrack, currentTime, duration);
+    setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
+    if (isPlaying) {
+      audioEngine.startSilentAnchor();
+    } else {
+      audioEngine.stopSilentAnchor();
+    }
+  }, [currentTrack, isPlaying, duration]); // Убрали currentTime из зависимостей
 
   // Загрузка треков при монтировании
   useEffect(() => {

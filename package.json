@@ -15,7 +15,8 @@
     "db:check": "tsx scripts/check-db.ts",
     "db:scan": "tsx scripts/scan-music-folder.ts",
     "db:clear": "tsx scripts/clear-tracks.ts",
-    "check:demucs": "tsx scripts/check-demucs.ts"
+    "check:demucs": "tsx scripts/check-demucs.ts",
+    "create:silent-anchor": "node scripts/create-silent-anchor.js"
   },
   "dependencies": {
     "@prisma/client": "^5.19.0",
