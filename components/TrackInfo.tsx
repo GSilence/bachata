@@ -24,6 +24,7 @@ export default function TrackInfo({}: TrackInfoProps) {
     currentTrack?.offset.toString() || "0",
   );
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isShifting, setIsShifting] = useState(false);
 
   // Обновляем временные значения при смене трека
   useEffect(() => {
@@ -133,6 +134,50 @@ export default function TrackInfo({}: TrackInfoProps) {
       );
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const analysisCompleted =
+    currentTrack &&
+    (currentTrack.analyzerType === "basic" ||
+      currentTrack.analyzerType === "extended");
+
+  const shiftSeconds =
+    currentTrack && currentTrack.bpm > 0 ? (60 / currentTrack.bpm) * 4 : 0;
+
+  const handleGridShift = async (direction: "back" | "forward") => {
+    if (!currentTrack || isShifting || !analysisCompleted) return;
+
+    const newOffset =
+      direction === "forward"
+        ? currentTrack.offset + shiftSeconds
+        : currentTrack.offset - shiftSeconds;
+
+    if (newOffset < 0) return;
+
+    setIsShifting(true);
+    try {
+      const res = await fetch("/api/rhythm/update-offset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track_id: currentTrack.id,
+          new_offset: newOffset,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка сдвига сетки");
+      if (data.track) setCurrentTrack(data.track);
+      setTempOffset(data.track.offset.toString());
+    } catch (e) {
+      console.error("Grid shift failed:", e);
+      alert(
+        `Ошибка при сдвиге сетки: ${
+          e instanceof Error ? e.message : "Unknown error"
+        }`,
+      );
+    } finally {
+      setIsShifting(false);
     }
   };
 
@@ -281,6 +326,52 @@ export default function TrackInfo({}: TrackInfoProps) {
           </button>
         </div>
       </div>
+
+      {/* Сдвиг сетки на ±1 такт */}
+      {analysisCompleted && (
+        <div className="mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-400">
+            Сдвиг сетки:
+          </span>
+          <button
+            type="button"
+            onClick={() => handleGridShift("back")}
+            disabled={
+              isShifting ||
+              isReanalyzing ||
+              currentTrack.offset - shiftSeconds < 0
+            }
+            title="Сдвинуть сетку на 1 такт назад (4 доли)"
+            className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5"
+          >
+            {isShifting ? (
+              <svg
+                className="w-4 h-4 animate-spin shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            ) : null}
+            &laquo; Сдвиг -1 Такт
+          </button>
+          <button
+            type="button"
+            onClick={() => handleGridShift("forward")}
+            disabled={isShifting || isReanalyzing}
+            title="Сдвинуть сетку на 1 такт вперёд (4 доли)"
+            className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5"
+          >
+            Сдвиг +1 Такт &raquo;
+          </button>
+        </div>
+      )}
 
       {/* Параметры */}
       <div className="space-y-2">

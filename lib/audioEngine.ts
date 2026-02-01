@@ -1,9 +1,6 @@
 import { Howl, Howler } from "howler";
 import type { Track, GridMap, Beat } from "@/types";
-import {
-  generateFallbackBeatGrid,
-  generateBeatGridFromDownbeats,
-} from "./beatGrid";
+import { generateFallbackBeatGrid } from "./beatGrid";
 
 // Debug flags
 let hasLoggedVoicePlayback = false;
@@ -157,7 +154,9 @@ export class AudioEngine {
   private async loadVoiceBuffers() {
     if (!this.voiceCtx) return;
     console.log(`[AudioEngine] Loading voice buffers via Web Audio...`);
-    console.log(`[AudioEngine] AudioContext sample rate: ${this.voiceCtx.sampleRate} Hz`);
+    console.log(
+      `[AudioEngine] AudioContext sample rate: ${this.voiceCtx.sampleRate} Hz`,
+    );
 
     for (let i = 1; i <= 8; i++) {
       try {
@@ -197,15 +196,21 @@ export class AudioEngine {
 
           // ПРЕДУПРЕЖДЕНИЕ: если пики близки к 1.0, файл может клипировать
           if (maxPeak > 0.95 || minPeak < -0.95) {
-            console.warn(`[AudioEngine] ⚠️ Buffer ${i} has high peaks (>0.95), may clip!`);
+            console.warn(
+              `[AudioEngine] ⚠️ Buffer ${i} has high peaks (>0.95), may clip!`,
+            );
           }
         }
       } catch (err) {
         console.warn(`[AudioEngine] Failed to load voice buffer ${i}:`, err);
       }
     }
-    console.log(`[AudioEngine] Loaded ${this.voiceBuffers.size}/8 voice buffers`);
-    console.log(`[AudioEngine] Current voiceGain value: ${this.voiceGain?.gain.value}`);
+    console.log(
+      `[AudioEngine] Loaded ${this.voiceBuffers.size}/8 voice buffers`,
+    );
+    console.log(
+      `[AudioEngine] Current voiceGain value: ${this.voiceGain?.gain.value}`,
+    );
   }
 
   static getInstance(): AudioEngine {
@@ -251,23 +256,11 @@ export class AudioEngine {
     this.currentBeatIndex = 0;
     this._isPlaying = false; // Reset playing state
 
-    // 3. Beat Grid - генерируем из gridMap если есть, иначе используем fallback
-    if (track.gridMap && track.gridMap.grid && track.gridMap.grid.length > 0) {
-      // Используем gridMap для генерации точного beatGrid с учетом мостиков
-      // Получаем длительность трека из gridMap (из результата анализа) или используем фоллбек
-      const duration = track.gridMap.duration || 180;
-      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
-    } else if (track.beatGrid && track.beatGrid.length > 0) {
-      // Используем предварительно сгенерированный beatGrid (если есть)
-      this.beatGrid = track.beatGrid;
-    } else {
-      // Fallback: генерируем простой beatGrid без учета мостиков
-      // Используем duration из gridMap если есть, иначе фоллбек
-      const duration = track.gridMap?.duration || 180;
-      const bpm = track.bpm || 120;
-      const offset = track.offset || 0;
-      this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
-    }
+    // 3. Beat Grid — простая сетка 1–8 по BPM и offset, без сбросов по секциям (мостики пока не используем)
+    const duration = track.gridMap?.duration || 180;
+    const bpm = track.bpm || 120;
+    const offset = track.offset || 0;
+    this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
 
     // 4. Загрузка аудио
     if (this.isStemsMode && track.isProcessed) {
@@ -297,26 +290,24 @@ export class AudioEngine {
   private loadStems(track: Track) {
     // После загрузки стемов обновляем beatGrid с правильной длительностью
     const updateBeatGridAfterLoad = () => {
-      if (this.currentTrack?.gridMap) {
-        // Используем длительность из vocals (или другого доступного стема)
-        let duration = 0;
-        if (this.stemsTracks.vocals) {
-          duration = this.stemsTracks.vocals.duration();
-        } else if (this.stemsTracks.drums) {
-          duration = this.stemsTracks.drums.duration();
-        } else if (this.stemsTracks.bass) {
-          duration = this.stemsTracks.bass.duration();
-        } else if (this.stemsTracks.other) {
-          duration = this.stemsTracks.other.duration();
-        }
-
-        if (duration && duration > 0) {
-          // Регенерируем beatGrid с правильной длительностью
-          this.beatGrid = generateBeatGridFromDownbeats(
-            this.currentTrack.gridMap,
-            duration,
-          );
-        }
+      const t = this.currentTrack;
+      if (!t) return;
+      let duration = 0;
+      if (this.stemsTracks.vocals) {
+        duration = this.stemsTracks.vocals.duration();
+      } else if (this.stemsTracks.drums) {
+        duration = this.stemsTracks.drums.duration();
+      } else if (this.stemsTracks.bass) {
+        duration = this.stemsTracks.bass.duration();
+      } else if (this.stemsTracks.other) {
+        duration = this.stemsTracks.other.duration();
+      }
+      if (duration > 0) {
+        this.beatGrid = generateFallbackBeatGrid(
+          t.bpm || 120,
+          t.offset || 0,
+          duration,
+        );
       }
     };
     if (
@@ -460,7 +451,10 @@ export class AudioEngine {
     // ВАЖНО: ждем завершения resume() перед воспроизведением!
     if (this.voiceCtx?.state === "suspended") {
       await this.voiceCtx.resume();
-      console.log("[AudioEngine] AudioContext resumed, state:", this.voiceCtx.state);
+      console.log(
+        "[AudioEngine] AudioContext resumed, state:",
+        this.voiceCtx.state,
+      );
     }
     // Sync cursor
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
@@ -906,7 +900,11 @@ export class AudioEngine {
       src.buffer = buf;
 
       // ДИАГНОСТИКА: Логируем детали только для первых 3 битов
-      if (beatNumber <= 3 && hasLoggedVoicePlayback && this.activeVoiceSources.size < 3) {
+      if (
+        beatNumber <= 3 &&
+        hasLoggedVoicePlayback &&
+        this.activeVoiceSources.size < 3
+      ) {
         console.log(`[AudioEngine] BufferSource beat ${beatNumber}:`, {
           playbackRate: src.playbackRate.value,
           detune: src.detune.value,
@@ -930,7 +928,10 @@ export class AudioEngine {
 
       src.start(whenWallSec);
     } catch (err) {
-      console.warn(`[AudioEngine] Failed to schedule voice ${beatNumber}:`, err);
+      console.warn(
+        `[AudioEngine] Failed to schedule voice ${beatNumber}:`,
+        err,
+      );
     }
   }
 
@@ -1021,13 +1022,17 @@ export class AudioEngine {
 
     if (this.isSilentAnchorRunning || !this.voiceCtx) {
       if (!this.voiceCtx) {
-        console.warn("[AudioEngine] Cannot start silent anchor: voiceCtx not initialized");
+        console.warn(
+          "[AudioEngine] Cannot start silent anchor: voiceCtx not initialized",
+        );
       }
       return;
     }
 
     try {
-      console.log(`[AudioEngine] Starting silent anchor (AudioContext state: ${this.voiceCtx.state})`);
+      console.log(
+        `[AudioEngine] Starting silent anchor (AudioContext state: ${this.voiceCtx.state})`,
+      );
 
       // Resume AudioContext if suspended
       if (this.voiceCtx.state === "suspended") {
