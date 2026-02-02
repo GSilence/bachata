@@ -4,6 +4,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
+import { requireAdmin } from "@/lib/auth";
 
 // Настройки для работы с большими файлами и долгими операциями
 export const runtime = "nodejs";
@@ -14,6 +15,11 @@ export const maxDuration = 600; // 10 минут таймаут для API route
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;

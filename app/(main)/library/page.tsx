@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useAuthStore } from "@/store/authStore";
 
 const CONCURRENCY = 2;
 
@@ -49,6 +50,7 @@ async function extractMetadataFromFile(file: File): Promise<TrackMetadata> {
 
 export default function LibraryPage() {
   const router = useRouter();
+  const { user, isLoading, checkAuth } = useAuthStore();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("basic");
   const [isExtracting, setIsExtracting] = useState(false);
@@ -57,6 +59,29 @@ export default function LibraryPage() {
   const [allDone, setAllDone] = useState(false);
   const itemsRef = useRef<QueueItem[]>([]);
   itemsRef.current = items;
+
+  // Auth check
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  useEffect(() => {
+    if (!isLoading && (!user || user.role !== "admin")) {
+      router.push("/login?redirect=/library");
+    }
+  }, [user, isLoading, router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-gray-400">Загрузка...</div>
+      </div>
+    );
+  }
+
+  if (!user || user.role !== "admin") {
+    return null;
+  }
 
   const updateItem = (
     id: string,

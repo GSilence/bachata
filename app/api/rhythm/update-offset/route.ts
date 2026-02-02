@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { GridMap } from "@/types";
+import { requireAdmin } from "@/lib/auth";
 
 /**
  * POST /api/rhythm/update-offset
@@ -8,6 +9,11 @@ import type { GridMap } from "@/types";
  * Обновляет offset трека и пересчитывает gridMap.downbeats при необходимости.
  */
 export async function POST(request: NextRequest) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await request.json().catch(() => ({}));
     const trackId =

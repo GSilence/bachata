@@ -3,11 +3,17 @@ import { prisma } from '@/lib/prisma'
 import { rm } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { requireAdmin } from '@/lib/auth'
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  try {
+    await requireAdmin(request)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     const trackId = parseInt(params.id)
     

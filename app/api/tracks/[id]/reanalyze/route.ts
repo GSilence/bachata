@@ -3,6 +3,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const trackId = parseInt(params.id, 10);
     if (isNaN(trackId)) {

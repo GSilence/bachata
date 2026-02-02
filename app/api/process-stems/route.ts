@@ -3,6 +3,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import { mkdir } from "fs/promises";
 import { runDemucs } from "@/lib/demucs";
+import { requireAdmin } from "@/lib/auth";
 
 // Настройки для работы с большими файлами и долгими операциями
 export const runtime = "nodejs";
@@ -10,6 +11,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 600; // 10 минут таймаут для API route (Next.js 15)
 
 export async function POST(request: NextRequest) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await request.json();
     const trackId = body.trackId as number | undefined;

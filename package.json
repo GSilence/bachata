@@ -16,11 +16,14 @@
     "db:scan": "tsx scripts/scan-music-folder.ts",
     "db:clear": "tsx scripts/clear-tracks.ts",
     "check:demucs": "tsx scripts/check-demucs.ts",
-    "create:silent-anchor": "node scripts/create-silent-anchor.js"
+    "create:silent-anchor": "node scripts/create-silent-anchor.js",
+    "db:seed-admin": "tsx scripts/seed-admin.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.19.0",
+    "bcryptjs": "^3.0.3",
     "howler": "^2.2.4",
+    "jose": "^6.1.3",
     "jsmediatags": "^3.9.7",
     "next": "^15.1.0",
     "react": "^18.3.1",
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.1.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/howler": "^2.2.11",
     "@types/jsmediatags": "^3.9.6",
     "@types/node": "^22.0.0",

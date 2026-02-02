@@ -7,7 +7,12 @@
       "Bash(npm run dev:*)",
       "Bash(npx tsc:*)",
       "Bash(taskkill:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npx prisma:*)",
+      "Bash($env:ADMIN_PASSWORD=\"Silence\")",
+      "Bash(npx tsx:*)",
+      "Bash(ADMIN_PASSWORD=Silence npx tsx:*)"
     ]
   }
 }

@@ -949,14 +949,6 @@ export class AudioEngine {
     const nowWall = this.voiceCtx.currentTime;
     const horizon = nowTrack + AudioEngine.SCHEDULE_AHEAD_SEC;
 
-    // При откате (seek назад) не планируем повторно уже пройденные биты
-    while (
-      this.lastScheduledVoiceBeatIndex >= 0 &&
-      this.beatGrid[this.lastScheduledVoiceBeatIndex]?.time > nowTrack + 0.05
-    ) {
-      this.lastScheduledVoiceBeatIndex--;
-    }
-
     for (
       let i = this.lastScheduledVoiceBeatIndex + 1;
       i < this.beatGrid.length;

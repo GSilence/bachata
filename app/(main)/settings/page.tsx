@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import SettingsPanel from "@/components/SettingsPanel";
+import { useAuthStore } from "@/store/authStore";
 
 interface TrackStats {
   total: number;
@@ -12,15 +14,28 @@ interface TrackStats {
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const { user, isLoading, checkAuth } = useAuthStore();
   const [isExporting, setIsExporting] = useState(false);
   const [stats, setStats] = useState<TrackStats | null>(null);
   const [tracks, setTracks] = useState<any[]>([]);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Загружаем статистику при монтировании
+  // Auth check
   useEffect(() => {
-    fetchStats();
-  }, []);
+    checkAuth();
+  }, [checkAuth]);
+
+  useEffect(() => {
+    if (!isLoading && (!user || user.role !== "admin")) {
+      router.push("/login?redirect=/settings");
+    }
+  }, [user, isLoading, router]);
+
+  // Загружаем статистику при монтировании (только для админа)
+  useEffect(() => {
+    if (user?.role === "admin") fetchStats();
+  }, [user]);
 
   const fetchStats = async () => {
     try {
@@ -67,6 +82,18 @@ export default function SettingsPage() {
       setIsExporting(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-gray-400">Загрузка...</div>
+      </div>
+    );
+  }
+
+  if (!user || user.role !== "admin") {
+    return null;
+  }
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto">
