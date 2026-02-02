@@ -41,6 +41,7 @@ export default function PlaybackPage() {
 
   const [isClient, setIsClient] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
+  const [isBridgeBeat, setIsBridgeBeat] = useState(false);
   const [beatCounterMode, setBeatCounterMode] = useState<
     "inline" | "fullscreen"
   >("inline");
@@ -221,8 +222,9 @@ export default function PlaybackPage() {
     if (!isClient) return;
 
     // Устанавливаем callback для обновления бита
-    audioEngine.setOnBeatUpdate((beatNumber) => {
+    audioEngine.setOnBeatUpdate((beatNumber, isBridge) => {
       setCurrentBeat(beatNumber);
+      setIsBridgeBeat(!!isBridge);
     });
 
     // Также обновляем при загрузке трека
@@ -336,6 +338,7 @@ export default function PlaybackPage() {
                 {isClient ? (
                   <BeatCounter
                     currentBeat={currentBeat - 1}
+                    isBridge={isBridgeBeat}
                     onPlay={handlePlay}
                     onPause={handlePause}
                     onStop={handleStop}

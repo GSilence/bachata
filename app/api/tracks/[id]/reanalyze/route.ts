@@ -52,8 +52,10 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const analyzer: AnalyzerType =
-      body.analyzer === "basic" ? "basic" : "extended";
+    const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
+    const analyzer: AnalyzerType = validAnalyzers.includes(body.analyzer)
+      ? body.analyzer
+      : "extended";
 
     const relativePath = pathOriginal.replace(/^\//, "");
     const filePath = join(process.cwd(), "public", relativePath);
@@ -95,7 +97,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       track: updated,
-      message: `Re-analyzed with ${analyzer === "extended" ? "extended" : "basic"} analyzer`,
+      message: `Re-analyzed with ${analyzer} analyzer`,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

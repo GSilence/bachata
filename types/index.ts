@@ -16,12 +16,14 @@ export interface GridMap {
   downbeats?: number[]; // Массив времен downbeats (сильных долей) в секундах
   totalBeats?: number; // Общее количество beats для справки
   duration?: number; // Длительность трека в секундах (из анализа)
+  bridges?: number[]; // Массив времён начала бриджей (секунды), задаётся админом вручную
 }
 
 export interface Beat {
   time: number; // Timestamp in seconds
   number: number; // The beat number (1-8) to speak
   hasVoice: boolean; // Should we play voice? (Breaks/Bridges might have logic)
+  isBridge?: boolean; // true если бит внутри бриджа (4-тактная сбивка)
 }
 
 export interface Track {
@@ -44,7 +46,7 @@ export interface Track {
   isProcessed: boolean;
   gridMap: GridMap | null; // сложная структура с grid (verse/bridge секции) от madmom анализа
   beatGrid: Beat[] | null; // Pre-calculated beat grid for rhythm counting
-  analyzerType?: "basic" | "extended" | null; // какой анализатор использовался: basic / extended
+  analyzerType?: "basic" | "extended" | "correlation" | null; // какой анализатор использовался: basic / extended / correlation
 }
 
 export interface PlayerState {
@@ -94,6 +96,7 @@ export interface PlayerState {
   // Actions
   setReanalyzing: (value: boolean) => void;
   setCurrentTrack: (track: Track | null) => void;
+  updateCurrentTrack: (track: Track) => void;
   setTracks: (tracks: Track[]) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setCurrentTime: (time: number) => void;

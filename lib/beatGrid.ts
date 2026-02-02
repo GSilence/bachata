@@ -1,4 +1,4 @@
-import type { Beat, GridMap } from "@/types";
+import type { Beat, GridMap, GridSection } from "@/types";
 
 /**
  * Generates a fallback beat grid for standard 1-8 cycle
@@ -71,10 +71,21 @@ export function generateBeatGridFromDownbeats(
 ): Beat[] {
   const bpm = gridMap.bpm;
   const offset = gridMap.offset || 0;
-  const sections = gridMap.grid || [];
+  const bridges = gridMap.bridges || [];
 
   // Интервал между beats = 60 / bpm (константа для идеального метронома)
   const beatInterval = 60 / bpm;
+
+  // Секции строим ТОЛЬКО из ручных бриджей (секции анализатора не используем для нумерации)
+  const sections: GridSection[] = [];
+  for (const bridgeTime of bridges) {
+    sections.push({ type: "bridge", start: bridgeTime, beats: 4 });
+    sections.push({
+      type: "verse",
+      start: bridgeTime + 4 * beatInterval,
+      beats: 8,
+    });
+  }
 
   // ============================================
   // ШАГ 1: ГЕНЕРАЦИЯ СКЕЛЕТА (Master Grid)
@@ -176,6 +187,7 @@ export function generateBeatGridFromDownbeats(
 
   // Затем нумеруем beats внутри каждой секции, начиная с "1" на начале секции
   for (const sectionInfo of sectionInfos) {
+    const isBridgeSection = sectionInfo.section.type === "bridge";
     // Сбрасываем на "1" на начале секции
     let beatNum = 1;
 
@@ -185,6 +197,9 @@ export function generateBeatGridFromDownbeats(
       i++
     ) {
       skeletonBeats[i].number = beatNum;
+      if (isBridgeSection) {
+        skeletonBeats[i].isBridge = true;
+      }
       beatNum = (beatNum % 8) + 1;
     }
   }

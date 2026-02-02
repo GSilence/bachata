@@ -118,6 +118,10 @@ export const usePlayerStore = create<PlayerState>()(
         audioEngine.setMusicVolume(musicVolume);
         audioEngine.setVoiceVolume(voiceVolume);
       },
+      updateCurrentTrack: (track) => {
+        // Обновляет метаданные трека без перезагрузки аудио (для бриджей, offset и т.д.)
+        set({ currentTrack: track });
+      },
       setTracks: (tracks) => set({ tracks }),
       setIsPlaying: (isPlaying) => {
         set({ isPlaying });

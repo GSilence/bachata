@@ -114,7 +114,8 @@ def find_smart_drop_index(bass_values, beat_probs):
                 dist = anchor_idx - i
                 
                 # FIX: Strict Grid Consistency.
-                # Если dist % 4 == 0, то фаза совпадает (1 или 5).
+                # dist % 4 == 0 счёт 1 (или 5).
+                # Бачата считается на 8: 1,2,3,4,5,6,7,8 — смещение кратно 4.
                 if dist % 4 == 0:
                     print(f"[SmartDrop] Found valid Bass Start at {i}. Dist to Anchor: {dist}. Bass: {curr:.2f}", file=sys.stderr)
                     found_bass_start = i

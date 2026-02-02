@@ -12,8 +12,8 @@ interface TrackMetadata {
   artist?: string;
 }
 
-type ItemStatus = "pending" | "processing" | "done" | "error";
-type AnalyzerChoice = "basic" | "extended";
+type ItemStatus = "pending" | "processing" | "done" | "error" | "duplicate";
+type AnalyzerChoice = "basic" | "extended" | "correlation";
 
 interface QueueItem {
   id: string;
@@ -71,6 +71,16 @@ export default function LibraryPage() {
     }
   }, [user, isLoading, router]);
 
+  // Block navigation (browser close/refresh) during processing
+  useEffect(() => {
+    if (!isProcessing) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isProcessing]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -120,7 +130,7 @@ export default function LibraryPage() {
 
   const processOne = async (
     item: QueueItem,
-  ): Promise<{ id: string; status: "done" | "error"; error?: string }> => {
+  ): Promise<{ id: string; status: "done" | "error" | "duplicate"; error?: string }> => {
     const m = item.metadata;
     if (!m.title?.trim()) {
       return {
@@ -143,12 +153,20 @@ export default function LibraryPage() {
         body: formData,
       });
       const data = await res.json();
-      if (!res.ok)
+      if (!res.ok) {
+        if (data.duplicate) {
+          return {
+            id: item.id,
+            status: "duplicate" as const,
+            error: data.error || "Дубликат",
+          };
+        }
         return {
           id: item.id,
           status: "error",
           error: data.error || "Ошибка обработки",
         };
+      }
       return { id: item.id, status: "done" };
     } catch (err: unknown) {
       return {
@@ -202,18 +220,53 @@ export default function LibraryPage() {
 
   const doneCount = items.filter((i) => i.status === "done").length;
   const errorCount = items.filter((i) => i.status === "error").length;
+  const dupCount = items.filter((i) => i.status === "duplicate").length;
   const total = items.length;
+  const finishedCount = doneCount + errorCount + dupCount;
   const progressLabel =
     total > 0
       ? isProcessing
-        ? `Обработано ${doneCount + errorCount} из ${total}`
+        ? `Обработано ${finishedCount} из ${total}`
         : allDone
-          ? `Готово: ${doneCount} успешно, ${errorCount} с ошибками`
+          ? `Готово: ${doneCount} успешно${dupCount ? `, ${dupCount} дубл.` : ""}${errorCount ? `, ${errorCount} ошибок` : ""}`
           : `${total} файл(ов) в очереди`
       : null;
 
   return (
     <div className="min-h-screen bg-gray-900 p-8">
+      {/* Full-screen overlay blocking all navigation during processing */}
+      {isProcessing && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-start justify-center pt-4 pointer-events-auto">
+          <div className="bg-gray-800 border border-gray-600 rounded-xl px-6 py-4 shadow-2xl flex items-center gap-4 max-w-md">
+            <svg
+              className="animate-spin h-6 w-6 text-purple-400 shrink-0"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+            <div>
+              <p className="text-white font-medium">Идёт обработка треков</p>
+              <p className="text-gray-400 text-sm">
+                {progressLabel || "Подождите, пожалуйста..."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold text-white">Медиатека</h1>
@@ -281,6 +334,17 @@ export default function LibraryPage() {
                     className="text-purple-600 focus:ring-purple-600"
                   />
                   <span className="text-sm text-gray-300">Базовый анализ</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="uploadAnalyzer"
+                    checked={uploadAnalyzer === "correlation"}
+                    onChange={() => setUploadAnalyzer("correlation")}
+                    disabled={isProcessing}
+                    className="text-purple-600 focus:ring-purple-600"
+                  />
+                  <span className="text-sm text-gray-300">Корреляция</span>
                 </label>
               </div>
             </div>
@@ -458,5 +522,7 @@ function StatusBadge({
     return wrap("Обработка…", "bg-amber-900/50 text-amber-200");
   if (status === "done")
     return wrap("Готово", "bg-green-900/50 text-green-200");
+  if (status === "duplicate")
+    return wrap(error ?? "Дубликат", "bg-yellow-900/50 text-yellow-200");
   return wrap(error ?? "Ошибка", "bg-red-900/50 text-red-200");
 }

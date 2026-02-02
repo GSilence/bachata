@@ -53,7 +53,7 @@ export interface FullAudioAnalysisResult extends AudioAnalysisResult {
   beatGrid: Beat[] | null;
 }
 
-export type AnalyzerType = "basic" | "extended";
+export type AnalyzerType = "basic" | "extended" | "correlation";
 
 /** Опции анализа: analyzer — скрипт (basic = analyze-track.py, extended = analyze-track-improved.py) */
 export type AnalyzeTrackOptions =
@@ -81,6 +81,10 @@ export async function analyzeTrack(
     typeof options === "object" &&
     options !== null &&
     (options as { analyzer?: string }).analyzer === "extended";
+  const useCorrelation =
+    typeof options === "object" &&
+    options !== null &&
+    (options as { analyzer?: string }).analyzer === "correlation";
   const drumsPath =
     (typeof options === "object" && options !== null && "drumsPath" in options
       ? (options as { drumsPath?: string }).drumsPath
@@ -99,6 +103,8 @@ export async function analyzeTrack(
   let scriptPath: string;
   if (useLegacy) {
     scriptPath = join(process.cwd(), "scripts", "analyze-bpm-offset.py");
+  } else if (useCorrelation) {
+    scriptPath = join(process.cwd(), "scripts", "analyze-track-correlation.py");
   } else if (useExtended) {
     scriptPath = join(process.cwd(), "scripts", "analyze-track-improved.py");
   } else {

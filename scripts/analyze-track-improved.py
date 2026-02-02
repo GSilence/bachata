@@ -331,9 +331,9 @@ def backtrack_to_start(beats_data, anchor):
             break
         
         # Проверка 3: Grid Lock - проверяем что мы на правильной фазе
-        # Расстояние от якоря до кандидата должно быть кратно 4
+        # Расстояние от якоря до кандидата должно быть кратно 8 (полный квадрат бачаты)
         distance = anchor['id'] - candidate_idx
-        if distance % 4 != 0:
+        if distance % 8 != 0:
             print(f"[Backtrack] Grid lock violation at beat {candidate_idx} (dist={distance})", file=sys.stderr)
             break
         
@@ -384,7 +384,7 @@ def validate_offset_locally(beats_data, start_beat):
         if max_prev_bass > start_beat['norm_low'] * 1.5:
             # Но только если это соблюдает Grid Lock
             for pb in prev_2_beats:
-                if (idx - pb['id']) % 4 == 0 and is_musical_event(pb):
+                if (idx - pb['id']) % 8 == 0 and is_musical_event(pb):
                     print(f"[Validation] Stronger event found at beat {pb['id']}, adjusting", file=sys.stderr)
                     start_beat = pb
                     reason_validation = " -> Validation (stronger prev)"

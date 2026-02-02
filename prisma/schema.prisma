@@ -31,6 +31,7 @@ model Track {
   isProcessed  Boolean @default(false) // обработан ли трек через Demucs
   gridMap      Json?    // сложная структура с grid (verse/bridge секции) от madmom анализа
   analyzerType String?  // тип анализа ритма: "basic" (analyze-track.py) или "extended" (analyze-track-improved.py)
+  fileHash     String?  // MD5 хеш файла для обнаружения дубликатов
 }
 
 model User {

@@ -5,6 +5,7 @@ import { usePlayerStore } from "@/store/playerStore";
 
 interface BeatCounterProps {
   currentBeat: number; // 0-7 (соответствует 1-8)
+  isBridge?: boolean; // true если текущий бит внутри бриджа (жёлтый цвет)
   onPlay?: () => void;
   onPause?: () => void;
   onStop?: () => void;
@@ -14,6 +15,7 @@ interface BeatCounterProps {
 
 export default function BeatCounter({
   currentBeat,
+  isBridge,
   onPlay,
   onPause,
   onStop,
@@ -93,7 +95,9 @@ export default function BeatCounter({
                   flex-1 text-center transition-all duration-200
                   ${
                     isActive
-                      ? "scale-[2] font-bold text-purple-400"
+                      ? isBridge
+                        ? "scale-[2] font-bold text-yellow-400"
+                        : "scale-[2] font-bold text-purple-400"
                       : "scale-100 text-gray-400"
                   }
                   text-2xl md:text-5xl
@@ -122,10 +126,14 @@ export default function BeatCounter({
             {isPlaying ? (
               <div
                 onClick={handleNumberClick}
-                className="text-white text-center cursor-pointer text-[20rem] md:text-[clamp(4rem,20vw,15rem)]"
+                className={`text-center cursor-pointer text-[20rem] md:text-[clamp(4rem,20vw,15rem)] ${
+                  isBridge ? "text-yellow-400" : "text-white"
+                }`}
                 style={{
                   fontWeight: "bold",
-                  textShadow: "0 0 40px rgba(192, 132, 252, 0.8)",
+                  textShadow: isBridge
+                    ? "0 0 40px rgba(250, 204, 21, 0.8)"
+                    : "0 0 40px rgba(192, 132, 252, 0.8)",
                 }}
               >
                 {activeBeatNumber}

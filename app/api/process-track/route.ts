@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
 import { requireAdmin } from "@/lib/auth";
 
@@ -30,9 +30,11 @@ export async function POST(request: NextRequest) {
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
     const comment = formData.get("comment") as string | null;
-    const analyzer = (formData.get("analyzer") as string) || "extended"; // 'basic' | 'extended', по умолчанию расширенный
-    const analyzerOption: AnalyzerType =
-      analyzer === "basic" ? "basic" : "extended";
+    const analyzer = (formData.get("analyzer") as string) || "extended"; // 'basic' | 'extended' | 'correlation', по умолчанию расширенный
+    const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
+    const analyzerOption: AnalyzerType = validAnalyzers.includes(analyzer as AnalyzerType)
+      ? (analyzer as AnalyzerType)
+      : "extended";
     // BPM и Offset всегда определяются автоматически
     const autoBpm = true;
     const autoOffset = true;
@@ -67,6 +69,71 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Читаем файл в буфер
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    // Вычисляем MD5 хеш файла для проверки дубликатов
+    const fileHash = createHash("md5").update(buffer).digest("hex");
+
+    // Импортируем Prisma для проверки дубликатов
+    const { prisma } = await import("@/lib/prisma");
+
+    if (!prisma) {
+      return NextResponse.json(
+        { error: "Database not available" },
+        { status: 500 },
+      );
+    }
+
+    // --- Проверка дубликатов ---
+    // 1. По MD5 хешу файла (точное совпадение)
+    const hashDuplicate = await prisma.track.findFirst({
+      where: { fileHash },
+    });
+    if (hashDuplicate) {
+      return NextResponse.json(
+        {
+          error: "Этот файл уже загружен",
+          duplicate: true,
+          existingTrack: {
+            id: hashDuplicate.id,
+            title: hashDuplicate.title,
+            artist: hashDuplicate.artist,
+          },
+        },
+        { status: 409 },
+      );
+    }
+
+    // 2. По title + artist (MySQL ci collation = case-insensitive)
+    const trimmedTitle = title.trim();
+    const trimmedArtist = artist?.trim() || null;
+
+    const titleArtistDuplicate = await prisma.track.findFirst({
+      where: {
+        title: trimmedTitle,
+        ...(trimmedArtist
+          ? { artist: trimmedArtist }
+          : { artist: null }),
+      },
+    });
+
+    if (titleArtistDuplicate) {
+      return NextResponse.json(
+        {
+          error: `Трек "${titleArtistDuplicate.title}" — ${titleArtistDuplicate.artist || "Unknown"} уже существует`,
+          duplicate: true,
+          existingTrack: {
+            id: titleArtistDuplicate.id,
+            title: titleArtistDuplicate.title,
+            artist: titleArtistDuplicate.artist,
+          },
+        },
+        { status: 409 },
+      );
+    }
+
     // Создаем директории, если их нет
     const uploadsDir = join(process.cwd(), "public", "uploads", "raw");
 
@@ -75,7 +142,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Генерируем уникальный идентификатор для трека
-    // Используем UUID для гарантированной уникальности
     const uniqueId = randomUUID();
     const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
     const fileExtension = safeFileName.split(".").pop() || "mp3";
@@ -88,8 +154,6 @@ export async function POST(request: NextRequest) {
     );
 
     // Сохраняем файл
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
     await writeFile(filePath, buffer);
 
     console.log(`File saved: ${filePath}`);
@@ -151,16 +215,6 @@ export async function POST(request: NextRequest) {
       // gridMap останется null - будет использован линейный beat tracking
     }
 
-    // Импортируем Prisma динамически
-    const { prisma } = await import("@/lib/prisma");
-
-    if (!prisma) {
-      return NextResponse.json(
-        { error: "Database not available" },
-        { status: 500 },
-      );
-    }
-
     // Подготавливаем метаданные для сохранения
     const metadata = {
       album: album || null,
@@ -188,6 +242,7 @@ export async function POST(request: NextRequest) {
         pathOther: null,
         isProcessed: false, // Трек еще не разложен на стемы
         analyzerType: analyzerOption,
+        fileHash: fileHash,
         gridMap: gridMap
           ? JSON.parse(
               JSON.stringify({

@@ -1,6 +1,9 @@
 import { Howl, Howler } from "howler";
 import type { Track, GridMap, Beat } from "@/types";
-import { generateFallbackBeatGrid } from "./beatGrid";
+import {
+  generateFallbackBeatGrid,
+  generateBeatGridFromDownbeats,
+} from "./beatGrid";
 
 // Debug flags
 let hasLoggedVoicePlayback = false;
@@ -64,7 +67,9 @@ export class AudioEngine {
   // NEW: Callback для обновления прогресс-бара UI синхронно с движком
   private onTimeUpdate: ((currentTime: number) => void) | null = null;
   // Callback для обновления текущего бита в UI
-  private onBeatUpdate: ((beatNumber: number) => void) | null = null;
+  private onBeatUpdate:
+    | ((beatNumber: number, isBridge?: boolean) => void)
+    | null = null;
 
   private trackEndFired: boolean = false;
 
@@ -257,11 +262,19 @@ export class AudioEngine {
     this.currentBeatIndex = 0;
     this._isPlaying = false; // Reset playing state
 
-    // 3. Beat Grid — простая сетка 1–8 по BPM и offset, без сбросов по секциям (мостики пока не используем)
+    // 3. Beat Grid — из gridMap (с бриджами и секциями) или fallback 1–8
     const duration = track.gridMap?.duration || 180;
     const bpm = track.bpm || 120;
     const offset = track.offset || 0;
-    this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
+    if (
+      track.gridMap &&
+      ((track.gridMap.grid && track.gridMap.grid.length > 0) ||
+        (track.gridMap.bridges && track.gridMap.bridges.length > 0))
+    ) {
+      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
+    } else {
+      this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
+    }
 
     // 4. Загрузка аудио
     if (this.isStemsMode && track.isProcessed) {
@@ -304,11 +317,22 @@ export class AudioEngine {
         duration = this.stemsTracks.other.duration();
       }
       if (duration > 0) {
-        this.beatGrid = generateFallbackBeatGrid(
-          t.bpm || 120,
-          t.offset || 0,
-          duration,
-        );
+        if (
+          t.gridMap &&
+          ((t.gridMap.grid && t.gridMap.grid.length > 0) ||
+            (t.gridMap.bridges && t.gridMap.bridges.length > 0))
+        ) {
+          this.beatGrid = generateBeatGridFromDownbeats(
+            { ...t.gridMap, duration },
+            duration,
+          );
+        } else {
+          this.beatGrid = generateFallbackBeatGrid(
+            t.bpm || 120,
+            t.offset || 0,
+            duration,
+          );
+        }
       }
     };
     if (
@@ -562,6 +586,31 @@ export class AudioEngine {
     return 0;
   }
 
+  /**
+   * Перестраивает beatGrid без перезагрузки аудио.
+   * Используется после сохранения бриджей или сдвига сетки.
+   */
+  reloadBeatGrid(track: Track) {
+    this.currentTrack = track;
+    const duration = track.gridMap?.duration || 180;
+    if (
+      track.gridMap &&
+      ((track.gridMap.grid && track.gridMap.grid.length > 0) ||
+        (track.gridMap.bridges && track.gridMap.bridges.length > 0))
+    ) {
+      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
+    } else {
+      this.beatGrid = generateFallbackBeatGrid(
+        track.bpm || 120,
+        track.offset || 0,
+        duration,
+      );
+    }
+    const currentTime = this.getCurrentTime();
+    this.syncBeatCursor(currentTime);
+    this.lastScheduledVoiceBeatIndex = this.currentBeatIndex - 1;
+  }
+
   getDuration(): number {
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       if (this.stemsTracks.vocals) return this.stemsTracks.vocals.duration();
@@ -610,6 +659,25 @@ export class AudioEngine {
 
     // Если не нашли, возвращаем первый бит
     return this.beatGrid[0]?.number || 1;
+  }
+
+  getBeatGrid(): Beat[] {
+    return this.beatGrid;
+  }
+
+  getCurrentBeatInfo(): { time: number; number: number; isBridge: boolean } | null {
+    if (this.beatGrid.length === 0) return null;
+
+    const currentTime = this.getCurrentTime();
+
+    for (let i = this.beatGrid.length - 1; i >= 0; i--) {
+      const beat = this.beatGrid[i];
+      if (beat.time <= currentTime) {
+        return { time: beat.time, number: beat.number, isBridge: !!beat.isBridge };
+      }
+    }
+
+    return null;
   }
 
   seek(time: number) {
@@ -785,7 +853,9 @@ export class AudioEngine {
    * Устанавливает callback для обновления текущего бита.
    * Вызывается при каждом новом бите для синхронизации UI счетчика.
    */
-  setOnBeatUpdate(callback: ((beatNumber: number) => void) | null) {
+  setOnBeatUpdate(
+    callback: ((beatNumber: number, isBridge?: boolean) => void) | null,
+  ) {
     this.onBeatUpdate = callback;
   }
 
@@ -834,7 +904,8 @@ export class AudioEngine {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
           if (!useWebAudioVoice) this.playVoiceCount(beat.number);
-          if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
+          if (this.onBeatUpdate)
+            this.onBeatUpdate(beat.number, beat.isBridge);
         }
         this.currentBeatIndex++;
       }
@@ -846,7 +917,8 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (!useWebAudioVoice) this.playVoiceCount(beat.number);
-        if (this.onBeatUpdate) this.onBeatUpdate(beat.number);
+        if (this.onBeatUpdate)
+          this.onBeatUpdate(beat.number, beat.isBridge);
         this.currentBeatIndex++;
       }
     }

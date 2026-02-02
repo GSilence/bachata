@@ -12,7 +12,15 @@
       "Bash(npx prisma:*)",
       "Bash($env:ADMIN_PASSWORD=\"Silence\")",
       "Bash(npx tsx:*)",
-      "Bash(ADMIN_PASSWORD=Silence npx tsx:*)"
+      "Bash(ADMIN_PASSWORD=Silence npx tsx:*)",
+      "Bash(npx next build)",
+      "Bash(dir \"d:\\\\Sites\\\\bachata\\\\public\\\\uploads\\\\raw\"\")",
+      "Bash(\"D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe\":*)",
+      "Bash(git -C \"d:\\\\Sites\\\\bachata\" log --all --oneline --grep=\"upload\" -- \"*\")",
+      "Bash(git -C \"d:\\\\Sites\\\\bachata\" log --all --oneline -- \"app/admin/upload/page.tsx\")",
+      "Bash(git -C \"d:\\\\Sites\\\\bachata\" show c2bb26e:app/admin/upload/page.tsx)",
+      "Bash(npx dotenv:*)",
+      "Bash(DATABASE_URL=\"mysql://bachata_user:p7gHN%60l%60g%25S%3D2WiTun%5C@localhost:3306/bachata_db\" npx prisma db push:*)"
     ]
   }
 }
