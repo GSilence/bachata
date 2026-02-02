@@ -8,6 +8,7 @@ const JWT_SECRET = new TextEncoder().encode(
 );
 const COOKIE_NAME = "auth-token";
 const TOKEN_EXPIRY = "7d";
+const SECURE_COOKIES = process.env.SECURE_COOKIES === "true";
 
 export interface JWTPayload {
   userId: number;
@@ -46,7 +47,7 @@ export async function getCurrentUser(): Promise<JWTPayload | null> {
 export function setAuthCookie(response: NextResponse, token: string): void {
   response.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: SECURE_COOKIES,
     sameSite: "lax",
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: "/",
@@ -56,7 +57,7 @@ export function setAuthCookie(response: NextResponse, token: string): void {
 export function clearAuthCookie(response: NextResponse): void {
   response.cookies.set(COOKIE_NAME, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: SECURE_COOKIES,
     sameSite: "lax",
     maxAge: 0,
     path: "/",
