@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePlayerStore } from "@/store/playerStore";
-import type { PlayMode, VoiceFilter } from "@/types";
+import type { PlayMode, VoiceFilter, VoiceLanguage } from "@/types";
 
 interface SettingsPanelProps {
   showOnlyVoiceFilter?: boolean;
@@ -13,8 +13,14 @@ export default function SettingsPanel({
   showOnlyVoiceFilter,
   showOnlyPlayMode,
 }: SettingsPanelProps = {}) {
-  const { playMode, voiceFilter, setPlayMode, setVoiceFilter } =
-    usePlayerStore();
+  const {
+    playMode,
+    voiceFilter,
+    voiceLanguage,
+    setPlayMode,
+    setVoiceFilter,
+    setVoiceLanguage,
+  } = usePlayerStore();
   const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
   const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false);
 
@@ -22,6 +28,11 @@ export default function SettingsPanel({
     { value: "sequential", label: "Sequential (По порядку)" },
     { value: "random", label: "Random (Случайно)" },
     { value: "loop", label: "Loop (Один трек)" },
+  ];
+
+  const voiceLanguages: { value: VoiceLanguage; label: string }[] = [
+    { value: "en", label: "English" },
+    { value: "pt", label: "Português" },
   ];
 
   const voiceFilters: { value: VoiceFilter; label: string }[] = [
@@ -90,27 +101,50 @@ export default function SettingsPanel({
             Voice Filter (Режим озвучки)
           </label>
           <div
-            className={`space-y-2 pt-4 pb-2 lg:pt-0 lg:pb-0 ${
+            className={`pt-4 pb-2 lg:pt-0 lg:pb-0 ${
               !isVoiceFilterExpanded ? "hidden lg:block" : ""
             }`}
           >
-            {voiceFilters.map((filter) => (
-              <label
-                key={filter.value}
-                className="flex items-center cursor-pointer hover:text-white"
-                data-option={filter.value}
-              >
-                <input
-                  type="radio"
-                  name="voiceFilter"
-                  value={filter.value}
-                  checked={voiceFilter === filter.value}
-                  onChange={() => setVoiceFilter(filter.value)}
-                  className="mr-2 w-4 h-4 text-purple-600 focus:ring-purple-600 cursor-pointer"
-                />
-                <span className="text-sm text-gray-300">{filter.label}</span>
-              </label>
-            ))}
+            {/* Language selector */}
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm text-gray-400">Язык:</span>
+              <div className="flex gap-1">
+                {voiceLanguages.map((lang) => (
+                  <button
+                    key={lang.value}
+                    onClick={() => setVoiceLanguage(lang.value)}
+                    className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                      voiceLanguage === lang.value
+                        ? "bg-purple-600 text-white"
+                        : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"
+                    }`}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Filter options */}
+            <div className="space-y-2">
+              {voiceFilters.map((filter) => (
+                <label
+                  key={filter.value}
+                  className="flex items-center cursor-pointer hover:text-white"
+                  data-option={filter.value}
+                >
+                  <input
+                    type="radio"
+                    name="voiceFilter"
+                    value={filter.value}
+                    checked={voiceFilter === filter.value}
+                    onChange={() => setVoiceFilter(filter.value)}
+                    className="mr-2 w-4 h-4 text-purple-600 focus:ring-purple-600 cursor-pointer"
+                  />
+                  <span className="text-sm text-gray-300">{filter.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
       )}

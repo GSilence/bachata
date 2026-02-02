@@ -80,6 +80,7 @@ export class AudioEngine {
 
   // Voice filter для управления воспроизведением голоса
   private voiceFilter: "mute" | "on1" | "on1and5" | "full" = "full";
+  private voiceLanguage: "en" | "pt" = "en";
 
   // Voice count files (Howl — запасной путь)
   private voiceFiles: Map<number, Howl> = new Map();
@@ -113,7 +114,7 @@ export class AudioEngine {
     }
 
     for (let i = 1; i <= 8; i++) {
-      const voicePath = `/audio/voice/${i}.m4a`;
+      const voicePath = `/audio/voice/${this.voiceLanguage}/${i}.m4a`;
       const howl = new Howl({
         src: [voicePath],
         html5: true, // Используем HTML5 Audio для надежности
@@ -160,7 +161,7 @@ export class AudioEngine {
 
     for (let i = 1; i <= 8; i++) {
       try {
-        const r = await fetch(`/audio/voice/${i}.m4a`);
+        const r = await fetch(`/audio/voice/${this.voiceLanguage}/${i}.m4a`);
         const ab = await r.arrayBuffer();
         const buf = await this.voiceCtx.decodeAudioData(ab);
         this.voiceBuffers.set(i, buf);
@@ -751,6 +752,19 @@ export class AudioEngine {
 
   setVoiceFilter(filter: "mute" | "on1" | "on1and5" | "full") {
     this.voiceFilter = filter;
+  }
+
+  setVoiceLanguage(language: "en" | "pt") {
+    if (this.voiceLanguage === language) return;
+    this.voiceLanguage = language;
+
+    // Очищаем старые буферы и перезагружаем
+    this.voiceFiles.forEach((howl) => howl.unload());
+    this.voiceFiles.clear();
+    this.voiceBuffers.clear();
+
+    this.preloadVoiceFiles();
+    this.loadVoiceBuffers();
   }
 
   // === Callbacks ===

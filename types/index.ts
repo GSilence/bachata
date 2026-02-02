@@ -1,5 +1,6 @@
 export type PlayMode = "sequential" | "random" | "loop";
 export type VoiceFilter = "mute" | "on1" | "on1and5" | "full";
+export type VoiceLanguage = "en" | "pt";
 export type PlaylistFilter = "free" | "my" | "all";
 
 export interface GridSection {
@@ -78,6 +79,7 @@ export interface PlayerState {
   // Настройки
   playMode: PlayMode;
   voiceFilter: VoiceFilter;
+  voiceLanguage: VoiceLanguage;
 
   // Плейлист
   playlistFilter: PlaylistFilter;
@@ -103,6 +105,7 @@ export interface PlayerState {
   setStemsVolume: (stems: Partial<PlayerState["stemsVolume"]>) => void;
   setPlayMode: (mode: PlayMode) => void;
   setVoiceFilter: (filter: VoiceFilter) => void;
+  setVoiceLanguage: (language: VoiceLanguage) => void;
   setPlaylistFilter: (filter: PlaylistFilter) => void;
   setSearchQuery: (query: string) => void;
   setAudioEngine: (engine: any | null) => void;

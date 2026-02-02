@@ -66,11 +66,12 @@ export default function PlaybackPage() {
       setAudioEngine(audioEngine);
 
       // Устанавливаем все восстановленные настройки из store
-      const { musicVolume, voiceVolume, voiceFilter } =
+      const { musicVolume, voiceVolume, voiceFilter, voiceLanguage } =
         usePlayerStore.getState();
       audioEngine.setMusicVolume(musicVolume);
       audioEngine.setVoiceVolume(voiceVolume);
       audioEngine.setVoiceFilter(voiceFilter);
+      audioEngine.setVoiceLanguage(voiceLanguage);
 
       // If track already exists in store, load it via store
       const { currentTrack: existingTrack, tracks } = usePlayerStore.getState();

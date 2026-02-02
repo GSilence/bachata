@@ -7,6 +7,7 @@ import type {
   Track,
   PlayMode,
   VoiceFilter,
+  VoiceLanguage,
   PlaylistFilter,
 } from "@/types";
 
@@ -70,6 +71,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       playMode: restoredSettings.playMode,
       voiceFilter: restoredSettings.voiceFilter,
+      voiceLanguage: restoredSettings.voiceLanguage,
       playlistFilter: "free",
       searchQuery: "",
       isReanalyzing: false,
@@ -188,6 +190,11 @@ export const usePlayerStore = create<PlayerState>()(
         audioEngine.setVoiceFilter(filter);
         // Сохраняем настройки в localStorage
         saveUserSettings({ voiceFilter: filter });
+      },
+      setVoiceLanguage: (language) => {
+        set({ voiceLanguage: language });
+        audioEngine.setVoiceLanguage(language);
+        saveUserSettings({ voiceLanguage: language });
       },
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),
