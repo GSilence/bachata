@@ -179,19 +179,62 @@ def calculate_row_scores(rows, all_beats, activations, rnn_fps=100.0):
     return rows
 
 
-def find_winning_row(rows):
-    """Находит ряд с максимальной суммой madmom scores."""
-    best_row_num = None
-    best_sum = -1.0
+def find_winning_row(rows, all_beats=None, activations=None, rnn_fps=100.0):
+    """
+    Находит ряд с максимальной суммой madmom scores.
 
-    for row_num, row_data in rows.items():
-        if row_data['madmom_sum'] > best_sum:
-            best_sum = row_data['madmom_sum']
-            best_row_num = row_num
+    Tiebreaker: если два лучших ряда близки по сумме (разница < 10%),
+    смотрим на 3 наисильнейших индивидуальных бита во всём треке.
+    В каком из двух рядов 2+ из этих 3 битов — тот и побеждает.
+    """
+    # Сортируем ряды по сумме (убывание)
+    sorted_rows = sorted(rows.items(), key=lambda x: x[1]['madmom_sum'], reverse=True)
+
+    best_row_num = sorted_rows[0][0]
+    best_sum = sorted_rows[0][1]['madmom_sum']
+    second_row_num = sorted_rows[1][0]
+    second_sum = sorted_rows[1][1]['madmom_sum']
+
+    # Проверяем, нужен ли tiebreaker
+    diff_pct = (best_sum - second_sum) / best_sum * 100 if best_sum > 0 else 100
+    print(f"\n[Top 2] Row {best_row_num} (Sum: {best_sum:.3f}) vs "
+          f"Row {second_row_num} (Sum: {second_sum:.3f}), "
+          f"diff: {diff_pct:.1f}%", file=sys.stderr)
+
+    if diff_pct < 10 and all_beats is not None and activations is not None:
+        print(f"[Tiebreaker] Difference < 10%, checking top 3 strongest beats...", file=sys.stderr)
+
+        # Собираем madmom score для каждого бита с его row
+        beat_scores = []
+        for i, beat_time in enumerate(all_beats):
+            frame = int(beat_time * rnn_fps)
+            if frame < len(activations):
+                score = float(activations[frame, 1])
+                row = (i % 8) + 1
+                beat_scores.append((i, score, row))
+
+        # Сортируем по score убывание, берём топ-3
+        beat_scores.sort(key=lambda x: x[1], reverse=True)
+        top3 = beat_scores[:3]
+
+        print(f"[Tiebreaker] Top 3 beats:", file=sys.stderr)
+        for idx, score, row in top3:
+            print(f"  Beat #{idx} (Row {row}): score {score:.4f}", file=sys.stderr)
+
+        # Считаем, сколько из топ-3 принадлежат каждому из двух рядов
+        count_best = sum(1 for _, _, r in top3 if r == best_row_num)
+        count_second = sum(1 for _, _, r in top3 if r == second_row_num)
+
+        print(f"[Tiebreaker] Row {best_row_num}: {count_best}/3, "
+              f"Row {second_row_num}: {count_second}/3", file=sys.stderr)
+
+        if count_second >= 2 and count_second > count_best:
+            print(f"[Tiebreaker] OVERRIDE! Row {second_row_num} wins by strongest beats", file=sys.stderr)
+            best_row_num = second_row_num
 
     winning_row = rows[best_row_num]
 
-    print(f"\n[Winner] Row {best_row_num} (Sum: {best_sum:.3f}, "
+    print(f"\n[Winner] Row {best_row_num} (Sum: {winning_row['madmom_sum']:.3f}, "
           f"Avg: {winning_row['madmom_avg']:.3f})", file=sys.stderr)
 
     return best_row_num, winning_row
@@ -230,13 +273,25 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     }
 
     # 2. VERDICT
+    # Определяем reason: был ли tiebreaker
+    sorted_rows_list = sorted(rows.values(), key=lambda x: x['madmom_sum'], reverse=True)
+    top_sum = sorted_rows_list[0]['madmom_sum']
+    second_sum = sorted_rows_list[1]['madmom_sum'] if len(sorted_rows_list) > 1 else 0
+    diff_pct = (top_sum - second_sum) / top_sum * 100 if top_sum > 0 else 100
+
+    if diff_pct < 10 and winning_row['madmom_sum'] < top_sum:
+        reason = f"Row {winning_row_num} wins by tiebreaker (top 3 strongest beats)"
+    else:
+        reason = f"Row {winning_row_num} has highest madmom sum"
+
     verdict = {
         'winning_row': winning_row_num,
         'winning_row_sum': round(winning_row['madmom_sum'], 3),
         'winning_row_avg': round(winning_row['madmom_avg'], 3),
         'start_beat_id': start_beat_idx,
         'start_time': round(offset, 3),
-        'reason': f"Row {winning_row_num} has highest madmom sum"
+        'reason': reason,
+        'tiebreaker_used': diff_pct < 10
     }
 
     # 3. ROW ANALYSIS
@@ -462,7 +517,7 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
 
         rows = distribute_beats_to_rows(all_beats)
         rows = calculate_row_scores(rows, all_beats, act, rnn_fps)
-        winning_row_num, winning_row = find_winning_row(rows)
+        winning_row_num, winning_row = find_winning_row(rows, all_beats, act, rnn_fps)
         offset, start_beat_idx = determine_offset(winning_row, all_beats)
 
         # 5. HPSS (один раз для всего трека, используется в generate_output)
