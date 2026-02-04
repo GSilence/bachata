@@ -1,7 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join, basename } from "path";
 import type { GridMap, Beat } from "@/types";
 import {
   generateFallbackBeatGrid,
@@ -145,7 +145,23 @@ export async function analyzeTrack(
       throw new Error(result.error);
     }
 
-    // basic и extended возвращают gridMap
+    // Для correlation v2: сохраняем полный JSON-отчёт в файл
+    if (useCorrelation && result.row_analysis) {
+      try {
+        const reportsDir = join(process.cwd(), "public", "uploads", "reports");
+        if (!existsSync(reportsDir)) {
+          mkdirSync(reportsDir, { recursive: true });
+        }
+        const trackName = basename(audioPath, ".mp3").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const reportPath = join(reportsDir, `${trackName}_correlation_v2.json`);
+        writeFileSync(reportPath, JSON.stringify(result, null, 2));
+        console.log(`[Correlation] Full report saved: ${reportPath}`);
+      } catch (e: any) {
+        console.warn("[Correlation] Failed to save report:", e.message);
+      }
+    }
+
+    // basic, extended и correlation возвращают gridMap
     if (useGridScript && result.grid) {
       const gridMap: GridMap = {
         bpm: result.bpm || 120,
@@ -154,6 +170,16 @@ export async function analyzeTrack(
         downbeats: result.downbeats || [],
         totalBeats: result.totalBeats || 0,
       };
+
+      // Для correlation: сохраняем row_analysis и verdict в gridMap
+      if (useCorrelation && result.row_analysis) {
+        (gridMap as any).correlationAnalysis = {
+          verdict: result.verdict || null,
+          row_analysis: result.row_analysis || null,
+          top_madmom_beats: (result.top_madmom_beats || []).slice(0, 20),
+          meta: result.meta || null,
+        };
+      }
 
       // Генерируем beatGrid на основе downbeats и секций
       const bpm = gridMap.bpm;

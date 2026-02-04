@@ -32,6 +32,7 @@ model Track {
   gridMap      Json?    // сложная структура с grid (verse/bridge секции) от madmom анализа
   analyzerType String?  // тип анализа ритма: "basic" (analyze-track.py) или "extended" (analyze-track-improved.py)
   fileHash     String?  // MD5 хеш файла для обнаружения дубликатов
+  genreHint    String?  // автоопределённый жанр: "bachata", "latin", "pop" и т.д.
 }
 
 model User {

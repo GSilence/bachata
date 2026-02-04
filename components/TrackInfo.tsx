@@ -336,6 +336,17 @@ export default function TrackInfo({}: TrackInfoProps) {
           {currentTrack.artist && (
             <p className="text-gray-400">{currentTrack.artist}</p>
           )}
+          {currentTrack.genreHint && (
+            <span
+              className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${
+                currentTrack.genreHint === "bachata" || currentTrack.genreHint === "latin"
+                  ? "bg-green-900/40 text-green-400 border border-green-700/50"
+                  : "bg-gray-700/40 text-gray-400 border border-gray-600/50"
+              }`}
+            >
+              {currentTrack.genreHint}
+            </span>
+          )}
         </div>
         {isAdmin && (
           <button
@@ -503,6 +514,65 @@ export default function TrackInfo({}: TrackInfoProps) {
               </button>
             </div>
           </div>
+
+          {/* Корреляционный анализ: таблица рядов */}
+          {currentTrack.analyzerType === "correlation" &&
+            currentTrack.gridMap &&
+            (currentTrack.gridMap as any).correlationAnalysis && (() => {
+              const ca = (currentTrack.gridMap as any).correlationAnalysis;
+              const verdict = ca.verdict;
+              const rowAnalysis = ca.row_analysis;
+              if (!rowAnalysis) return null;
+              const rows = Object.entries(rowAnalysis as Record<string, any>)
+                .sort(([a], [b]) => a.localeCompare(b));
+              return (
+                <div className="mb-4 sm:mb-6">
+                  <details className="group">
+                    <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
+                      Row Analysis {verdict && <span className="text-green-400 ml-1">(Row {verdict.winning_row})</span>}
+                    </summary>
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="text-xs w-full border-collapse">
+                        <thead>
+                          <tr className="text-gray-500 border-b border-gray-700">
+                            <th className="text-left py-1 px-2">Row</th>
+                            <th className="text-right py-1 px-2">Beats</th>
+                            <th className="text-right py-1 px-2">Sum</th>
+                            <th className="text-right py-1 px-2">Avg</th>
+                            <th className="text-right py-1 px-2">Max</th>
+                            <th className="text-left py-1 px-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(([key, row]: [string, any]) => {
+                            const rowNum = parseInt(key.replace("row_", ""));
+                            const isWinner = verdict && rowNum === verdict.winning_row;
+                            return (
+                              <tr
+                                key={key}
+                                className={`border-b border-gray-800 ${isWinner ? "bg-green-900/20 text-green-300" : "text-gray-300"}`}
+                              >
+                                <td className="py-1 px-2 font-mono">{rowNum}</td>
+                                <td className="py-1 px-2 text-right font-mono">{row.count}</td>
+                                <td className="py-1 px-2 text-right font-mono">{row.madmom_sum?.toFixed(3)}</td>
+                                <td className="py-1 px-2 text-right font-mono">{row.madmom_avg?.toFixed(3)}</td>
+                                <td className="py-1 px-2 text-right font-mono">{row.madmom_max?.toFixed(3)}</td>
+                                <td className="py-1 px-2">{isWinner ? "<<" : ""}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      {verdict && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Offset: {verdict.start_time}s (beat #{verdict.start_beat_id})
+                        </p>
+                      )}
+                    </div>
+                  </details>
+                </div>
+              );
+            })()}
 
           {/* Сдвиг сетки (offset) — заблокирован при наличии бриджей */}
           {analysisCompleted && (

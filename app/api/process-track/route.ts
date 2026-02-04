@@ -4,6 +4,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import { randomUUID, createHash } from "crypto";
 import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
+import { analyzeGenre } from "@/lib/analyzeGenre";
 import { requireAdmin } from "@/lib/auth";
 
 // Настройки для работы с большими файлами и долгими операциями
@@ -167,19 +168,31 @@ export async function POST(request: NextRequest) {
 
     // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
     // gridMap нужен для корректного отслеживания битов с учетом мостиков
+    // Параллельно запускаем определение жанра
+    let genreResult: { genre_hint: string; confidence: number; is_bachata_compatible: boolean } | null = null;
+
     try {
       console.log("\n" + "=".repeat(80));
-      console.log("🎵 Starting audio analysis for GridMap, BPM and Offset...");
-      console.log(`📁 Audio file: ${filePath}`);
+      console.log("Starting audio analysis for GridMap, BPM and Offset...");
+      console.log(`Audio file: ${filePath}`);
       console.log("=".repeat(80) + "\n");
 
-      // analyzer: basic = analyze-track.py, extended = analyze-track-improved.py
-      const analysisResult = await analyzeTrack(filePath, {
-        analyzer: analyzerOption,
-      });
+      // Запускаем анализ ритма и жанра параллельно
+      const [analysisResult, genreRes] = await Promise.all([
+        analyzeTrack(filePath, { analyzer: analyzerOption }),
+        analyzeGenre(filePath).catch((err) => {
+          console.warn("Genre detection failed (non-critical):", err.message);
+          return null;
+        }),
+      ]);
+
+      genreResult = genreRes;
+      if (genreResult) {
+        console.log(`Genre detected: ${genreResult.genre_hint} (confidence: ${(genreResult.confidence * 100).toFixed(0)}%)`);
+      }
 
       console.log("\n" + "=".repeat(80));
-      console.log("✅ Audio analysis completed successfully!");
+      console.log("Audio analysis completed successfully!");
       console.log("=".repeat(80) + "\n");
 
       // BPM и Offset всегда определяются автоматически
@@ -222,6 +235,13 @@ export async function POST(request: NextRequest) {
       year: year || null,
       track: trackNumber || null,
       comment: comment || null,
+      genreDetection: genreResult
+        ? {
+            hint: genreResult.genre_hint,
+            confidence: genreResult.confidence,
+            isBachataCompatible: genreResult.is_bachata_compatible,
+          }
+        : null,
     };
 
     // Создаем запись в БД
@@ -243,6 +263,7 @@ export async function POST(request: NextRequest) {
         isProcessed: false, // Трек еще не разложен на стемы
         analyzerType: analyzerOption,
         fileHash: fileHash,
+        genreHint: genreResult?.genre_hint || null,
         gridMap: gridMap
           ? JSON.parse(
               JSON.stringify({

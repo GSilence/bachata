@@ -20,7 +20,12 @@
       "Bash(git -C \"d:\\\\Sites\\\\bachata\" log --all --oneline -- \"app/admin/upload/page.tsx\")",
       "Bash(git -C \"d:\\\\Sites\\\\bachata\" show c2bb26e:app/admin/upload/page.tsx)",
       "Bash(npx dotenv:*)",
-      "Bash(DATABASE_URL=\"mysql://bachata_user:p7gHN%60l%60g%25S%3D2WiTun%5C@localhost:3306/bachata_db\" npx prisma db push:*)"
+      "Bash(DATABASE_URL=\"mysql://bachata_user:p7gHN%60l%60g%25S%3D2WiTun%5C@localhost:3306/bachata_db\" npx prisma db push:*)",
+      "Bash(set \"DATABASE_URL=mysql://bachata_user:p7gHN%%60l%%60g%%25S%%3D2WiTun%%5C@localhost:3306/bachata_db\")",
+      "Bash(D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -c:*)",
+      "Bash(cmd /c \"D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -c \"\"import json; f=open\\(r''d:\\\\Sites\\\\bachata\\\\public\\\\uploads\\\\reports\\\\7e5c42dd-7dec-4963-99a3-e8f9e19346f2_correlation_v2.json'',''r''\\); data=json.load\\(f\\); f.close\\(\\); print\\(type\\(data\\)\\); print\\(list\\(data.keys\\(\\)\\)[:20] if isinstance\\(data,dict\\) else ''list len:''+str\\(len\\(data\\)\\)\\)\"\"\")",
+      "Bash(cmd /c \"D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe d:\\\\Sites\\\\bachata\\\\temp_analyze.py\")",
+      "Bash(/d/Sites/bachata/venv/Scripts/python.exe:*)"
     ]
   }
 }
