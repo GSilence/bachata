@@ -95,6 +95,11 @@ async function exportTracks() {
       return str;
     };
 
+    const numForExcel = (v: string | number | null | undefined): string => {
+      if (v === null || v === undefined || v === "") return "";
+      return "'" + String(v);
+    };
+
     if (isJson) {
       const jsonData = {
         exported_at: new Date().toISOString(),
@@ -184,14 +189,14 @@ async function exportTracks() {
           csvRows.push(
             [
               title,
-              rowNum,
-              row?.count ?? "",
-              row?.madmom_sum ?? "",
-              row?.madmom_avg ?? "",
-              row?.madmom_max ?? "",
+              numForExcel(rowNum),
+              numForExcel(row?.count),
+              numForExcel(row?.madmom_sum),
+              numForExcel(row?.madmom_avg),
+              numForExcel(row?.madmom_max),
               winnerMark,
-              rowOffset,
-              rowStartBeat,
+              numForExcel(rowOffset),
+              numForExcel(rowStartBeat),
               filename,
             ].join(","),
           );

@@ -81,6 +81,12 @@ export async function GET(request: Request) {
       return str;
     };
 
+    // Префикс ' заставляет Excel показывать значение как текст (без преобразования в дату)
+    const numForExcel = (v: string | number | null | undefined): string => {
+      if (v === null || v === undefined || v === "") return "";
+      return "'" + String(v);
+    };
+
     if (format === "json") {
       const payload = {
         exported_at: new Date().toISOString(),
@@ -160,14 +166,14 @@ export async function GET(request: Request) {
         csvRows.push(
           [
             title,
-            rowNum,
-            row?.count ?? "",
-            row?.madmom_sum ?? "",
-            row?.madmom_avg ?? "",
-            row?.madmom_max ?? "",
+            numForExcel(rowNum),
+            numForExcel(row?.count),
+            numForExcel(row?.madmom_sum),
+            numForExcel(row?.madmom_avg),
+            numForExcel(row?.madmom_max),
             winnerMark,
-            rowOffset,
-            rowStartBeat,
+            numForExcel(rowOffset),
+            numForExcel(rowStartBeat),
             filename,
           ].join(","),
         );
