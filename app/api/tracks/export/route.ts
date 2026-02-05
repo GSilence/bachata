@@ -118,7 +118,7 @@ export async function GET(request: Request) {
       });
     }
 
-    // CSV: таблица как на сайте — одна строка заголовка, затем по 8 строк на трек (ряды 1–8)
+    // CSV: один трек — одна строка. Колонки как на картинке: Название | Сумма 1–8 | Среднее 1–8 | Выстрел 1–8 | Победитель | Файл (сервер)
     const rowKeys = [
       "row_1",
       "row_2",
@@ -129,59 +129,56 @@ export async function GET(request: Request) {
       "row_7",
       "row_8",
     ] as const;
-    const csvHeader = [
+    const subHeaders = ["'1", "'2", "'3", "'4", "'5", "'6", "'7", "'8"];
+    const headerRow1 = [
       "Название",
-      "Row",
-      "Beats",
-      "Sum",
-      "Avg",
-      "Max",
+      ...Array(8).fill("Сумма"),
+      ...Array(8).fill("Среднее"),
+      ...Array(8).fill("Выстрел"),
       "Победитель",
-      "Verdict_Offset_s",
-      "Verdict_StartBeatId",
       "Файл (сервер)",
     ].join(",");
+    const headerRow2 = [
+      "",
+      ...subHeaders,
+      ...subHeaders,
+      ...subHeaders,
+      "",
+      "",
+    ].join(",");
 
-    const csvRows: string[] = [];
-    for (let t = 0; t < tracks.length; t++) {
-      const track = tracks[t];
+    const csvRows: string[] = [headerRow1, headerRow2];
+    for (const track of tracks) {
       const { row_analysis, verdict } = getRowAnalysisFromGridMap(
         track.gridMap,
       );
       const title = escapeCSV(track.title);
       const filename = escapeCSV(track.filename);
-      const winningRow = verdict?.winning_row ?? null;
-      const offsetS = verdict?.start_time ?? "";
-      const startBeatId = verdict?.start_beat_id ?? "";
+      const winningRow = verdict?.winning_row ?? "";
 
-      for (let i = 0; i < rowKeys.length; i++) {
-        const key = rowKeys[i];
-        const rowNum = i + 1;
-        const row = row_analysis?.[key];
-        const isWinner = winningRow !== null && winningRow === rowNum;
-        const winnerMark = isWinner ? "<<" : "";
-        const rowOffset = isWinner ? String(offsetS) : "";
-        const rowStartBeat = isWinner ? String(startBeatId) : "";
+      const sums = rowKeys.map((key) =>
+        numForExcel(row_analysis?.[key]?.madmom_sum),
+      );
+      const avgs = rowKeys.map((key) =>
+        numForExcel(row_analysis?.[key]?.madmom_avg),
+      );
+      const maxs = rowKeys.map((key) =>
+        numForExcel(row_analysis?.[key]?.madmom_max),
+      );
 
-        csvRows.push(
-          [
-            title,
-            numForExcel(rowNum),
-            numForExcel(row?.count),
-            numForExcel(row?.madmom_sum),
-            numForExcel(row?.madmom_avg),
-            numForExcel(row?.madmom_max),
-            winnerMark,
-            numForExcel(rowOffset),
-            numForExcel(rowStartBeat),
-            filename,
-          ].join(","),
-        );
-      }
-      if (t < tracks.length - 1) csvRows.push("");
+      csvRows.push(
+        [
+          title,
+          ...sums,
+          ...avgs,
+          ...maxs,
+          numForExcel(winningRow),
+          filename,
+        ].join(","),
+      );
     }
 
-    const csv = [csvHeader, ...csvRows].join("\n");
+    const csv = csvRows.join("\n");
     const bom = "\uFEFF";
 
     return new NextResponse(bom + csv, {
