@@ -13,6 +13,12 @@ type Verdict = {
   winning_row?: number;
   start_time?: number;
   start_beat_id?: number;
+  diff_percent?: number;
+  avg_energy_all?: number;
+  avg_energy_strong_rows?: number;
+  potential_bridges?: number;
+  potential_breaks?: number;
+  stable_sections?: number;
 };
 
 function getRowAnalysisFromGridMap(gridMap: unknown): {
@@ -133,6 +139,12 @@ export async function GET(request: Request) {
     const headerRow1 = [
       "Название",
       ...Array(8).fill("Сумма"),
+      "Diff%",
+      "Avg Energy",
+      "Avg Strong",
+      "Bridges",
+      "Breaks",
+      "Stable",
       ...Array(8).fill("Среднее"),
       ...Array(8).fill("Выстрел"),
       "Победитель",
@@ -141,6 +153,12 @@ export async function GET(request: Request) {
     const headerRow2 = [
       "",
       ...subHeaders,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
       ...subHeaders,
       ...subHeaders,
       "",
@@ -159,6 +177,12 @@ export async function GET(request: Request) {
       const sums = rowKeys.map((key) =>
         numForExcel(row_analysis?.[key]?.madmom_sum),
       );
+      const diffPercent = numForExcel(verdict?.diff_percent);
+      const avgEnergyAll = numForExcel(verdict?.avg_energy_all);
+      const avgEnergyStrong = numForExcel(verdict?.avg_energy_strong_rows);
+      const bridges = numForExcel(verdict?.potential_bridges);
+      const breaks = numForExcel(verdict?.potential_breaks);
+      const stable = numForExcel(verdict?.stable_sections);
       const avgs = rowKeys.map((key) =>
         numForExcel(row_analysis?.[key]?.madmom_avg),
       );
@@ -170,6 +194,12 @@ export async function GET(request: Request) {
         [
           title,
           ...sums,
+          diffPercent,
+          avgEnergyAll,
+          avgEnergyStrong,
+          bridges,
+          breaks,
+          stable,
           ...avgs,
           ...maxs,
           numForExcel(winningRow),

@@ -66,7 +66,11 @@ export async function POST(
       );
     }
 
-    const analysisResult = await analyzeTrack(filePath, { analyzer });
+    const analysisResult = await analyzeTrack(filePath, {
+      analyzer,
+      reportName: track.title,
+      reportDate: track.createdAt,
+    });
 
     const finalBpm = Math.round(analysisResult.bpm);
     const finalOffset = analysisResult.offset;

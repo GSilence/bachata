@@ -566,6 +566,11 @@ export default function TrackInfo({}: TrackInfoProps) {
                       {verdict && (
                         <p className="text-xs text-gray-500 mt-1">
                           Offset: {verdict.start_time}s (beat #{verdict.start_beat_id})
+                          {verdict.diff_percent !== undefined && (
+                            <span className="ml-2">
+                              | Diff: <span className={verdict.diff_percent >= 5 ? "text-green-400" : "text-yellow-400"}>{verdict.diff_percent.toFixed(1)}%</span>
+                            </span>
+                          )}
                         </p>
                       )}
                     </div>

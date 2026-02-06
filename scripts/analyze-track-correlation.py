@@ -89,26 +89,7 @@ def get_band_energy(y, sr, time_sec, freq_range, window_sec=0.08):
     return get_rms(chunk)
 
 
-def get_spectral_features(y, sr, time_sec, window_sec=0.1):
-    """Спектральные фичи: flatness, rolloff, zero crossing rate"""
-    half_window = int((window_sec * sr) / 2)
-    center_sample = int(time_sec * sr)
-    start = max(0, center_sample - half_window)
-    end = min(len(y), center_sample + half_window)
-
-    if start >= end:
-        return 0.0, 0.0, 0.0
-
-    chunk = y[start:end]
-    n_fft = min(1024, len(chunk))
-    if n_fft == 0:
-        return 0.0, 0.0, 0.0
-
-    flat = float(np.mean(librosa.feature.spectral_flatness(y=chunk, n_fft=n_fft)))
-    rolloff = float(np.mean(librosa.feature.spectral_rolloff(y=chunk, sr=sr, n_fft=n_fft, roll_percent=0.85)))
-    zcr = float(np.mean(librosa.feature.zero_crossing_rate(chunk)))
-
-    return flat, rolloff, zcr
+# get_spectral_features removed — not used in CSV export
 
 
 # ==========================================
@@ -183,56 +164,38 @@ def find_winning_row(rows, all_beats=None, activations=None, rnn_fps=100.0):
     """
     Находит ряд с максимальной суммой madmom scores.
 
-    Tiebreaker: если два лучших ряда близки по сумме (разница < 10%),
-    смотрим на 3 наисильнейших индивидуальных бита во всём треке.
-    В каком из двух рядов 2+ из этих 3 битов — тот и побеждает.
+    Логика v2.1:
+    - Если разница между топ-1 и топ-2 >= 5% — победитель = ряд с максимальной суммой
+    - Если разница < 5% — победитель = ряд с меньшим номером из двух конкурентов
     """
     # Сортируем ряды по сумме (убывание)
     sorted_rows = sorted(rows.items(), key=lambda x: x[1]['madmom_sum'], reverse=True)
 
-    best_row_num = sorted_rows[0][0]
-    best_sum = sorted_rows[0][1]['madmom_sum']
-    second_row_num = sorted_rows[1][0]
-    second_sum = sorted_rows[1][1]['madmom_sum']
+    top1_row_num = sorted_rows[0][0]
+    top1_sum = sorted_rows[0][1]['madmom_sum']
+    top2_row_num = sorted_rows[1][0]
+    top2_sum = sorted_rows[1][1]['madmom_sum']
 
-    # Проверяем, нужен ли tiebreaker
-    diff_pct = (best_sum - second_sum) / best_sum * 100 if best_sum > 0 else 100
-    print(f"\n[Top 2] Row {best_row_num} (Sum: {best_sum:.3f}) vs "
-          f"Row {second_row_num} (Sum: {second_sum:.3f}), "
-          f"diff: {diff_pct:.1f}%", file=sys.stderr)
+    # Вычисляем разницу в процентах
+    diff_pct = (top1_sum - top2_sum) / top1_sum * 100 if top1_sum > 0 else 100
 
-    if diff_pct < 10 and all_beats is not None and activations is not None:
-        print(f"[Tiebreaker] Difference < 10%, checking top 3 strongest beats...", file=sys.stderr)
+    print(f"\n[Top 2] Row {top1_row_num} (Sum: {top1_sum:.3f}) vs "
+          f"Row {top2_row_num} (Sum: {top2_sum:.3f}), "
+          f"diff: {diff_pct:.2f}%", file=sys.stderr)
 
-        # Собираем madmom score для каждого бита с его row
-        beat_scores = []
-        for i, beat_time in enumerate(all_beats):
-            frame = int(beat_time * rnn_fps)
-            if frame < len(activations):
-                score = float(activations[frame, 1])
-                row = (i % 8) + 1
-                beat_scores.append((i, score, row))
-
-        # Сортируем по score убывание, берём топ-3
-        beat_scores.sort(key=lambda x: x[1], reverse=True)
-        top3 = beat_scores[:3]
-
-        print(f"[Tiebreaker] Top 3 beats:", file=sys.stderr)
-        for idx, score, row in top3:
-            print(f"  Beat #{idx} (Row {row}): score {score:.4f}", file=sys.stderr)
-
-        # Считаем, сколько из топ-3 принадлежат каждому из двух рядов
-        count_best = sum(1 for _, _, r in top3 if r == best_row_num)
-        count_second = sum(1 for _, _, r in top3 if r == second_row_num)
-
-        print(f"[Tiebreaker] Row {best_row_num}: {count_best}/3, "
-              f"Row {second_row_num}: {count_second}/3", file=sys.stderr)
-
-        if count_second >= 2 and count_second > count_best:
-            print(f"[Tiebreaker] OVERRIDE! Row {second_row_num} wins by strongest beats", file=sys.stderr)
-            best_row_num = second_row_num
+    # Решение: >= 5% — максимальная сумма, < 5% — меньший номер ряда
+    if diff_pct >= 5:
+        best_row_num = top1_row_num
+        print(f"[Decision] diff >= 5%, winner = Row {best_row_num} (highest sum)", file=sys.stderr)
+    else:
+        best_row_num = min(top1_row_num, top2_row_num)
+        print(f"[Decision] diff < 5%, winner = Row {best_row_num} (earlier row)", file=sys.stderr)
 
     winning_row = rows[best_row_num]
+
+    # Сохраняем diff_pct для отчёта
+    winning_row['_diff_pct'] = diff_pct
+    winning_row['_top2_row'] = top2_row_num
 
     print(f"\n[Winner] Row {best_row_num} (Sum: {winning_row['madmom_sum']:.3f}, "
           f"Avg: {winning_row['madmom_avg']:.3f})", file=sys.stderr)
@@ -257,10 +220,109 @@ def determine_offset(winning_row, all_beats):
 # OUTPUT GENERATION
 # ==========================================
 
+def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration, bpm):
+    """
+    Анализ энергетических паттернов для детекции мостиков и брейков.
+
+    Логика:
+    1. Отрезаем первые и последние 15 секунд
+    2. Находим первый бит "РАЗ" после 15с (синхронизация с сеткой)
+    3. Считаем среднюю энергию всех битов и битов в сильных рядах (1 и 5)
+    4. Проходим по полутактам (4 бита) и классифицируем:
+       - bridge: энергия < 80% от средней
+       - break: энергия > 120% от средней
+       - stable: в пределах ±20%
+    """
+    TRIM_SECONDS = 15.0
+    BRIDGE_THRESHOLD = 0.80  # < 80% = мостик
+    BREAK_THRESHOLD = 1.20   # > 120% = брейк
+
+    # Фильтруем биты в рабочем диапазоне
+    end_time = duration - TRIM_SECONDS
+    working_beats = [(i, t, e) for i, (t, e) in enumerate(zip(all_beats, beat_energies))
+                     if TRIM_SECONDS <= t <= end_time]
+
+    if len(working_beats) < 8:
+        return {
+            'avg_energy_all': 0,
+            'avg_energy_strong_rows': 0,
+            'potential_bridges': 0,
+            'potential_breaks': 0,
+            'stable_sections': 0,
+            'analyzed_half_bars': 0
+        }
+
+    # Средняя энергия всех битов
+    all_energies = [e for _, _, e in working_beats]
+    avg_energy_all = sum(all_energies) / len(all_energies) if all_energies else 0
+
+    # Средняя энергия сильных рядов (1 и 5 — счёт "РАЗ" и "ПЯТЬ")
+    # Row 1 = winning_row, Row 5 = (winning_row + 4 - 1) % 8 + 1
+    strong_row_1 = winning_row_num
+    strong_row_5 = ((winning_row_num + 4 - 1) % 8) + 1
+    strong_energies = [e for i, _, e in working_beats
+                       if ((i % 8) + 1) in (strong_row_1, strong_row_5)]
+    avg_energy_strong = sum(strong_energies) / len(strong_energies) if strong_energies else 0
+
+    # Находим первый бит "РАЗ" после 15с для синхронизации
+    first_raz_idx = None
+    for i, t, e in working_beats:
+        if (i % 8) + 1 == winning_row_num:
+            first_raz_idx = i
+            break
+
+    if first_raz_idx is None:
+        first_raz_idx = working_beats[0][0] if working_beats else 0
+
+    # Анализируем полутакты (по 4 бита)
+    bridges = 0
+    breaks = 0
+    stable = 0
+
+    # Идём по 4 бита начиная с первого РАЗ
+    beat_idx = first_raz_idx
+    while beat_idx + 3 < len(all_beats):
+        # Проверяем, что все 4 бита в рабочем диапазоне
+        bar_times = [all_beats[beat_idx + j] for j in range(4)]
+        if bar_times[0] < TRIM_SECONDS or bar_times[3] > end_time:
+            beat_idx += 4
+            continue
+
+        # Средняя энергия полутакта
+        bar_energies = [beat_energies[beat_idx + j] for j in range(4)
+                        if beat_idx + j < len(beat_energies)]
+        if len(bar_energies) < 4:
+            beat_idx += 4
+            continue
+
+        bar_avg = sum(bar_energies) / len(bar_energies)
+
+        # Классификация
+        if avg_energy_all > 0:
+            ratio = bar_avg / avg_energy_all
+            if ratio < BRIDGE_THRESHOLD:
+                bridges += 1
+            elif ratio > BREAK_THRESHOLD:
+                breaks += 1
+            else:
+                stable += 1
+
+        beat_idx += 4
+
+    return {
+        'avg_energy_all': round(avg_energy_all, 4),
+        'avg_energy_strong_rows': round(avg_energy_strong, 4),
+        'potential_bridges': bridges,
+        'potential_breaks': breaks,
+        'stable_sections': stable,
+        'analyzed_half_bars': bridges + breaks + stable
+    }
+
+
 def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
                     offset, start_beat_idx, bpm, duration,
-                    activations, y, sr, y_harm, y_perc, rnn_fps=100.0):
-    """Генерация подробного JSON отчёта."""
+                    activations, y, sr, rnn_fps=100.0):
+    """Генерация подробного JSON отчёта (оптимизированная версия)."""
 
     # 1. META
     meta = {
@@ -273,25 +335,27 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     }
 
     # 2. VERDICT
-    # Определяем reason: был ли tiebreaker
+    # Получаем diff_pct из winning_row (сохранён в find_winning_row)
+    diff_pct = winning_row.get('_diff_pct', 100)
+    top2_row = winning_row.get('_top2_row', None)
+
+    # Определяем reason
     sorted_rows_list = sorted(rows.values(), key=lambda x: x['madmom_sum'], reverse=True)
     top_sum = sorted_rows_list[0]['madmom_sum']
-    second_sum = sorted_rows_list[1]['madmom_sum'] if len(sorted_rows_list) > 1 else 0
-    diff_pct = (top_sum - second_sum) / top_sum * 100 if top_sum > 0 else 100
 
-    if diff_pct < 10 and winning_row['madmom_sum'] < top_sum:
-        reason = f"Row {winning_row_num} wins by tiebreaker (top 3 strongest beats)"
+    if diff_pct >= 5:
+        reason = f"Row {winning_row_num} has highest madmom sum (diff {diff_pct:.1f}%)"
     else:
-        reason = f"Row {winning_row_num} has highest madmom sum"
+        reason = f"Row {winning_row_num} wins as earlier row (diff {diff_pct:.1f}% < 5%)"
 
     verdict = {
         'winning_row': winning_row_num,
         'winning_row_sum': round(winning_row['madmom_sum'], 3),
         'winning_row_avg': round(winning_row['madmom_avg'], 3),
+        'diff_percent': round(diff_pct, 2),
         'start_beat_id': start_beat_idx,
         'start_time': round(offset, 3),
-        'reason': reason,
-        'tiebreaker_used': diff_pct < 10
+        'reason': reason
     }
 
     # 3. ROW ANALYSIS
@@ -335,34 +399,20 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
                 'rank': rank
             })
 
-    # 5. ALL BEATS (подробно)
+    # 5. ALL BEATS (упрощённая версия — только нужные поля)
     beats_detailed = []
+    beat_energies = []  # Для analyze_energy_patterns
+
     for i, beat_time in enumerate(all_beats):
         beat_row = (i % 8) + 1
 
-        # Energy bands
-        e_low = get_band_energy(y, sr, beat_time, (None, 200))
-        e_mid = get_band_energy(y, sr, beat_time, (200, 2000))
-        e_high = get_band_energy(y, sr, beat_time, (4000, None))
+        # Только total energy (остальное не используется в CSV)
         e_total = get_band_energy(y, sr, beat_time, (None, None))
-
-        # HPSS energy
-        e_harm = get_band_energy(y_harm, sr, beat_time, (None, None))
-        e_perc = get_band_energy(y_perc, sr, beat_time, (None, None))
-
-        # Spectral features
-        flat, rolloff, zcr = get_spectral_features(y, sr, beat_time)
+        beat_energies.append(e_total)
 
         # Madmom score
         frame = int(beat_time * rnn_fps)
         madmom_score = float(activations[frame, 1]) if frame < len(activations) else 0.0
-
-        # Timing
-        delta = 0.0
-        local_bpm = 0
-        if i > 0:
-            delta = beat_time - all_beats[i - 1]
-            local_bpm = int(60.0 / delta) if delta > 0 else 0
 
         beats_detailed.append({
             'id': i,
@@ -370,25 +420,20 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
             'row': beat_row,
             'is_start': (i == start_beat_idx),
             'madmom_score': round(madmom_score, 4),
-            'energy_stats': {
-                'low': round(e_low, 3),
-                'mid': round(e_mid, 3),
-                'high': round(e_high, 3),
-                'total': round(e_total, 3),
-                'flatness': round(flat, 4),
-                'rolloff': round(rolloff, 3),
-                'zcr': round(zcr, 3)
-            },
-            'decomposition': {
-                'harmonic': round(e_harm, 3),
-                'percussive': round(e_perc, 3),
-                'perc_harm_ratio': round(e_perc / (e_harm + 0.0001), 2)
-            },
-            'timing': {
-                'delta': round(delta, 3),
-                'bpm': local_bpm
-            }
+            'energy': round(e_total, 4)
         })
+
+    # 5.1 ENERGY PATTERN ANALYSIS (мостики, брейки)
+    energy_analysis = analyze_energy_patterns(
+        all_beats, beat_energies, winning_row_num, duration, bpm
+    )
+
+    # Добавляем результаты в verdict
+    verdict['avg_energy_all'] = energy_analysis['avg_energy_all']
+    verdict['avg_energy_strong_rows'] = energy_analysis['avg_energy_strong_rows']
+    verdict['potential_bridges'] = energy_analysis['potential_bridges']
+    verdict['potential_breaks'] = energy_analysis['potential_breaks']
+    verdict['stable_sections'] = energy_analysis['stable_sections']
 
     # 6. GRID & DOWNBEATS
     beat_interval = 60.0 / bpm
@@ -520,16 +565,12 @@ def analyze_track_with_madmom(audio_path, drums_path=None):
         winning_row_num, winning_row = find_winning_row(rows, all_beats, act, rnn_fps)
         offset, start_beat_idx = determine_offset(winning_row, all_beats)
 
-        # 5. HPSS (один раз для всего трека, используется в generate_output)
-        print("\nStep 5: HPSS decomposition...", file=sys.stderr)
-        y_harm, y_perc = librosa.effects.hpss(y_orig, margin=1.0)
-
-        # 6. Генерация подробного output
-        print("Step 6: Generating output...", file=sys.stderr)
+        # 5. Генерация output (HPSS убран — не используется в CSV)
+        print("\nStep 5: Generating output...", file=sys.stderr)
         result = generate_output(
             audio_path, all_beats, rows, winning_row_num, winning_row,
             offset, start_beat_idx, bpm, duration,
-            act, y_orig, sr_orig, y_harm, y_perc, rnn_fps
+            act, y_orig, sr_orig, rnn_fps
         )
 
         print(f"\nDone! BPM={bpm}, Offset={offset:.3f}s, "

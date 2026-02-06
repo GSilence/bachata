@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
 
       // Запускаем анализ ритма и жанра параллельно
       const [analysisResult, genreRes] = await Promise.all([
-        analyzeTrack(filePath, { analyzer: analyzerOption }),
+        analyzeTrack(filePath, { analyzer: analyzerOption, reportName: title }),
         analyzeGenre(filePath).catch((err) => {
           console.warn("Genre detection failed (non-critical):", err.message);
           return null;
