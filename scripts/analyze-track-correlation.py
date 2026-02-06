@@ -49,6 +49,32 @@ except ImportError as e:
 
 
 # ==========================================
+# CONFIG LOADING
+# ==========================================
+
+def load_thresholds_config():
+    """Загружает пороговые значения из config/analysis-thresholds.json"""
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'analysis-thresholds.json')
+    default = {
+        'bridge': {'low': 0.30, 'high': 0.80},
+        'break': {'low': 1.20, 'high': 1.85},
+        'trim_seconds': 15.0
+    }
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+                return {
+                    'bridge': cfg.get('bridge', default['bridge']),
+                    'break': cfg.get('break', default['break']),
+                    'trim_seconds': cfg.get('trim_seconds', default['trim_seconds'])
+                }
+    except Exception as e:
+        print(f"[Config] Failed to load thresholds: {e}, using defaults", file=sys.stderr)
+    return default
+
+
+# ==========================================
 # HELPER FUNCTIONS (из analyze-track-improved.py)
 # ==========================================
 
@@ -229,20 +255,24 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
     2. *_strong — сравнение со средней СИЛЬНЫХ рядов (1 и 5)
 
     Логика:
-    1. Отрезаем первые и последние 15 секунд
+    1. Отрезаем первые и последние N секунд (из конфига)
     2. Скользящее окно по 4 бита с шагом 1
     3. КАЖДЫЙ из 4 битов сравнивается с эталоном:
-       - Bridge: ВСЕ 4 бита < 80%
-       - Break: ВСЕ 4 бита > 120%
-       - Stable: ВСЕ 4 бита в пределах 80%-120%
+       - Bridge: low < ratio < high (из конфига)
+       - Break: low < ratio < high (из конфига)
+       - Stable: bridge_high <= ratio <= break_low
        - Mixed: остальное (неоднородные окна)
     """
-    TRIM_SECONDS = 15.0
-    # Границы для классификации
-    BRIDGE_LOW = 0.30        # Нижняя граница мостика (< 30% = артефакт)
-    BRIDGE_HIGH = 0.80       # Верхняя граница мостика (< 80% = тихий)
-    BREAK_LOW = 1.20         # Нижняя граница брейка (> 120% = громкий)
-    BREAK_HIGH = 1.85        # Верхняя граница брейка (> 185% = артефакт)
+    # Загружаем пороги из конфига
+    cfg = load_thresholds_config()
+    TRIM_SECONDS = cfg['trim_seconds']
+    BRIDGE_LOW = cfg['bridge']['low']
+    BRIDGE_HIGH = cfg['bridge']['high']
+    BREAK_LOW = cfg['break']['low']
+    BREAK_HIGH = cfg['break']['high']
+
+    print(f"[Energy] Thresholds: Bridge({BRIDGE_LOW}-{BRIDGE_HIGH}), "
+          f"Break({BREAK_LOW}-{BREAK_HIGH}), Trim={TRIM_SECONDS}s", file=sys.stderr)
 
     # Фильтруем биты в рабочем диапазоне
     end_time = duration - TRIM_SECONDS

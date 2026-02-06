@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SettingsPanel from "@/components/SettingsPanel";
+import ThresholdSettings from "@/components/ThresholdSettings";
 import { useAuthStore } from "@/store/authStore";
 
 interface TrackStats {
@@ -20,6 +21,12 @@ export default function SettingsPage() {
   const [stats, setStats] = useState<TrackStats | null>(null);
   const [tracks, setTracks] = useState<any[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [reanalyzeResult, setReanalyzeResult] = useState<{
+    success: number;
+    errors: number;
+    total: number;
+  } | null>(null);
 
   // Auth check
   useEffect(() => {
@@ -59,6 +66,40 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error("Failed to fetch stats:", error);
+    }
+  };
+
+  const handleReanalyzeAll = async () => {
+    if (!confirm("Перезапустить анализ для ВСЕХ треков? Это может занять несколько минут.")) {
+      return;
+    }
+
+    setIsReanalyzing(true);
+    setReanalyzeResult(null);
+
+    try {
+      const response = await fetch("/api/tracks/reanalyze-all", {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Ошибка при реанализе");
+      }
+
+      const data = await response.json();
+      setReanalyzeResult({
+        success: data.success,
+        errors: data.errors,
+        total: data.total,
+      });
+
+      // Обновляем статистику
+      fetchStats();
+    } catch (error: any) {
+      alert(`Ошибка: ${error.message}`);
+    } finally {
+      setIsReanalyzing(false);
     }
   };
 
@@ -269,6 +310,101 @@ export default function SettingsPage() {
             В базе данных нет треков для экспорта.
           </p>
         )}
+      </div>
+
+      {/* Настройки анализа */}
+      <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <svg
+            className="w-5 h-5 text-purple-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+            />
+          </svg>
+          Настройки анализа энергии
+        </h2>
+
+        <p className="text-gray-400 text-sm mb-4">
+          Пороговые значения для определения мостиков (тихих участков) и брейков (громких участков).
+          После изменения настроек запустите переанализ всех треков.
+        </p>
+
+        <ThresholdSettings />
+
+        <div className="mt-6 pt-4 border-t border-gray-700">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleReanalyzeAll}
+              disabled={isReanalyzing || !stats?.total}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              {isReanalyzing ? (
+                <>
+                  <svg
+                    className="w-5 h-5 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Анализирую...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                  Переанализировать все треки
+                </>
+              )}
+            </button>
+
+            {reanalyzeResult && (
+              <span className="text-sm">
+                <span className="text-green-400">{reanalyzeResult.success}</span>
+                <span className="text-gray-500"> / {reanalyzeResult.total}</span>
+                {reanalyzeResult.errors > 0 && (
+                  <span className="text-red-400 ml-2">({reanalyzeResult.errors} ошибок)</span>
+                )}
+              </span>
+            )}
+          </div>
+
+          {!stats?.total && (
+            <p className="text-yellow-500 text-sm mt-2">
+              В базе данных нет треков для анализа.
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Превью данных */}
