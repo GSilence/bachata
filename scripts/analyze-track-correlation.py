@@ -224,14 +224,17 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
     """
     Анализ энергетических паттернов для детекции мостиков и брейков.
 
+    Два набора метрик:
+    1. *_full — сравнение со средней ВСЕХ битов
+    2. *_strong — сравнение со средней СИЛЬНЫХ рядов (1 и 5)
+
     Логика:
     1. Отрезаем первые и последние 15 секунд
-    2. Находим первый бит "РАЗ" после 15с (синхронизация с сеткой)
-    3. Считаем среднюю энергию всех битов и битов в сильных рядах (1 и 5)
-    4. Проходим по полутактам (4 бита) и классифицируем:
-       - bridge: энергия < 80% от средней
-       - break: энергия > 120% от средней
-       - stable: в пределах ±20%
+    2. Скользящее окно по 4 бита с шагом 1 (НЕ ищем РАЗ, начинаем сразу):
+       - биты 15, 16, 17, 18 → сравниваем
+       - биты 16, 17, 18, 19 → сравниваем
+       - и т.д.
+    3. Классифицируем каждое окно по обоим критериям
     """
     TRIM_SECONDS = 15.0
     BRIDGE_THRESHOLD = 0.80  # < 80% = мостик
@@ -242,21 +245,20 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
     working_beats = [(i, t, e) for i, (t, e) in enumerate(zip(all_beats, beat_energies))
                      if TRIM_SECONDS <= t <= end_time]
 
-    if len(working_beats) < 8:
+    if len(working_beats) < 4:
         return {
-            'avg_energy_all': 0,
-            'avg_energy_strong_rows': 0,
-            'potential_bridges': 0,
-            'potential_breaks': 0,
-            'stable_sections': 0,
-            'analyzed_half_bars': 0
+            'avg_energy_full': 0,
+            'avg_energy_strong': 0,
+            'bridges_full': 0, 'breaks_full': 0, 'stable_full': 0,
+            'bridges_strong': 0, 'breaks_strong': 0, 'stable_strong': 0,
+            'analyzed_windows': 0
         }
 
-    # Средняя энергия всех битов
+    # Средняя энергия ВСЕХ битов (Avg Full)
     all_energies = [e for _, _, e in working_beats]
-    avg_energy_all = sum(all_energies) / len(all_energies) if all_energies else 0
+    avg_energy_full = sum(all_energies) / len(all_energies) if all_energies else 0
 
-    # Средняя энергия сильных рядов (1 и 5 — счёт "РАЗ" и "ПЯТЬ")
+    # Средняя энергия СИЛЬНЫХ рядов (Avg Strong) — счёт "РАЗ" и "ПЯТЬ"
     # Row 1 = winning_row, Row 5 = (winning_row + 4 - 1) % 8 + 1
     strong_row_1 = winning_row_num
     strong_row_5 = ((winning_row_num + 4 - 1) % 8) + 1
@@ -264,58 +266,51 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
                        if ((i % 8) + 1) in (strong_row_1, strong_row_5)]
     avg_energy_strong = sum(strong_energies) / len(strong_energies) if strong_energies else 0
 
-    # Находим первый бит "РАЗ" после 15с для синхронизации
-    first_raz_idx = None
-    for i, t, e in working_beats:
-        if (i % 8) + 1 == winning_row_num:
-            first_raz_idx = i
-            break
+    # Счётчики для обоих методов
+    bridges_full, breaks_full, stable_full = 0, 0, 0
+    bridges_strong, breaks_strong, stable_strong = 0, 0, 0
 
-    if first_raz_idx is None:
-        first_raz_idx = working_beats[0][0] if working_beats else 0
+    # Скользящее окно по 4 бита с шагом 1
+    # Используем индексы из working_beats
+    for window_start in range(len(working_beats) - 3):
+        window = working_beats[window_start:window_start + 4]
 
-    # Анализируем полутакты (по 4 бита)
-    bridges = 0
-    breaks = 0
-    stable = 0
+        # Средняя энергия окна
+        window_energies = [e for _, _, e in window]
+        window_avg = sum(window_energies) / len(window_energies)
 
-    # Идём по 4 бита начиная с первого РАЗ
-    beat_idx = first_raz_idx
-    while beat_idx + 3 < len(all_beats):
-        # Проверяем, что все 4 бита в рабочем диапазоне
-        bar_times = [all_beats[beat_idx + j] for j in range(4)]
-        if bar_times[0] < TRIM_SECONDS or bar_times[3] > end_time:
-            beat_idx += 4
-            continue
-
-        # Средняя энергия полутакта
-        bar_energies = [beat_energies[beat_idx + j] for j in range(4)
-                        if beat_idx + j < len(beat_energies)]
-        if len(bar_energies) < 4:
-            beat_idx += 4
-            continue
-
-        bar_avg = sum(bar_energies) / len(bar_energies)
-
-        # Классификация
-        if avg_energy_all > 0:
-            ratio = bar_avg / avg_energy_all
+        # Классификация по FULL (все биты)
+        if avg_energy_full > 0:
+            ratio = window_avg / avg_energy_full
             if ratio < BRIDGE_THRESHOLD:
-                bridges += 1
+                bridges_full += 1
             elif ratio > BREAK_THRESHOLD:
-                breaks += 1
+                breaks_full += 1
             else:
-                stable += 1
+                stable_full += 1
 
-        beat_idx += 4
+        # Классификация по STRONG (сильные ряды)
+        if avg_energy_strong > 0:
+            ratio = window_avg / avg_energy_strong
+            if ratio < BRIDGE_THRESHOLD:
+                bridges_strong += 1
+            elif ratio > BREAK_THRESHOLD:
+                breaks_strong += 1
+            else:
+                stable_strong += 1
+
+    total_windows = bridges_full + breaks_full + stable_full
 
     return {
-        'avg_energy_all': round(avg_energy_all, 4),
-        'avg_energy_strong_rows': round(avg_energy_strong, 4),
-        'potential_bridges': bridges,
-        'potential_breaks': breaks,
-        'stable_sections': stable,
-        'analyzed_half_bars': bridges + breaks + stable
+        'avg_energy_full': round(avg_energy_full, 4),
+        'avg_energy_strong': round(avg_energy_strong, 4),
+        'bridges_full': bridges_full,
+        'breaks_full': breaks_full,
+        'stable_full': stable_full,
+        'bridges_strong': bridges_strong,
+        'breaks_strong': breaks_strong,
+        'stable_strong': stable_strong,
+        'analyzed_windows': total_windows
     }
 
 
@@ -429,11 +424,14 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     )
 
     # Добавляем результаты в verdict
-    verdict['avg_energy_all'] = energy_analysis['avg_energy_all']
-    verdict['avg_energy_strong_rows'] = energy_analysis['avg_energy_strong_rows']
-    verdict['potential_bridges'] = energy_analysis['potential_bridges']
-    verdict['potential_breaks'] = energy_analysis['potential_breaks']
-    verdict['stable_sections'] = energy_analysis['stable_sections']
+    verdict['avg_energy_full'] = energy_analysis['avg_energy_full']
+    verdict['avg_energy_strong'] = energy_analysis['avg_energy_strong']
+    verdict['bridges_full'] = energy_analysis['bridges_full']
+    verdict['breaks_full'] = energy_analysis['breaks_full']
+    verdict['stable_full'] = energy_analysis['stable_full']
+    verdict['bridges_strong'] = energy_analysis['bridges_strong']
+    verdict['breaks_strong'] = energy_analysis['breaks_strong']
+    verdict['stable_strong'] = energy_analysis['stable_strong']
 
     # 6. GRID & DOWNBEATS
     beat_interval = 60.0 / bpm
