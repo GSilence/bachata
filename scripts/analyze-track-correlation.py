@@ -238,8 +238,11 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
        - Mixed: остальное (неоднородные окна)
     """
     TRIM_SECONDS = 15.0
-    BRIDGE_THRESHOLD = 0.80  # < 80% = тихий
-    BREAK_THRESHOLD = 1.20   # > 120% = громкий
+    # Границы для классификации
+    BRIDGE_LOW = 0.30        # Нижняя граница мостика (< 30% = артефакт)
+    BRIDGE_HIGH = 0.80       # Верхняя граница мостика (< 80% = тихий)
+    BREAK_LOW = 1.20         # Нижняя граница брейка (> 120% = громкий)
+    BREAK_HIGH = 1.85        # Верхняя граница брейка (> 185% = артефакт)
 
     # Фильтруем биты в рабочем диапазоне
     end_time = duration - TRIM_SECONDS
@@ -287,17 +290,20 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
         # Классификация по FULL (все биты)
         if avg_energy_full > 0:
             ratios = [e / avg_energy_full for e in window_energies]
-            all_low = all(r < BRIDGE_THRESHOLD for r in ratios)
-            all_high = all(r > BREAK_THRESHOLD for r in ratios)
-            all_mid = all(BRIDGE_THRESHOLD <= r <= BREAK_THRESHOLD for r in ratios)
+            # Bridge: ВСЕ 4 бита в диапазоне (30%, 80%)
+            all_bridge = all(BRIDGE_LOW < r < BRIDGE_HIGH for r in ratios)
+            # Break: ВСЕ 4 бита в диапазоне (120%, 185%)
+            all_break = all(BREAK_LOW < r < BREAK_HIGH for r in ratios)
+            # Stable: ВСЕ 4 бита в диапазоне [80%, 120%]
+            all_stable = all(BRIDGE_HIGH <= r <= BREAK_LOW for r in ratios)
 
-            if all_low:
+            if all_bridge:
                 bridges_full += 1
                 bridge_times_full.append(round(first_beat_time, 2))
-            elif all_high:
+            elif all_break:
                 breaks_full += 1
                 break_times_full.append(round(first_beat_time, 2))
-            elif all_mid:
+            elif all_stable:
                 stable_full += 1
             else:
                 mixed_full += 1
@@ -305,17 +311,20 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
         # Классификация по STRONG (сильные ряды)
         if avg_energy_strong > 0:
             ratios = [e / avg_energy_strong for e in window_energies]
-            all_low = all(r < BRIDGE_THRESHOLD for r in ratios)
-            all_high = all(r > BREAK_THRESHOLD for r in ratios)
-            all_mid = all(BRIDGE_THRESHOLD <= r <= BREAK_THRESHOLD for r in ratios)
+            # Bridge: ВСЕ 4 бита в диапазоне (30%, 80%)
+            all_bridge = all(BRIDGE_LOW < r < BRIDGE_HIGH for r in ratios)
+            # Break: ВСЕ 4 бита в диапазоне (120%, 185%)
+            all_break = all(BREAK_LOW < r < BREAK_HIGH for r in ratios)
+            # Stable: ВСЕ 4 бита в диапазоне [80%, 120%]
+            all_stable = all(BRIDGE_HIGH <= r <= BREAK_LOW for r in ratios)
 
-            if all_low:
+            if all_bridge:
                 bridges_strong += 1
                 bridge_times_strong.append(round(first_beat_time, 2))
-            elif all_high:
+            elif all_break:
                 breaks_strong += 1
                 break_times_strong.append(round(first_beat_time, 2))
-            elif all_mid:
+            elif all_stable:
                 stable_strong += 1
             else:
                 mixed_strong += 1
