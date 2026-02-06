@@ -184,6 +184,7 @@ export async function analyzeTrack(
     }
 
     // Для correlation v2: сохраняем полный JSON-отчёт в файл
+    let savedReportPath: string | null = null;
     if (useCorrelation && result.row_analysis) {
       try {
         const reportsDir = join(process.cwd(), "public", "uploads", "reports");
@@ -194,8 +195,10 @@ export async function analyzeTrack(
         const reportFileName = reportName
           ? normalizeReportName(reportName, reportDate)
           : basename(audioPath, ".mp3").replace(/[^a-zA-Z0-9_-]/g, "_");
-        const reportPath = join(reportsDir, `${reportFileName}_correlation_v2.json`);
+        const reportFile = `${reportFileName}_correlation_v2.json`;
+        const reportPath = join(reportsDir, reportFile);
         writeFileSync(reportPath, JSON.stringify(result, null, 2));
+        savedReportPath = `/uploads/reports/${reportFile}`;
         console.log(`[Correlation] Full report saved: ${reportPath}`);
       } catch (e: any) {
         console.warn("[Correlation] Failed to save report:", e.message);
@@ -219,6 +222,7 @@ export async function analyzeTrack(
           row_analysis: result.row_analysis || null,
           top_madmom_beats: (result.top_madmom_beats || []).slice(0, 20),
           meta: result.meta || null,
+          reportPath: savedReportPath,
         };
       }
 

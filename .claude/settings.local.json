@@ -38,7 +38,8 @@
       "Bash(python3:*)",
       "Bash(powershell -NoProfile -EncodedCommand:*)",
       "Bash(printf:*)",
-      "Bash(D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -m py_compile:*)"
+      "Bash(D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -m py_compile:*)",
+      "Bash(npx next lint:*)"
     ]
   }
 }

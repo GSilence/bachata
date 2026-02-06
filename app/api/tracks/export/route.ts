@@ -19,11 +19,19 @@ type Verdict = {
   bridges_full?: number;
   breaks_full?: number;
   stable_full?: number;
+  mixed_full?: number;
   // Energy analysis - Strong (rows 1 & 5)
   avg_energy_strong?: number;
   bridges_strong?: number;
   breaks_strong?: number;
   stable_strong?: number;
+  mixed_strong?: number;
+  // Timings - Full (all beats)
+  bridge_times_full?: number[];
+  break_times_full?: number[];
+  // Timings - Strong (rows 1 & 5)
+  bridge_times_strong?: number[];
+  break_times_strong?: number[];
 };
 
 function getRowAnalysisFromGridMap(gridMap: unknown): {
@@ -149,10 +157,12 @@ export async function GET(request: Request) {
       "Bridges Full",
       "Breaks Full",
       "Stable Full",
+      "Mixed Full",
       "Avg Strong",
       "Bridges Strong",
       "Breaks Strong",
       "Stable Strong",
+      "Mixed Strong",
       ...Array(8).fill("Среднее"),
       ...Array(8).fill("Выстрел"),
       "Победитель",
@@ -161,6 +171,8 @@ export async function GET(request: Request) {
     const headerRow2 = [
       "",
       ...subHeaders,
+      "",
+      "",
       "",
       "",
       "",
@@ -194,11 +206,13 @@ export async function GET(request: Request) {
       const bridgesFull = numForExcel(verdict?.bridges_full);
       const breaksFull = numForExcel(verdict?.breaks_full);
       const stableFull = numForExcel(verdict?.stable_full);
+      const mixedFull = numForExcel(verdict?.mixed_full);
       // Strong (rows 1 & 5)
       const avgStrong = numForExcel(verdict?.avg_energy_strong);
       const bridgesStrong = numForExcel(verdict?.bridges_strong);
       const breaksStrong = numForExcel(verdict?.breaks_strong);
       const stableStrong = numForExcel(verdict?.stable_strong);
+      const mixedStrong = numForExcel(verdict?.mixed_strong);
 
       const avgs = rowKeys.map((key) =>
         numForExcel(row_analysis?.[key]?.madmom_avg),
@@ -216,10 +230,12 @@ export async function GET(request: Request) {
           bridgesFull,
           breaksFull,
           stableFull,
+          mixedFull,
           avgStrong,
           bridgesStrong,
           breaksStrong,
           stableStrong,
+          mixedStrong,
           ...avgs,
           ...maxs,
           numForExcel(winningRow),
