@@ -84,3 +84,6 @@ Thumbs.db
 install*.sh
 cloud-init.sh
 
+# Пороги анализа — настраиваются вручную или через админку, не коммитим
+config/analysis-thresholds.json
+
