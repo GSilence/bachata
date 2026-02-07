@@ -43,6 +43,36 @@ export default function TrackInfo({}: TrackInfoProps) {
   } | null>(null);
   const liveBeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Скачать биты как CSV (номер бита + энергия)
+  const downloadBeatsCSV = async (reportPath: string) => {
+    try {
+      const res = await fetch(reportPath);
+      if (!res.ok) throw new Error("Failed to fetch report");
+      const report = await res.json();
+      const beats = report.beats;
+      if (!beats || !Array.isArray(beats)) throw new Error("No beats data");
+
+      const bom = "\uFEFF";
+      const header = "Beat,Energy";
+      const rows = beats.map((b: { id: number; energy: number }) => `${b.id},${b.energy}`);
+      const csv = bom + header + "\n" + rows.join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const trackName = currentTrack?.title?.replace(/[^a-zA-Z0-9а-яА-Я]/g, "_") || "beats";
+      a.download = `${trackName}_beats.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("CSV export error:", err);
+      alert("Ошибка при экспорте CSV");
+    }
+  };
+
   // Обновляем временные значения при смене трека
   useEffect(() => {
     if (currentTrack) {
@@ -597,17 +627,34 @@ export default function TrackInfo({}: TrackInfoProps) {
                               {verdict.break_times_strong.map((t: number) => `${t}s`).join(", ")}
                             </p>
                           )}
+                          {verdict.bridge_detection && (
+                            <p className={verdict.bridge_detection.has_bridge ? "text-red-400 font-medium" : "text-green-400/80"}>
+                              <span className="text-gray-500">Bridge detect:</span>{" "}
+                              {verdict.bridge_detection.summary}
+                            </p>
+                          )}
                           {ca.reportPath && (
-                            <a
-                              href={ca.reportPath}
-                              download
-                              className="inline-flex items-center gap-1 mt-1 text-blue-400 hover:text-blue-300 hover:underline"
-                            >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                              </svg>
-                              Скачать биты (JSON)
-                            </a>
+                            <div className="flex flex-wrap gap-3 mt-1">
+                              <a
+                                href={ca.reportPath}
+                                download
+                                className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 hover:underline"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Скачать биты (JSON)
+                              </a>
+                              <button
+                                onClick={() => downloadBeatsCSV(ca.reportPath)}
+                                className="inline-flex items-center gap-1 text-green-400 hover:text-green-300 hover:underline"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Скачать биты (CSV)
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}

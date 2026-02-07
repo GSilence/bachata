@@ -6,6 +6,8 @@ interface ThresholdConfig {
   bridge: { low: number; high: number };
   break: { low: number; high: number };
   trim_seconds: number;
+  confirm_beats: number;
+  bridge_sections: number;
 }
 
 export default function ThresholdSettings() {
@@ -150,7 +152,7 @@ export default function ThresholdSettings() {
       </div>
 
       {/* Trim */}
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-3">
         <label className="text-gray-500 text-xs">Trim (sec):</label>
         <input
           type="number"
@@ -163,12 +165,49 @@ export default function ThresholdSettings() {
           }
           className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
         />
-        <span className="text-gray-500 text-xs">skip first/last N seconds</span>
+        <span className="text-gray-500 text-xs">skip first/last N sec</span>
+      </div>
+
+      {/* Confirm */}
+      <div className="flex items-center gap-2 mb-4">
+        <label className="text-gray-500 text-xs">Confirm:</label>
+        <input
+          type="number"
+          step="1"
+          min="0"
+          max="8"
+          value={config.confirm_beats}
+          onChange={(e) =>
+            setConfig({ ...config, confirm_beats: Math.round(safeParseFloat(e.target.value, config.confirm_beats)) })
+          }
+          className="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+        />
+        <span className="text-gray-500 text-xs">beats after window (0 = off)</span>
       </div>
 
       {/* Visual */}
       <div className="text-xs text-gray-500 mb-3 font-mono">
         0%--[{Math.round(config.bridge.low * 100)}%]--BRIDGE--[{Math.round(config.bridge.high * 100)}%]--STABLE--[{Math.round(config.break.low * 100)}%]--BREAK--[{Math.round(config.break.high * 100)}%]--
+      </div>
+
+      {/* Bridge Detection — визуально отделённая секция */}
+      <div className="mt-6 pt-4 border-t border-gray-700">
+        <div className="text-gray-400 text-xs font-medium mb-3">Bridge Detection (sectional analysis)</div>
+        <div className="flex items-center gap-2">
+          <label className="text-gray-500 text-xs">Sections:</label>
+          <input
+            type="number"
+            step="1"
+            min="1"
+            max="20"
+            value={config.bridge_sections}
+            onChange={(e) =>
+              setConfig({ ...config, bridge_sections: Math.round(safeParseFloat(e.target.value, config.bridge_sections)) })
+            }
+            className="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+          />
+          <span className="text-gray-500 text-xs">split track into N parts for row analysis</span>
+        </div>
       </div>
 
       {/* Save */}

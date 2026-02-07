@@ -58,7 +58,9 @@ def load_thresholds_config():
     default = {
         'bridge': {'low': 0.30, 'high': 0.80},
         'break': {'low': 1.20, 'high': 1.85},
-        'trim_seconds': 15.0
+        'trim_seconds': 15.0,
+        'confirm_beats': 1,
+        'bridge_sections': 5
     }
     try:
         if os.path.exists(config_path):
@@ -67,7 +69,9 @@ def load_thresholds_config():
                 return {
                     'bridge': cfg.get('bridge', default['bridge']),
                     'break': cfg.get('break', default['break']),
-                    'trim_seconds': cfg.get('trim_seconds', default['trim_seconds'])
+                    'trim_seconds': cfg.get('trim_seconds', default['trim_seconds']),
+                    'confirm_beats': int(cfg.get('confirm_beats', default['confirm_beats'])),
+                    'bridge_sections': int(cfg.get('bridge_sections', default['bridge_sections']))
                 }
     except Exception as e:
         print(f"[Config] Failed to load thresholds: {e}, using defaults", file=sys.stderr)
@@ -270,9 +274,11 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
     BRIDGE_HIGH = cfg['bridge']['high']
     BREAK_LOW = cfg['break']['low']
     BREAK_HIGH = cfg['break']['high']
+    CONFIRM_BEATS = cfg['confirm_beats']
 
     print(f"[Energy] Thresholds: Bridge({BRIDGE_LOW}-{BRIDGE_HIGH}), "
-          f"Break({BREAK_LOW}-{BREAK_HIGH}), Trim={TRIM_SECONDS}s", file=sys.stderr)
+          f"Break({BREAK_LOW}-{BREAK_HIGH}), Trim={TRIM_SECONDS}s, "
+          f"Confirm={CONFIRM_BEATS} beats", file=sys.stderr)
 
     # Фильтруем биты в рабочем диапазоне
     end_time = duration - TRIM_SECONDS
@@ -317,6 +323,14 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
         window_energies = [e for _, _, e in window]
         first_beat_time = window[0][1]  # время первого бита окна
 
+        # Собираем confirmation beats (N битов после окна)
+        confirm_energies = []
+        if CONFIRM_BEATS > 0:
+            for cb in range(1, CONFIRM_BEATS + 1):
+                cb_idx = window_start + 4 + cb - 1
+                if cb_idx < len(working_beats):
+                    confirm_energies.append(working_beats[cb_idx][2])
+
         # Классификация по FULL (все биты)
         if avg_energy_full > 0:
             ratios = [e / avg_energy_full for e in window_energies]
@@ -326,6 +340,18 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
             all_break = all(BREAK_LOW < r < BREAK_HIGH for r in ratios)
             # Stable: ВСЕ 4 бита в диапазоне [80%, 120%]
             all_stable = all(BRIDGE_HIGH <= r <= BREAK_LOW for r in ratios)
+
+            # Confirmation: следующие биты подтверждают выход из мостика/брейка
+            if all_bridge and CONFIRM_BEATS > 0 and confirm_energies:
+                max_window = max(window_energies)
+                # Все confirm биты должны быть громче max окна
+                if not all(ce > max_window for ce in confirm_energies):
+                    all_bridge = False
+            if all_break and CONFIRM_BEATS > 0 and confirm_energies:
+                min_window = min(window_energies)
+                # Все confirm биты должны быть тише min окна
+                if not all(ce < min_window for ce in confirm_energies):
+                    all_break = False
 
             if all_bridge:
                 bridges_full += 1
@@ -347,6 +373,16 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
             all_break = all(BREAK_LOW < r < BREAK_HIGH for r in ratios)
             # Stable: ВСЕ 4 бита в диапазоне [80%, 120%]
             all_stable = all(BRIDGE_HIGH <= r <= BREAK_LOW for r in ratios)
+
+            # Confirmation: те же проверки для strong метода
+            if all_bridge and CONFIRM_BEATS > 0 and confirm_energies:
+                max_window = max(window_energies)
+                if not all(ce > max_window for ce in confirm_energies):
+                    all_bridge = False
+            if all_break and CONFIRM_BEATS > 0 and confirm_energies:
+                min_window = min(window_energies)
+                if not all(ce < min_window for ce in confirm_energies):
+                    all_break = False
 
             if all_bridge:
                 bridges_strong += 1
@@ -377,6 +413,133 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
         'bridge_times_strong': bridge_times_strong,
         'break_times_strong': break_times_strong,
         'analyzed_windows': total_windows
+    }
+
+
+def analyze_bridge_sections(all_beats, activations, winning_row_num, rnn_fps=100.0):
+    """
+    Секционный анализ для детекции мостиков.
+
+    Разбивает биты на N равных частей, в каждой определяет winning_row.
+    Если winning_row и его пара (±4) чередуются — мостик есть.
+
+    Возвращает:
+    - has_bridge: bool
+    - sections: список {section, winning_row} для каждой части
+    - summary: строка вида "Да. 1-5, 2-1, 3-5, 4-5, 5-1"
+    """
+    cfg = load_thresholds_config()
+    num_sections = cfg['bridge_sections']
+
+    total_beats = len(all_beats)
+    if total_beats < num_sections * 8:
+        # Слишком мало битов для разбивки
+        return {
+            'has_bridge': False,
+            'sections': [],
+            'summary': f"Нет. Мало битов ({total_beats}) для {num_sections} секций"
+        }
+
+    # Разбиваем биты на N равных частей
+    section_size = total_beats // num_sections
+    sections_result = []
+
+    print(f"\n[Bridge Detection] Splitting {total_beats} beats into {num_sections} sections "
+          f"({section_size} beats each)", file=sys.stderr)
+
+    for s in range(num_sections):
+        start_idx = s * section_size
+        # Последняя секция забирает все оставшиеся биты
+        end_idx = (s + 1) * section_size if s < num_sections - 1 else total_beats
+        section_beats = all_beats[start_idx:end_idx]
+
+        if len(section_beats) < 8:
+            sections_result.append({
+                'section': s + 1,
+                'winning_row': None,
+                'beats_count': len(section_beats),
+                'note': 'too few beats'
+            })
+            continue
+
+        # Распределяем биты секции по 8 рядам
+        # ВАЖНО: индексация рядов должна сохраняться относительно общей песни
+        # Бит с глобальным индексом i принадлежит ряду (i % 8) + 1
+        section_rows = {}
+        for row_num in range(1, 9):
+            section_rows[row_num] = {
+                'row_number': row_num,
+                'beat_indices': [],
+                'count': 0
+            }
+
+        for local_idx in range(len(section_beats)):
+            global_idx = start_idx + local_idx
+            row_num = (global_idx % 8) + 1
+            section_rows[row_num]['beat_indices'].append(global_idx)
+            section_rows[row_num]['count'] += 1
+
+        # Считаем madmom scores для каждого ряда в этой секции
+        for row_num, row_data in section_rows.items():
+            madmom_scores = []
+            for beat_idx in row_data['beat_indices']:
+                beat_time = all_beats[beat_idx]
+                frame = int(beat_time * rnn_fps)
+                if frame < len(activations):
+                    score = float(activations[frame, 1])
+                    madmom_scores.append(score)
+            row_data['madmom_sum'] = sum(madmom_scores)
+
+        # Находим winning_row для этой секции
+        sorted_section = sorted(section_rows.items(), key=lambda x: x[1]['madmom_sum'], reverse=True)
+        section_winner = sorted_section[0][0]
+        section_winner_sum = sorted_section[0][1]['madmom_sum']
+        section_second_sum = sorted_section[1][1]['madmom_sum']
+        section_diff = ((section_winner_sum - section_second_sum) / section_winner_sum * 100
+                        if section_winner_sum > 0 else 100)
+
+        sections_result.append({
+            'section': s + 1,
+            'winning_row': section_winner,
+            'sum': round(section_winner_sum, 3),
+            'diff_pct': round(section_diff, 1),
+            'beats_count': len(section_beats)
+        })
+
+        print(f"  Section {s + 1}: beats [{start_idx}-{end_idx}] "
+              f"({len(section_beats)} beats), winner = Row {section_winner} "
+              f"(sum={section_winner_sum:.3f}, diff={section_diff:.1f}%)", file=sys.stderr)
+
+    # Определяем наличие мостика
+    valid_sections = [s for s in sections_result if s['winning_row'] is not None]
+    section_winners = [s['winning_row'] for s in valid_sections]
+
+    # Пара winning_row: row и row+4 (в рамках 1-8)
+    pair_row = ((winning_row_num + 4 - 1) % 8) + 1
+
+    has_bridge = False
+    if len(section_winners) >= 2:
+        # Мостик = хотя бы в одной секции winning_row отличается от общего
+        # И при этом он равен паре (±4)
+        for sw in section_winners:
+            if sw != winning_row_num and sw == pair_row:
+                has_bridge = True
+                break
+
+    # Формируем summary строку
+    parts = [f"{s['section']}-{s['winning_row']}" for s in valid_sections]
+    prefix = "Да" if has_bridge else "Нет"
+    summary = f"{prefix}. {', '.join(parts)}"
+
+    print(f"\n[Bridge Detection] Result: {summary}", file=sys.stderr)
+    print(f"  Global winner: Row {winning_row_num}, pair: Row {pair_row}", file=sys.stderr)
+
+    return {
+        'has_bridge': has_bridge,
+        'sections': sections_result,
+        'summary': summary,
+        'pair_row': pair_row,
+        'num_sections': num_sections
     }
 
 
@@ -504,6 +667,10 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     verdict['break_times_full'] = energy_analysis['break_times_full']
     verdict['bridge_times_strong'] = energy_analysis['bridge_times_strong']
     verdict['break_times_strong'] = energy_analysis['break_times_strong']
+
+    # 5.2 BRIDGE DETECTION (секционный анализ)
+    bridge_detection = analyze_bridge_sections(all_beats, activations, winning_row_num, rnn_fps)
+    verdict['bridge_detection'] = bridge_detection
 
     # 6. GRID & DOWNBEATS
     beat_interval = 60.0 / bpm

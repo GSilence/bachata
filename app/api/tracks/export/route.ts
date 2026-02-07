@@ -32,6 +32,12 @@ type Verdict = {
   // Timings - Strong (rows 1 & 5)
   bridge_times_strong?: number[];
   break_times_strong?: number[];
+  // Bridge detection
+  bridge_detection?: {
+    has_bridge?: boolean;
+    summary?: string;
+    sections?: { section: number; winning_row: number | null }[];
+  };
 };
 
 function getRowAnalysisFromGridMap(gridMap: unknown): {
@@ -163,6 +169,7 @@ export async function GET(request: Request) {
       "Breaks Strong",
       "Stable Strong",
       "Mixed Strong",
+      "Bridge detect",
       ...Array(8).fill("Среднее"),
       ...Array(8).fill("Выстрел"),
       "Победитель",
@@ -171,6 +178,7 @@ export async function GET(request: Request) {
     const headerRow2 = [
       "",
       ...subHeaders,
+      "",
       "",
       "",
       "",
@@ -214,6 +222,8 @@ export async function GET(request: Request) {
       const stableStrong = numForExcel(verdict?.stable_strong);
       const mixedStrong = numForExcel(verdict?.mixed_strong);
 
+      const bridgeDetect = escapeCSV(verdict?.bridge_detection?.summary ?? "");
+
       const avgs = rowKeys.map((key) =>
         numForExcel(row_analysis?.[key]?.madmom_avg),
       );
@@ -236,6 +246,7 @@ export async function GET(request: Request) {
           breaksStrong,
           stableStrong,
           mixedStrong,
+          bridgeDetect,
           ...avgs,
           ...maxs,
           numForExcel(winningRow),

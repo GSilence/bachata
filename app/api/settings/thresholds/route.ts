@@ -9,6 +9,8 @@ const DEFAULT_CONFIG = {
   bridge: { low: 0.30, high: 0.80 },
   break: { low: 1.20, high: 1.85 },
   trim_seconds: 15.0,
+  confirm_beats: 1,
+  bridge_sections: 5,
 };
 
 function readConfig() {
@@ -53,6 +55,8 @@ export async function POST(request: NextRequest) {
         high: Math.max(1, Math.min(3, parseNum(body.break?.high, 1.85))),
       },
       trim_seconds: Math.max(0, Math.min(60, parseNum(body.trim_seconds, 15.0))),
+      confirm_beats: Math.max(0, Math.min(8, Math.round(parseNum(body.confirm_beats, 1)))),
+      bridge_sections: Math.max(1, Math.min(20, Math.round(parseNum(body.bridge_sections, 5)))),
     };
 
     // Проверка: low < high
