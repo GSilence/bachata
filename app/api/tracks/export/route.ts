@@ -32,11 +32,14 @@ type Verdict = {
   // Timings - Strong (rows 1 & 5)
   bridge_times_strong?: number[];
   break_times_strong?: number[];
-  // Bridge detection
+  // Bridge detection (triple: BD-2, BD-3, BD-5)
   bridge_detection?: {
-    has_bridge?: boolean;
-    summary?: string;
-    sections?: { section: number; winning_row: number | null }[];
+    winning_row?: number;
+    pair_row?: number;
+    global_diff_pct?: number;
+    bd2?: { has_bridge?: boolean; summary?: string };
+    bd3?: { has_bridge?: boolean; summary?: string };
+    bd5?: { has_bridge?: boolean; summary?: string };
   };
 };
 
@@ -169,7 +172,9 @@ export async function GET(request: Request) {
       "Breaks Strong",
       "Stable Strong",
       "Mixed Strong",
-      "Bridge detect",
+      "BD-2",
+      "BD-3",
+      "BD-5",
       ...Array(8).fill("Среднее"),
       ...Array(8).fill("Выстрел"),
       "Победитель",
@@ -178,6 +183,8 @@ export async function GET(request: Request) {
     const headerRow2 = [
       "",
       ...subHeaders,
+      "",
+      "",
       "",
       "",
       "",
@@ -222,7 +229,9 @@ export async function GET(request: Request) {
       const stableStrong = numForExcel(verdict?.stable_strong);
       const mixedStrong = numForExcel(verdict?.mixed_strong);
 
-      const bridgeDetect = escapeCSV(verdict?.bridge_detection?.summary ?? "");
+      const bd2 = escapeCSV(verdict?.bridge_detection?.bd2?.summary ?? "");
+      const bd3 = escapeCSV(verdict?.bridge_detection?.bd3?.summary ?? "");
+      const bd5 = escapeCSV(verdict?.bridge_detection?.bd5?.summary ?? "");
 
       const avgs = rowKeys.map((key) =>
         numForExcel(row_analysis?.[key]?.madmom_avg),
@@ -246,7 +255,9 @@ export async function GET(request: Request) {
           breaksStrong,
           stableStrong,
           mixedStrong,
-          bridgeDetect,
+          bd2,
+          bd3,
+          bd5,
           ...avgs,
           ...maxs,
           numForExcel(winningRow),

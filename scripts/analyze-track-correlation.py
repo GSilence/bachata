@@ -59,8 +59,7 @@ def load_thresholds_config():
         'bridge': {'low': 0.30, 'high': 0.80},
         'break': {'low': 1.20, 'high': 1.85},
         'trim_seconds': 15.0,
-        'confirm_beats': 1,
-        'bridge_sections': 5
+        'confirm_beats': 1
     }
     try:
         if os.path.exists(config_path):
@@ -70,8 +69,7 @@ def load_thresholds_config():
                     'bridge': cfg.get('bridge', default['bridge']),
                     'break': cfg.get('break', default['break']),
                     'trim_seconds': cfg.get('trim_seconds', default['trim_seconds']),
-                    'confirm_beats': int(cfg.get('confirm_beats', default['confirm_beats'])),
-                    'bridge_sections': int(cfg.get('bridge_sections', default['bridge_sections']))
+                    'confirm_beats': int(cfg.get('confirm_beats', default['confirm_beats']))
                 }
     except Exception as e:
         print(f"[Config] Failed to load thresholds: {e}, using defaults", file=sys.stderr)
@@ -416,130 +414,122 @@ def analyze_energy_patterns(all_beats, beat_energies, winning_row_num, duration,
     }
 
 
-def analyze_bridge_sections(all_beats, activations, winning_row_num, rnn_fps=100.0):
+def _run_bridge_detector(all_beats, activations, winning_row_num, pair_row,
+                         global_diff_pct, num_sections, rnn_fps=100.0):
     """
-    Секционный анализ для детекции мостиков.
+    Один проход Bridge Detector для заданного количества секций.
 
-    Разбивает биты на N равных частей, в каждой определяет winning_row.
-    Если winning_row и его пара (±4) чередуются — мостик есть.
+    Алгоритм:
+    1. Глобально определены winning_row и pair_row (±4)
+    2. В каждой секции считаем СРЕДНЕЕ madmom score только для этих двух рядов
+    3. Сравниваем: кто доминирует в секции и на сколько %
+    4. Если в какой-то секции pair_row > winning_row — мостик есть
 
-    Возвращает:
-    - has_bridge: bool
-    - sections: список {section, winning_row} для каждой части
-    - summary: строка вида "Да. 1-5, 2-1, 3-5, 4-5, 5-1"
+    Формат: "Да 8%. 1-5 5%, 2-1 0.2%, 3-5 5%"
     """
-    cfg = load_thresholds_config()
-    num_sections = cfg['bridge_sections']
-
     total_beats = len(all_beats)
+
     if total_beats < num_sections * 8:
-        # Слишком мало битов для разбивки
         return {
             'has_bridge': False,
             'sections': [],
-            'summary': f"Нет. Мало битов ({total_beats}) для {num_sections} секций"
+            'summary': f"Нет. Мало битов ({total_beats})"
         }
 
-    # Разбиваем биты на N равных частей
     section_size = total_beats // num_sections
     sections_result = []
 
-    print(f"\n[Bridge Detection] Splitting {total_beats} beats into {num_sections} sections "
-          f"({section_size} beats each)", file=sys.stderr)
+    print(f"\n  [BD-{num_sections}] {total_beats} beats -> {num_sections} sections "
+          f"({section_size} each), Row {winning_row_num} vs Row {pair_row}", file=sys.stderr)
 
     for s in range(num_sections):
         start_idx = s * section_size
-        # Последняя секция забирает все оставшиеся биты
         end_idx = (s + 1) * section_size if s < num_sections - 1 else total_beats
-        section_beats = all_beats[start_idx:end_idx]
 
-        if len(section_beats) < 8:
-            sections_result.append({
-                'section': s + 1,
-                'winning_row': None,
-                'beats_count': len(section_beats),
-                'note': 'too few beats'
-            })
-            continue
+        # Собираем madmom scores только для двух рядов в этой секции
+        scores_winner = []
+        scores_pair = []
 
-        # Распределяем биты секции по 8 рядам
-        # ВАЖНО: индексация рядов должна сохраняться относительно общей песни
-        # Бит с глобальным индексом i принадлежит ряду (i % 8) + 1
-        section_rows = {}
-        for row_num in range(1, 9):
-            section_rows[row_num] = {
-                'row_number': row_num,
-                'beat_indices': [],
-                'count': 0
-            }
+        for idx in range(start_idx, end_idx):
+            row_num = (idx % 8) + 1
+            beat_time = all_beats[idx]
+            frame = int(beat_time * rnn_fps)
+            if frame < len(activations):
+                score = float(activations[frame, 1])
+                if row_num == winning_row_num:
+                    scores_winner.append(score)
+                elif row_num == pair_row:
+                    scores_pair.append(score)
 
-        for local_idx in range(len(section_beats)):
-            global_idx = start_idx + local_idx
-            row_num = (global_idx % 8) + 1
-            section_rows[row_num]['beat_indices'].append(global_idx)
-            section_rows[row_num]['count'] += 1
+        # Средние (не суммы — для нормализации разного размера секций)
+        avg_winner = sum(scores_winner) / len(scores_winner) if scores_winner else 0
+        avg_pair = sum(scores_pair) / len(scores_pair) if scores_pair else 0
 
-        # Считаем madmom scores для каждого ряда в этой секции
-        for row_num, row_data in section_rows.items():
-            madmom_scores = []
-            for beat_idx in row_data['beat_indices']:
-                beat_time = all_beats[beat_idx]
-                frame = int(beat_time * rnn_fps)
-                if frame < len(activations):
-                    score = float(activations[frame, 1])
-                    madmom_scores.append(score)
-            row_data['madmom_sum'] = sum(madmom_scores)
-
-        # Находим winning_row для этой секции
-        sorted_section = sorted(section_rows.items(), key=lambda x: x[1]['madmom_sum'], reverse=True)
-        section_winner = sorted_section[0][0]
-        section_winner_sum = sorted_section[0][1]['madmom_sum']
-        section_second_sum = sorted_section[1][1]['madmom_sum']
-        section_diff = ((section_winner_sum - section_second_sum) / section_winner_sum * 100
-                        if section_winner_sum > 0 else 100)
+        # Кто доминирует в этой секции?
+        if avg_winner >= avg_pair:
+            section_dominant = winning_row_num
+            diff = ((avg_winner - avg_pair) / avg_winner * 100) if avg_winner > 0 else 0
+        else:
+            section_dominant = pair_row
+            diff = ((avg_pair - avg_winner) / avg_pair * 100) if avg_pair > 0 else 0
 
         sections_result.append({
             'section': s + 1,
-            'winning_row': section_winner,
-            'sum': round(section_winner_sum, 3),
-            'diff_pct': round(section_diff, 1),
-            'beats_count': len(section_beats)
+            'dominant_row': section_dominant,
+            'diff_pct': round(diff, 2),
+            'avg_winner': round(avg_winner, 4),
+            'avg_pair': round(avg_pair, 4)
         })
 
-        print(f"  Section {s + 1}: beats [{start_idx}-{end_idx}] "
-              f"({len(section_beats)} beats), winner = Row {section_winner} "
-              f"(sum={section_winner_sum:.3f}, diff={section_diff:.1f}%)", file=sys.stderr)
+        print(f"    Section {s + 1}: Row {section_dominant} wins "
+              f"(diff={diff:.2f}%, avg_w={avg_winner:.4f}, avg_p={avg_pair:.4f})",
+              file=sys.stderr)
 
-    # Определяем наличие мостика
-    valid_sections = [s for s in sections_result if s['winning_row'] is not None]
-    section_winners = [s['winning_row'] for s in valid_sections]
+    # Мостик = хотя бы в одной секции pair_row доминирует
+    has_bridge = any(s['dominant_row'] == pair_row for s in sections_result)
 
-    # Пара winning_row: row и row+4 (в рамках 1-8)
-    pair_row = ((winning_row_num + 4 - 1) % 8) + 1
-
-    has_bridge = False
-    if len(section_winners) >= 2:
-        # Мостик = хотя бы в одной секции winning_row отличается от общего
-        # И при этом он равен паре (±4)
-        for sw in section_winners:
-            if sw != winning_row_num and sw == pair_row:
-                has_bridge = True
-                break
-
-    # Формируем summary строку
-    parts = [f"{s['section']}-{s['winning_row']}" for s in valid_sections]
-    prefix = "Да" if has_bridge else "Нет"
+    # Формируем summary: "Да 8%. 1-5 5%, 2-1 0.2%, 3-5 5%"
+    parts = [f"{s['section']}-{s['dominant_row']} {s['diff_pct']}%" for s in sections_result]
+    prefix = f"Да {global_diff_pct}%" if has_bridge else f"Нет {global_diff_pct}%"
     summary = f"{prefix}. {', '.join(parts)}"
 
-    print(f"\n[Bridge Detection] Result: {summary}", file=sys.stderr)
-    print(f"  Global winner: Row {winning_row_num}, pair: Row {pair_row}", file=sys.stderr)
+    print(f"    Result: {summary}", file=sys.stderr)
 
     return {
         'has_bridge': has_bridge,
         'sections': sections_result,
-        'summary': summary,
+        'summary': summary
+    }
+
+
+def analyze_bridge_detection(all_beats, activations, winning_row_num, diff_pct, rnn_fps=100.0):
+    """
+    Bridge Detection — тройной анализ (BD-2, BD-3, BD-5).
+
+    Глобально определены winning_row и pair_row (±4).
+    Для каждого варианта разбивки (2, 3, 5 секций) сравниваем
+    средние madmom scores этих двух рядов внутри каждой секции.
+    """
+    pair_row = ((winning_row_num + 4 - 1) % 8) + 1
+    global_diff_pct = round(diff_pct, 1)
+
+    print(f"\n[Bridge Detection] Global: Row {winning_row_num} vs Row {pair_row}, "
+          f"diff={global_diff_pct}%", file=sys.stderr)
+
+    bd2 = _run_bridge_detector(all_beats, activations, winning_row_num, pair_row,
+                                global_diff_pct, 2, rnn_fps)
+    bd3 = _run_bridge_detector(all_beats, activations, winning_row_num, pair_row,
+                                global_diff_pct, 3, rnn_fps)
+    bd5 = _run_bridge_detector(all_beats, activations, winning_row_num, pair_row,
+                                global_diff_pct, 5, rnn_fps)
+
+    return {
+        'winning_row': winning_row_num,
         'pair_row': pair_row,
-        'num_sections': num_sections
+        'global_diff_pct': global_diff_pct,
+        'bd2': bd2,
+        'bd3': bd3,
+        'bd5': bd5
     }
 
 
@@ -668,8 +658,8 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     verdict['bridge_times_strong'] = energy_analysis['bridge_times_strong']
     verdict['break_times_strong'] = energy_analysis['break_times_strong']
 
-    # 5.2 BRIDGE DETECTION (секционный анализ)
-    bridge_detection = analyze_bridge_sections(all_beats, activations, winning_row_num, rnn_fps)
+    # 5.2 BRIDGE DETECTION (тройной секционный анализ: BD-2, BD-3, BD-5)
+    bridge_detection = analyze_bridge_detection(all_beats, activations, winning_row_num, diff_pct, rnn_fps)
     verdict['bridge_detection'] = bridge_detection
 
     # 6. GRID & DOWNBEATS

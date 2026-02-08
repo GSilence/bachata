@@ -628,10 +628,19 @@ export default function TrackInfo({}: TrackInfoProps) {
                             </p>
                           )}
                           {verdict.bridge_detection && (
-                            <p className={verdict.bridge_detection.has_bridge ? "text-red-400 font-medium" : "text-green-400/80"}>
-                              <span className="text-gray-500">Bridge detect:</span>{" "}
-                              {verdict.bridge_detection.summary}
-                            </p>
+                            <div className="space-y-0.5">
+                              {(["bd2", "bd3", "bd5"] as const).map((key) => {
+                                const bd = (verdict.bridge_detection as Record<string, any>)?.[key];
+                                if (!bd) return null;
+                                const label = key === "bd2" ? "BD-2" : key === "bd3" ? "BD-3" : "BD-5";
+                                return (
+                                  <p key={key} className={bd.has_bridge ? "text-red-400" : "text-green-400/80"}>
+                                    <span className="text-gray-500">{label}:</span>{" "}
+                                    {bd.summary}
+                                  </p>
+                                );
+                              })}
+                            </div>
                           )}
                           {ca.reportPath && (
                             <div className="flex flex-wrap gap-3 mt-1">
