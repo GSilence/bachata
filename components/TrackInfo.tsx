@@ -53,8 +53,8 @@ export default function TrackInfo({}: TrackInfoProps) {
       if (!beats || !Array.isArray(beats)) throw new Error("No beats data");
 
       const bom = "\uFEFF";
-      const header = "Beat,Energy,Madmom";
-      const rows = beats.map((b: { id: number; energy: number; madmom_score: number }) => `${b.id + 1},${b.energy},${b.madmom_score}`);
+      const header = "Beat,Energy,Madmom,Harmonic";
+      const rows = beats.map((b: { id: number; energy: number; madmom_score: number; harmonic?: number }) => `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''}`);
       const csv = bom + header + "\n" + rows.join("\n");
 
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });

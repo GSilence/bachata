@@ -617,6 +617,11 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     beats_detailed = []
     beat_energies = []  # Для analyze_energy_patterns
 
+    # HPSS: разделяем на гармоническую и перкуссионную части (один раз)
+    print("[HPSS] Separating harmonic/percussive...", file=sys.stderr)
+    y_harmonic, _ = librosa.effects.hpss(y)
+    print(f"[HPSS] Done. Harmonic signal length: {len(y_harmonic)}", file=sys.stderr)
+
     for i, beat_time in enumerate(all_beats):
         beat_row = (i % 8) + 1
 
@@ -628,13 +633,17 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         frame = int(beat_time * rnn_fps)
         madmom_score = float(activations[frame, 1]) if frame < len(activations) else 0.0
 
+        # Harmonic energy (vocal proxy via HPSS)
+        e_harmonic = get_band_energy(y_harmonic, sr, beat_time, (None, None))
+
         beats_detailed.append({
             'id': i,
             'time': round(beat_time, 3),
             'row': beat_row,
             'is_start': (i == start_beat_idx),
             'madmom_score': round(madmom_score, 4),
-            'energy': round(e_total, 4)
+            'energy': round(e_total, 4),
+            'harmonic': round(e_harmonic, 4)
         })
 
     # 5.1 ENERGY PATTERN ANALYSIS (мостики, брейки)

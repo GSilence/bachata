@@ -40,7 +40,9 @@
       "Bash(printf:*)",
       "Bash(D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -m py_compile:*)",
       "Bash(npx next lint:*)",
-      "Bash(cmd /c \"D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -m py_compile d:\\\\Sites\\\\bachata\\\\scripts\\\\analyze-track-correlation.py\")"
+      "Bash(cmd /c \"D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\python.exe -m py_compile d:\\\\Sites\\\\bachata\\\\scripts\\\\analyze-track-correlation.py\")",
+      "Bash(D:\\\\Sites\\\\bachata\\\\venv\\\\Scripts\\\\pip.exe list:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
