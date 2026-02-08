@@ -31,11 +31,11 @@ export async function POST(request: NextRequest) {
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
     const comment = formData.get("comment") as string | null;
-    const analyzer = (formData.get("analyzer") as string) || "extended"; // 'basic' | 'extended' | 'correlation', по умолчанию расширенный
+    const analyzer = (formData.get("analyzer") as string) || "correlation";
     const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
     const analyzerOption: AnalyzerType = validAnalyzers.includes(analyzer as AnalyzerType)
       ? (analyzer as AnalyzerType)
-      : "extended";
+      : "correlation";
     // BPM и Offset всегда определяются автоматически
     const autoBpm = true;
     const autoOffset = true;

@@ -52,7 +52,7 @@ export default function LibraryPage() {
   const router = useRouter();
   const { user, isLoading, checkAuth } = useAuthStore();
   const [items, setItems] = useState<QueueItem[]>([]);
-  const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("basic");
+  const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("correlation");
   const [isExtracting, setIsExtracting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -306,48 +306,7 @@ export default function LibraryPage() {
           )}
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Анализатор ритма (общий для всех файлов)
-              </label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="uploadAnalyzer"
-                    checked={uploadAnalyzer === "extended"}
-                    onChange={() => setUploadAnalyzer("extended")}
-                    disabled={isProcessing}
-                    className="text-purple-600 focus:ring-purple-600"
-                  />
-                  <span className="text-sm text-gray-300">
-                    Расширенный анализ
-                  </span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="uploadAnalyzer"
-                    checked={uploadAnalyzer === "basic"}
-                    onChange={() => setUploadAnalyzer("basic")}
-                    disabled={isProcessing}
-                    className="text-purple-600 focus:ring-purple-600"
-                  />
-                  <span className="text-sm text-gray-300">Базовый анализ</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="uploadAnalyzer"
-                    checked={uploadAnalyzer === "correlation"}
-                    onChange={() => setUploadAnalyzer("correlation")}
-                    disabled={isProcessing}
-                    className="text-purple-600 focus:ring-purple-600"
-                  />
-                  <span className="text-sm text-gray-300">Корреляция</span>
-                </label>
-              </div>
-            </div>
+            {/* Analyzer selection hidden — correlation is now the default and only active analyzer */}
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-2">
                 MP3 файлы (выберите один или несколько)

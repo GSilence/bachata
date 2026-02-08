@@ -425,87 +425,12 @@ export default function TrackInfo({}: TrackInfoProps) {
           <div className="mt-4 sm:mt-6 mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-400">Расклад:</span>
             <span className="text-sm text-white">
-              {currentTrack.analyzerType === "extended"
-                ? "Расширенный"
-                : currentTrack.analyzerType === "basic"
-                  ? "Базовый"
-                  : currentTrack.analyzerType === "correlation"
-                    ? "Корреляция"
-                    : "не указан"}
+              {currentTrack.analyzerType === "correlation"
+                ? "Корреляция"
+                : currentTrack.analyzerType || "не указан"}
             </span>
             <div className="flex items-center gap-2 ml-2">
-              <button
-                type="button"
-                onClick={() => handleReanalyze("basic")}
-                disabled={
-                  isReanalyzing || currentTrack.analyzerType === "basic"
-                }
-                title={
-                  currentTrack.analyzerType === "basic"
-                    ? "Текущий анализ"
-                    : "Перезапустить базовый анализ (BPM/Offset)"
-                }
-                className={`text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
-                  currentTrack.analyzerType === "basic"
-                    ? "opacity-60"
-                    : isReanalyzing
-                      ? "opacity-50"
-                      : ""
-                }`}
-              >
-                {isReanalyzing ? (
-                  <svg
-                    className="w-4 h-4 animate-spin shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                ) : null}
-                {isReanalyzing ? "Анализ…" : "Базовый анализ"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleReanalyze("extended")}
-                disabled={
-                  isReanalyzing || currentTrack.analyzerType === "extended"
-                }
-                title={
-                  currentTrack.analyzerType === "extended"
-                    ? "Текущий анализ"
-                    : "Перезапустить расширенный анализ (BPM/Offset/Grid)"
-                }
-                className={`text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
-                  currentTrack.analyzerType === "extended"
-                    ? "opacity-60"
-                    : isReanalyzing
-                      ? "opacity-50"
-                      : ""
-                }`}
-              >
-                {isReanalyzing ? (
-                  <svg
-                    className="w-4 h-4 animate-spin shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                ) : null}
-                {isReanalyzing ? "Анализ…" : "Расширенный анализ"}
-              </button>
+              {/* Basic and Extended analyzers hidden — correlation is the active analyzer */}
               <button
                 type="button"
                 onClick={() => handleReanalyze("correlation")}

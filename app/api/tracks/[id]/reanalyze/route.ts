@@ -55,7 +55,7 @@ export async function POST(
     const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
     const analyzer: AnalyzerType = validAnalyzers.includes(body.analyzer)
       ? body.analyzer
-      : "extended";
+      : "correlation";
 
     const relativePath = pathOriginal.replace(/^\//, "");
     const filePath = join(process.cwd(), "public", relativePath);
