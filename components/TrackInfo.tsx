@@ -5,7 +5,10 @@ import { usePlayerStore } from "@/store/playerStore";
 import { useAuthStore } from "@/store/authStore";
 import { audioEngine } from "@/lib/audioEngine";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import type { GridMap } from "@/types";
+
+const DashboardChart = dynamic(() => import("./DashboardChart"), { ssr: false });
 
 interface TrackInfoProps {}
 
@@ -46,15 +49,17 @@ export default function TrackInfo({}: TrackInfoProps) {
   // Скачать биты как CSV (номер бита + энергия)
   const downloadBeatsCSV = async (reportPath: string) => {
     try {
-      const res = await fetch(reportPath);
+      const res = await fetch(`${reportPath}?t=${Date.now()}`);
       if (!res.ok) throw new Error("Failed to fetch report");
       const report = await res.json();
       const beats = report.beats;
       if (!beats || !Array.isArray(beats)) throw new Error("No beats data");
 
       const bom = "\uFEFF";
-      const header = "Beat,Energy,Madmom,Harmonic";
-      const rows = beats.map((b: { id: number; energy: number; madmom_score: number; harmonic?: number }) => `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''}`);
+      const header = "Beat,Energy,Madmom,Harmonic,BPM,Centroid,Flatness,Onset_str,ZCR,Chroma";
+      const rows = beats.map((b: any) =>
+        `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''},${b.local_bpm ?? ''},${b.spectral_centroid ?? ''},${b.spectral_flatness ?? ''},${b.onset_strength ?? ''},${b.zcr ?? ''},${b.chroma_note ?? ''}`
+      );
       const csv = bom + header + "\n" + rows.join("\n");
 
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -594,6 +599,11 @@ export default function TrackInfo({}: TrackInfoProps) {
                       )}
                     </div>
                   </details>
+
+                  {/* Dashboard Charts (Librosa) */}
+                  {ca.reportPath && (
+                    <DashboardChart reportPath={ca.reportPath} />
+                  )}
                 </div>
               );
             })()}

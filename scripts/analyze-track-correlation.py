@@ -622,6 +622,32 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
     y_harmonic, _ = librosa.effects.hpss(y)
     print(f"[HPSS] Done. Harmonic signal length: {len(y_harmonic)}", file=sys.stderr)
 
+    # --- Librosa frame-level features (computed ONCE) ---
+    hop_length = 512
+    print("[Librosa] Computing spectral features...", file=sys.stderr)
+
+    lr_spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
+    lr_spectral_flatness = librosa.feature.spectral_flatness(y=y, hop_length=hop_length)[0]
+    lr_onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+    lr_zcr = librosa.feature.zero_crossing_rate(y=y, hop_length=hop_length)[0]
+    lr_chroma = librosa.feature.chroma_stft(y=y_harmonic, sr=sr, hop_length=hop_length)
+
+    # Frame times for interpolation
+    lr_frame_times = librosa.frames_to_time(
+        np.arange(len(lr_spectral_centroid)), sr=sr, hop_length=hop_length
+    )
+    lr_onset_frame_times = librosa.frames_to_time(
+        np.arange(len(lr_onset_env)), sr=sr, hop_length=hop_length
+    )
+
+    NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+    # Librosa tempo (INFO ONLY — does NOT replace madmom BPM)
+    lr_tempo = float(librosa.beat.tempo(y=y, sr=sr, hop_length=hop_length)[0])
+
+    print(f"[Librosa] Done. Frames: {len(lr_spectral_centroid)}, "
+          f"Librosa tempo: {lr_tempo:.1f} BPM", file=sys.stderr)
+
     for i, beat_time in enumerate(all_beats):
         beat_row = (i % 8) + 1
 
@@ -636,6 +662,28 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         # Harmonic energy (vocal proxy via HPSS)
         e_harmonic = get_band_energy(y_harmonic, sr, beat_time, (None, None))
 
+        # Librosa per-beat features (interpolated from frame-level)
+        sc_val = float(np.interp(beat_time, lr_frame_times, lr_spectral_centroid))
+        sf_val = float(np.interp(beat_time, lr_frame_times, lr_spectral_flatness))
+        os_val = float(np.interp(beat_time, lr_onset_frame_times, lr_onset_env))
+        zcr_val = float(np.interp(beat_time, lr_frame_times, lr_zcr))
+
+        # Chroma: nearest frame argmax → note name
+        chroma_frame = min(int(np.round(beat_time * sr / hop_length)), lr_chroma.shape[1] - 1)
+        chroma_frame = max(0, chroma_frame)
+        note_idx = int(np.argmax(lr_chroma[:, chroma_frame]))
+        note_name = NOTE_NAMES[note_idx]
+        chroma_strength = float(lr_chroma[note_idx, chroma_frame])
+
+        # Local BPM: from interval to next beat
+        if i < len(all_beats) - 1:
+            interval = all_beats[i + 1] - beat_time
+            local_bpm = round(60.0 / interval, 1) if interval > 0 else 0.0
+        else:
+            # Last beat: use interval from previous beat
+            interval = beat_time - all_beats[i - 1] if i > 0 else 60.0 / bpm
+            local_bpm = round(60.0 / interval, 1) if interval > 0 else 0.0
+
         beats_detailed.append({
             'id': i,
             'time': round(beat_time, 3),
@@ -643,7 +691,15 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
             'is_start': (i == start_beat_idx),
             'madmom_score': round(madmom_score, 4),
             'energy': round(e_total, 4),
-            'harmonic': round(e_harmonic, 4)
+            'harmonic': round(e_harmonic, 4),
+            'local_bpm': local_bpm,
+            'spectral_centroid': round(sc_val, 1),
+            'spectral_flatness': round(sf_val, 4),
+            'onset_strength': round(os_val, 4),
+            'zcr': round(zcr_val, 4),
+            'chroma_note': note_name,
+            'chroma_strength': round(chroma_strength, 3),
+            'chroma_index': note_idx,
         })
 
     # 5.1 ENERGY PATTERN ANALYSIS (мостики, брейки)
@@ -699,12 +755,24 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
             downbeats.append(round(db_time, 3))
         db_time += beat_interval * 4
 
+    # Librosa global summary (INFO ONLY)
+    librosa_summary = {
+        'librosa_tempo': round(lr_tempo, 1),
+        'dominant_key': NOTE_NAMES[int(np.argmax(np.mean(lr_chroma, axis=1)))],
+        'spectral_centroid_mean': round(float(np.mean(lr_spectral_centroid)), 1),
+        'spectral_centroid_std': round(float(np.std(lr_spectral_centroid)), 1),
+        'spectral_flatness_mean': round(float(np.mean(lr_spectral_flatness)), 4),
+        'onset_strength_mean': round(float(np.mean(lr_onset_env)), 4),
+        'zcr_mean': round(float(np.mean(lr_zcr)), 4),
+    }
+
     return {
         'meta': meta,
         'verdict': verdict,
         'row_analysis': row_analysis,
         'top_madmom_beats': top_madmom_beats,
         'beats': beats_detailed,
+        'librosa_summary': librosa_summary,
         'bpm': bpm,
         'offset': round(offset, 3),
         'duration': duration,
