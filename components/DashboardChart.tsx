@@ -26,18 +26,28 @@ export default function DashboardChart({ reportPath }: Props) {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ChartTab>("energy");
   const [isOpen, setIsOpen] = useState(false);
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
+
+  // Reset when track changes
+  useEffect(() => {
+    if (reportPath !== loadedPath) {
+      setReport(null);
+      setLoadedPath(null);
+    }
+  }, [reportPath, loadedPath]);
 
   useEffect(() => {
-    if (!isOpen || report) return;
+    if (!isOpen || loadedPath === reportPath) return;
     setLoading(true);
     fetch(`${reportPath}?t=${Date.now()}`)
       .then((r) => r.json())
       .then((data) => {
         setReport(data);
+        setLoadedPath(reportPath);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [isOpen, reportPath, report]);
+  }, [isOpen, reportPath, loadedPath]);
 
   const hasLibrosa = report?.beats?.[0]?.spectral_centroid !== undefined;
   const summary = report?.librosa_summary;
