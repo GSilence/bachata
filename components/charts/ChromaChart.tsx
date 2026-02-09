@@ -45,8 +45,8 @@ export default function ChromaChart({ beats }: Props) {
         />
         <Tooltip
           {...TOOLTIP_STYLE}
-          formatter={(_: unknown, __: unknown, props: { payload: { noteName: string; strength: number } }) => [
-            `${props.payload.noteName} (${props.payload.strength.toFixed(2)})`,
+          formatter={(_: unknown, __: unknown, props: any) => [
+            `${props?.payload?.noteName ?? ''} (${(props?.payload?.strength ?? 0).toFixed(2)})`,
             "Note",
           ]}
           labelFormatter={(v) => formatTime(v as number)}

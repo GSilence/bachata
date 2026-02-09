@@ -755,7 +755,236 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
             downbeats.append(round(db_time, 3))
         db_time += beat_interval * 4
 
+    # ================================================================
+    # 7. ADVANCED LIBROSA ANALYSIS
+    # ================================================================
+    print("[Advanced] Computing intensity, climaxes, tempo changes, sections...", file=sys.stderr)
+
+    # --- 7.1 INTENSITY (combined per-beat metric) ---
+    energies_arr = np.array([b['energy'] for b in beats_detailed])
+    onsets_arr = np.array([b.get('onset_strength', 0) for b in beats_detailed])
+    centroids_arr = np.array([b.get('spectral_centroid', 0) for b in beats_detailed])
+
+    def _safe_normalize(arr):
+        mx = np.max(arr)
+        return arr / mx if mx > 0 else arr
+
+    en_norm = _safe_normalize(energies_arr)
+    on_norm = _safe_normalize(onsets_arr)
+    cn_norm = _safe_normalize(centroids_arr)
+
+    intensity_arr = 0.4 * en_norm + 0.4 * on_norm + 0.2 * cn_norm
+
+    for i, b in enumerate(beats_detailed):
+        b['intensity'] = round(float(intensity_arr[i]), 4)
+
+    # --- 7.2 CLIMAXES (top-5 energy peaks) ---
+    from scipy.signal import find_peaks as scipy_find_peaks
+    from scipy.ndimage import gaussian_filter1d
+
+    intensity_smooth = gaussian_filter1d(intensity_arr, sigma=3)
+    peaks_idx, _ = scipy_find_peaks(
+        intensity_smooth,
+        height=np.percentile(intensity_smooth, 75),
+        distance=max(8, int(len(beats_detailed) * 0.05))
+    )
+
+    if len(peaks_idx) > 0:
+        peak_values = intensity_smooth[peaks_idx]
+        top_indices = np.argsort(peak_values)[-5:][::-1]
+        top_peaks = peaks_idx[top_indices]
+
+        climaxes = []
+        for rank, pidx in enumerate(sorted(top_peaks), 1):
+            b = beats_detailed[pidx]
+            climaxes.append({
+                'rank': rank,
+                'beat_id': b['id'],
+                'time': b['time'],
+                'intensity': round(float(intensity_smooth[pidx]), 4),
+            })
+    else:
+        climaxes = []
+
+    print(f"[Advanced] Found {len(climaxes)} climaxes", file=sys.stderr)
+
+    # --- 7.3 TEMPO CHANGES ---
+    bpm_arr = np.array([b.get('local_bpm', bpm) for b in beats_detailed])
+    bpm_smooth = gaussian_filter1d(bpm_arr, sigma=3)
+    bpm_grad = np.gradient(bpm_smooth)
+    bpm_threshold = np.std(bpm_grad) * 2
+
+    tempo_changes = []
+    for i in range(1, len(bpm_grad)):
+        if abs(bpm_grad[i]) > bpm_threshold and abs(bpm_grad[i]) > 0.5:
+            change_type = 'acceleration' if bpm_grad[i] > 0 else 'deceleration'
+            tempo_changes.append({
+                'beat_id': beats_detailed[i]['id'],
+                'time': beats_detailed[i]['time'],
+                'type': change_type,
+                'bpm_before': round(float(bpm_smooth[i - 1]), 1),
+                'bpm_after': round(float(bpm_smooth[i]), 1),
+                'delta': round(float(bpm_smooth[i] - bpm_smooth[i - 1]), 2),
+            })
+
+    # Deduplicate: keep only first in each cluster (within 2 beats)
+    tempo_changes_dedup = []
+    for tc in tempo_changes:
+        if not tempo_changes_dedup or tc['beat_id'] - tempo_changes_dedup[-1]['beat_id'] > 2:
+            tempo_changes_dedup.append(tc)
+    tempo_changes = tempo_changes_dedup[:20]  # Limit to 20
+
+    print(f"[Advanced] Found {len(tempo_changes)} tempo changes", file=sys.stderr)
+
+    # --- 7.4 FOUR-COUNTS (размер мостика = 4 бита) ---
+    four_counts = []
+    num_counts = len(all_beats) // 4
+    for c in range(num_counts):
+        start_idx = c * 4
+        end_idx = start_idx + 3  # last beat in group
+        if end_idx >= len(all_beats):
+            break
+        count_beats = beats_detailed[start_idx:start_idx + 4]
+        avg_intensity = float(np.mean([b.get('intensity', 0) for b in count_beats]))
+        four_counts.append({
+            'count': c + 1,
+            'start_time': round(all_beats[start_idx], 3),
+            'end_time': round(all_beats[end_idx], 3),
+            'duration': round(all_beats[end_idx] - all_beats[start_idx], 3),
+            'avg_intensity': round(avg_intensity, 4),
+        })
+
+    # Classify intensity levels
+    if four_counts:
+        intensities = [ec['avg_intensity'] for ec in four_counts]
+        p33 = float(np.percentile(intensities, 33))
+        p67 = float(np.percentile(intensities, 67))
+        for ec in four_counts:
+            if ec['avg_intensity'] >= p67:
+                ec['level'] = 'HIGH'
+            elif ec['avg_intensity'] >= p33:
+                ec['level'] = 'MEDIUM'
+            else:
+                ec['level'] = 'LOW'
+
+    print(f"[Advanced] {len(four_counts)} four-counts", file=sys.stderr)
+
+    # --- Common paths for generated files ---
+    reports_output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                      'public', 'uploads', 'reports')
+    track_basename = os.path.splitext(os.path.basename(audio_path))[0]
+
+    # --- 7.5 SPECTROGRAM (PNG image) ---
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # non-interactive backend
+        import matplotlib.pyplot as plt
+        spec_filename = f"{track_basename}_spectrogram.png"
+        spec_path = os.path.join(reports_output_dir, spec_filename)
+
+        # Mel spectrogram
+        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, hop_length=2048, n_mels=128)
+        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+
+        fig, ax = plt.subplots(1, 1, figsize=(16, 4), dpi=100)
+        fig.patch.set_facecolor('#1f2937')
+        ax.set_facecolor('#1f2937')
+
+        img = librosa.display.specshow(mel_spec_db, x_axis='time', y_axis='mel',
+                                        sr=sr, hop_length=2048, ax=ax, cmap='magma')
+        # Mark downbeats (every 8th beat from winning row)
+        downbeat_times = [all_beats[i] for i in range(0, len(all_beats), 8)]
+        for dt in downbeat_times:
+            ax.axvline(dt, color='white', alpha=0.15, linewidth=0.5)
+
+        ax.set_xlabel('Time', color='#9ca3af', fontsize=9)
+        ax.set_ylabel('Hz', color='#9ca3af', fontsize=9)
+        ax.tick_params(colors='#9ca3af', labelsize=8)
+
+        cbar = fig.colorbar(img, ax=ax, format='%+2.0f dB')
+        cbar.ax.tick_params(colors='#9ca3af', labelsize=8)
+        cbar.set_label('dB', color='#9ca3af', fontsize=9)
+
+        plt.tight_layout(pad=0.5)
+        plt.savefig(spec_path, facecolor='#1f2937', edgecolor='none')
+        plt.close(fig)
+
+        spectrogram_path = f"/uploads/reports/{spec_filename}"
+        print(f"[Advanced] Spectrogram saved: {spec_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"[Advanced] Spectrogram failed: {e}", file=sys.stderr)
+        spectrogram_path = None
+
+    # --- 7.6 CLICK TRACK (WAV with metronome overlay) ---
+    try:
+        click_filename = f"{track_basename}_click.wav"
+        click_path = os.path.join(reports_output_dir, click_filename)
+
+        click_duration_sec = 0.05  # 50ms
+        click_samples = int(click_duration_sec * sr)
+        t_click = np.linspace(0, click_duration_sec, click_samples)
+
+        # High click (beat 1) and low click (beats 2-8)
+        click_high = np.sin(2 * np.pi * 1200 * t_click) * np.exp(-t_click * 60)
+        click_low = np.sin(2 * np.pi * 800 * t_click) * np.exp(-t_click * 60)
+
+        y_click = y.copy()
+        for i, beat_time in enumerate(all_beats):
+            beat_sample = int(beat_time * sr)
+            end_sample = min(beat_sample + click_samples, len(y_click))
+            n = end_sample - beat_sample
+            if n <= 0:
+                continue
+            click = click_high[:n] if (i % 8 == 0) else click_low[:n]
+            y_click[beat_sample:end_sample] += click * 0.25
+
+        # Normalize
+        max_val = np.max(np.abs(y_click))
+        if max_val > 0:
+            y_click = y_click / max_val * 0.95
+
+        sf.write(click_path, y_click, sr)
+        click_track_path = f"/uploads/reports/{click_filename}"
+        print(f"[Advanced] Click track saved: {click_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"[Advanced] Click track generation failed: {e}", file=sys.stderr)
+        click_track_path = None
+
+    # --- 7.7 MARKERS EXPORT (TXT) ---
+    try:
+        markers_filename = f"{track_basename}_markers.txt"
+        markers_path = os.path.join(reports_output_dir, markers_filename)
+
+        with open(markers_path, 'w', encoding='utf-8') as f:
+            f.write(f"# Dance Markers: {os.path.basename(audio_path)}\n")
+            f.write(f"# BPM: {bpm:.1f} | Librosa BPM: {lr_tempo:.1f}\n")
+            f.write(f"# Duration: {duration:.2f}s\n")
+            f.write(f"# Winning row: {winning_row_num} | Offset: {offset:.3f}s\n\n")
+
+            f.write("# BEATS (time, row, intensity)\n")
+            for b in beats_detailed:
+                marker = ">>>" if b['is_start'] else ("*" if b['row'] == 1 else "")
+                f.write(f"{b['time']:.3f}\tBeat_{b['row']}\t{b.get('intensity', 0):.4f}\t{marker}\n")
+
+            if climaxes:
+                f.write("\n# CLIMAXES\n")
+                for c in climaxes:
+                    f.write(f"{c['time']:.3f}\tCLIMAX_{c['rank']}\t{c['intensity']:.4f}\n")
+
+            if tempo_changes:
+                f.write("\n# TEMPO CHANGES\n")
+                for tc in tempo_changes:
+                    f.write(f"{tc['time']:.3f}\t{tc['type']}\t{tc['bpm_before']:.1f}->{tc['bpm_after']:.1f}\n")
+
+        markers_export_path = f"/uploads/reports/{markers_filename}"
+        print(f"[Advanced] Markers saved: {markers_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"[Advanced] Markers export failed: {e}", file=sys.stderr)
+        markers_export_path = None
+
+    # ================================================================
     # Librosa global summary (INFO ONLY)
+    # ================================================================
     librosa_summary = {
         'librosa_tempo': round(lr_tempo, 1),
         'dominant_key': NOTE_NAMES[int(np.argmax(np.mean(lr_chroma, axis=1)))],
@@ -764,6 +993,9 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         'spectral_flatness_mean': round(float(np.mean(lr_spectral_flatness)), 4),
         'onset_strength_mean': round(float(np.mean(lr_onset_env)), 4),
         'zcr_mean': round(float(np.mean(lr_zcr)), 4),
+        'bpm_min': round(float(np.min(bpm_smooth)), 1),
+        'bpm_max': round(float(np.max(bpm_smooth)), 1),
+        'bpm_std': round(float(np.std(bpm_smooth)), 2),
     }
 
     return {
@@ -773,6 +1005,12 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         'top_madmom_beats': top_madmom_beats,
         'beats': beats_detailed,
         'librosa_summary': librosa_summary,
+        'four_counts': four_counts,
+        'spectrogram': spectrogram_path,
+        'climaxes': climaxes,
+        'tempo_changes': tempo_changes,
+        'click_track': click_track_path,
+        'markers_file': markers_export_path,
         'bpm': bpm,
         'offset': round(offset, 3),
         'duration': duration,

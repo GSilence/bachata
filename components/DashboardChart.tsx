@@ -7,22 +7,40 @@ const EnergyHarmonicChart = dynamic(() => import("./charts/EnergyHarmonicChart")
 const OnsetStrengthChart = dynamic(() => import("./charts/OnsetStrengthChart"), { ssr: false });
 const SpectralCentroidChart = dynamic(() => import("./charts/SpectralCentroidChart"), { ssr: false });
 const ChromaChart = dynamic(() => import("./charts/ChromaChart"), { ssr: false });
+const IntensityChart = dynamic(() => import("./charts/IntensityChart"), { ssr: false });
+const TempoChart = dynamic(() => import("./charts/TempoChart"), { ssr: false });
+const SectionsChart = dynamic(() => import("./charts/SectionsChart"), { ssr: false });
 
-type ChartTab = "energy" | "onset" | "centroid" | "chroma";
+type ChartTab = "energy" | "intensity" | "tempo" | "onset" | "centroid" | "chroma" | "sections" | "spectrogram";
 
 const TABS: { key: ChartTab; label: string }[] = [
   { key: "energy", label: "Energy" },
+  { key: "intensity", label: "Intensity" },
+  { key: "tempo", label: "Tempo" },
   { key: "onset", label: "Onset" },
   { key: "centroid", label: "Brightness" },
   { key: "chroma", label: "Chroma" },
+  { key: "sections", label: "4-Counts" },
+  { key: "spectrogram", label: "Spectrogram" },
 ];
+
+interface ExtendedReport extends ReportData {
+  four_counts?: any[];
+  spectrogram?: string | null;
+  climaxes?: any[];
+  tempo_changes?: any[];
+  click_track?: string | null;
+  markers_file?: string | null;
+  bpm?: number;
+  duration?: number;
+}
 
 interface Props {
   reportPath: string;
 }
 
 export default function DashboardChart({ reportPath }: Props) {
-  const [report, setReport] = useState<ReportData | null>(null);
+  const [report, setReport] = useState<ExtendedReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ChartTab>("energy");
   const [isOpen, setIsOpen] = useState(false);
@@ -91,17 +109,16 @@ export default function DashboardChart({ reportPath }: Props) {
                 <span className="px-2 py-0.5 bg-gray-700 rounded text-gray-300">
                   Centroid: {summary.spectral_centroid_mean.toFixed(0)} Hz
                 </span>
-                <span className="px-2 py-0.5 bg-gray-700 rounded text-gray-300">
-                  Flatness: {summary.spectral_flatness_mean.toFixed(4)}
-                </span>
-                <span className="px-2 py-0.5 bg-gray-700 rounded text-gray-300">
-                  ZCR: {summary.zcr_mean.toFixed(4)}
-                </span>
+                {summary.bpm_min !== undefined && (
+                  <span className="px-2 py-0.5 bg-gray-700 rounded text-gray-300">
+                    BPM range: {summary.bpm_min}–{summary.bpm_max}
+                  </span>
+                )}
               </div>
             )}
 
             {/* Tab buttons */}
-            <div className="flex gap-1 mb-2">
+            <div className="flex flex-wrap gap-1 mb-2">
               {TABS.map((tab) => (
                 <button
                   key={tab.key}
@@ -122,6 +139,19 @@ export default function DashboardChart({ reportPath }: Props) {
               {activeTab === "energy" && (
                 <EnergyHarmonicChart beats={report.beats} />
               )}
+              {activeTab === "intensity" && (
+                <IntensityChart
+                  beats={report.beats}
+                  climaxes={report.climaxes}
+                />
+              )}
+              {activeTab === "tempo" && (
+                <TempoChart
+                  beats={report.beats}
+                  avgBpm={report.bpm ?? 0}
+                  tempoChanges={report.tempo_changes}
+                />
+              )}
               {activeTab === "onset" && (
                 <OnsetStrengthChart beats={report.beats} />
               )}
@@ -130,6 +160,62 @@ export default function DashboardChart({ reportPath }: Props) {
               )}
               {activeTab === "chroma" && (
                 <ChromaChart beats={report.beats} />
+              )}
+              {activeTab === "sections" && (
+                <SectionsChart
+                  fourCounts={report.four_counts}
+                  duration={report.duration ?? 0}
+                />
+              )}
+              {activeTab === "spectrogram" && report.spectrogram && (
+                <div className="flex justify-center">
+                  <img
+                    src={`${report.spectrogram}?t=${Date.now()}`}
+                    alt="Mel Spectrogram"
+                    className="rounded max-w-full"
+                    style={{ maxHeight: 300 }}
+                  />
+                </div>
+              )}
+              {activeTab === "spectrogram" && !report.spectrogram && (
+                <p className="text-gray-500 text-sm text-center py-4">
+                  Спектрограмма недоступна. Переанализируйте трек.
+                </p>
+              )}
+            </div>
+
+            {/* Download buttons */}
+            <div className="flex flex-wrap gap-3 mt-3 text-xs">
+              {report.click_track && (
+                <a
+                  href={report.click_track}
+                  download
+                  className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 hover:underline"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Click track (WAV)
+                </a>
+              )}
+              {report.markers_file && (
+                <a
+                  href={report.markers_file}
+                  download
+                  className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 hover:underline"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Markers (TXT)
+                </a>
+              )}
+              {report.climaxes && report.climaxes.length > 0 && (
+                <span className="text-gray-500">
+                  Climaxes: {report.climaxes.map((c: any) =>
+                    `${Math.floor(c.time / 60)}:${Math.floor(c.time % 60).toString().padStart(2, '0')}`
+                  ).join(', ')}
+                </span>
               )}
             </div>
           </>

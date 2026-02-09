@@ -25,7 +25,7 @@ export default function SpectralCentroidChart({ beats }: Props) {
         <Tooltip
           {...TOOLTIP_STYLE}
           labelFormatter={(v) => formatTime(v as number)}
-          formatter={(value: number) => [`${Math.round(value)} Hz`, "Centroid"]}
+          formatter={(value: any) => [`${Math.round(Number(value ?? 0))} Hz`, "Centroid"]}
         />
         <Line
           type="monotone"

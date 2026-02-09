@@ -6,6 +6,8 @@ export interface BeatData {
   madmom_score: number;
   energy: number;
   harmonic: number;
+  local_bpm?: number;
+  intensity?: number;
   spectral_centroid?: number;
   spectral_flatness?: number;
   onset_strength?: number;
@@ -23,6 +25,9 @@ export interface LibrosaSummary {
   spectral_flatness_mean: number;
   onset_strength_mean: number;
   zcr_mean: number;
+  bpm_min?: number;
+  bpm_max?: number;
+  bpm_std?: number;
 }
 
 export interface ReportData {
