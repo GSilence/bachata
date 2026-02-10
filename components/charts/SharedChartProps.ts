@@ -12,9 +12,6 @@ export interface BeatData {
   spectral_flatness?: number;
   onset_strength?: number;
   zcr?: number;
-  chroma_note?: string;
-  chroma_strength?: number;
-  chroma_index?: number;
 }
 
 export interface LibrosaSummary {
@@ -37,12 +34,20 @@ export interface ReportData {
   meta: Record<string, unknown>;
 }
 
+export interface WaveformPoint {
+  time: number;
+  peak: number;
+  rms: number;
+}
+
 export const CHART_COLORS = {
   energy: '#a78bfa',       // purple-400
   harmonic: '#34d399',     // green-400
   onset: '#f59e0b',        // amber-500
   centroid: '#60a5fa',     // blue-400
-  chroma: '#f472b6',       // pink-400
+  bpm: '#f472b6',          // pink-400
+  waveformPeak: '#4b5563', // gray-600
+  waveformRms: '#8b5cf6',  // purple-500
   grid: '#374151',         // gray-700
   text: '#9ca3af',         // gray-400
 };
@@ -62,5 +67,3 @@ export const TOOLTIP_STYLE = {
     borderRadius: 6,
   },
 };
-
-export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;

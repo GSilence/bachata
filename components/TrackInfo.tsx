@@ -56,9 +56,9 @@ export default function TrackInfo({}: TrackInfoProps) {
       if (!beats || !Array.isArray(beats)) throw new Error("No beats data");
 
       const bom = "\uFEFF";
-      const header = "Beat,Energy,Madmom,Harmonic,BPM,Intensity,Centroid,Flatness,Onset_str,ZCR,Chroma";
+      const header = "Beat,Energy,Madmom,Harmonic,BPM,Intensity,Centroid,Flatness,Onset_str,ZCR";
       const rows = beats.map((b: any) =>
-        `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''},${b.local_bpm ?? ''},${b.intensity ?? ''},${b.spectral_centroid ?? ''},${b.spectral_flatness ?? ''},${b.onset_strength ?? ''},${b.zcr ?? ''},${b.chroma_note ?? ''}`
+        `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''},${b.local_bpm ?? ''},${b.intensity ?? ''},${b.spectral_centroid ?? ''},${b.spectral_flatness ?? ''},${b.onset_strength ?? ''},${b.zcr ?? ''}`
       );
       const csv = bom + header + "\n" + rows.join("\n");
 

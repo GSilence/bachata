@@ -533,6 +533,99 @@ def analyze_bridge_detection(all_beats, activations, winning_row_num, diff_pct, 
     }
 
 
+def detect_structure_anomalies(y, y_harmonic, y_percussive, sr, all_beats):
+    """
+    Анализирует структуру трека по тактам (4 бита) и ищет мостики/сбивки.
+    Возвращает список структурных событий (PARADA, REMATE, SQUARE START).
+    """
+    measures = []
+
+    for i in range(0, len(all_beats) - 4, 4):
+        start_time = all_beats[i]
+        end_time = all_beats[i + 4]
+        start_sample = int(start_time * sr)
+        end_sample = int(end_time * sr)
+
+        chunk_full = y[start_sample:end_sample]
+        chunk_harm = y_harmonic[start_sample:end_sample]
+        chunk_perc = y_percussive[start_sample:end_sample]
+
+        if len(chunk_full) == 0:
+            continue
+
+        rms = float(np.sqrt(np.mean(chunk_full ** 2)))
+        bass_energy = float(np.sqrt(np.mean(chunk_harm ** 2)))
+        rhythm_energy = float(np.sqrt(np.mean(chunk_perc ** 2)))
+        zcr = float(np.mean(librosa.feature.zero_crossing_rate(chunk_full)))
+
+        measures.append({
+            'index': i,
+            'time': start_time,
+            'rms': rms,
+            'bass': bass_energy,
+            'rhythm': rhythm_energy,
+            'zcr': zcr,
+        })
+
+    if not measures:
+        return []
+
+    max_bass = max(m['bass'] for m in measures)
+    max_rhythm = max(m['rhythm'] for m in measures)
+
+    for m in measures:
+        m['norm_bass'] = m['bass'] / (max_bass + 1e-10)
+        m['norm_rhythm'] = m['rhythm'] / (max_rhythm + 1e-10)
+        m['ratio'] = m['norm_rhythm'] / (m['norm_bass'] + 0.01)
+
+    events = []
+
+    for k in range(1, len(measures) - 1):
+        prev = measures[k - 1]
+        curr = measures[k]
+        next_m = measures[k + 1]
+
+        # PARADA (Bridge/Break) — бас и ритм резко пропадают
+        if curr['norm_bass'] < 0.2 and prev['norm_bass'] > 0.5:
+            events.append({
+                'beat_id': curr['index'],
+                'time': round(curr['time'], 2),
+                'type': 'PARADA',
+                'confidence': 'High' if curr['rms'] < 0.1 else 'Medium',
+                'desc': 'Bass drop detected',
+            })
+
+        # REMATE — всплеск ритма при падении мелодии
+        if curr['norm_rhythm'] > 0.8 and curr['ratio'] > 2.0:
+            events.append({
+                'beat_id': curr['index'],
+                'time': round(curr['time'], 2),
+                'type': 'REMATE',
+                'confidence': 'Medium',
+                'desc': 'High percussive spike',
+            })
+
+        # ENERGY RESET — тихо → громко (смена квадрата)
+        if (curr['norm_bass'] < 0.6
+                and next_m['norm_bass'] > 0.9
+                and (next_m['norm_bass'] - curr['norm_bass']) > 0.3):
+            events.append({
+                'beat_id': next_m['index'],
+                'time': round(next_m['time'], 2),
+                'type': 'SQUARE_START',
+                'confidence': 'Medium',
+                'desc': 'Energy jump — possible Count 1',
+            })
+
+    print(f"[Structure] Found {len(events)} anomalies: "
+          f"{sum(1 for e in events if e['type']=='PARADA')} paradas, "
+          f"{sum(1 for e in events if e['type']=='REMATE')} remates, "
+          f"{sum(1 for e in events if e['type']=='SQUARE_START')} square starts",
+          file=sys.stderr)
+
+    return events
+
+
 def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
                     offset, start_beat_idx, bpm, duration,
                     activations, y, sr, rnn_fps=100.0):
@@ -619,7 +712,7 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
 
     # HPSS: разделяем на гармоническую и перкуссионную части (один раз)
     print("[HPSS] Separating harmonic/percussive...", file=sys.stderr)
-    y_harmonic, _ = librosa.effects.hpss(y)
+    y_harmonic, y_percussive = librosa.effects.hpss(y, margin=3.0)
     print(f"[HPSS] Done. Harmonic signal length: {len(y_harmonic)}", file=sys.stderr)
 
     # --- Librosa frame-level features (computed ONCE) ---
@@ -668,13 +761,6 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         os_val = float(np.interp(beat_time, lr_onset_frame_times, lr_onset_env))
         zcr_val = float(np.interp(beat_time, lr_frame_times, lr_zcr))
 
-        # Chroma: nearest frame argmax → note name
-        chroma_frame = min(int(np.round(beat_time * sr / hop_length)), lr_chroma.shape[1] - 1)
-        chroma_frame = max(0, chroma_frame)
-        note_idx = int(np.argmax(lr_chroma[:, chroma_frame]))
-        note_name = NOTE_NAMES[note_idx]
-        chroma_strength = float(lr_chroma[note_idx, chroma_frame])
-
         # Local BPM: from interval to next beat
         if i < len(all_beats) - 1:
             interval = all_beats[i + 1] - beat_time
@@ -697,9 +783,6 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
             'spectral_flatness': round(sf_val, 4),
             'onset_strength': round(os_val, 4),
             'zcr': round(zcr_val, 4),
-            'chroma_note': note_name,
-            'chroma_strength': round(chroma_strength, 3),
-            'chroma_index': note_idx,
         })
 
     # 5.1 ENERGY PATTERN ANALYSIS (мостики, брейки)
@@ -836,121 +919,82 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
 
     print(f"[Advanced] Found {len(tempo_changes)} tempo changes", file=sys.stderr)
 
-    # --- 7.4 FOUR-COUNTS (размер мостика = 4 бита) ---
-    four_counts = []
-    num_counts = len(all_beats) // 4
-    for c in range(num_counts):
-        start_idx = c * 4
-        end_idx = start_idx + 3  # last beat in group
-        if end_idx >= len(all_beats):
-            break
-        count_beats = beats_detailed[start_idx:start_idx + 4]
-        avg_intensity = float(np.mean([b.get('intensity', 0) for b in count_beats]))
-        four_counts.append({
-            'count': c + 1,
-            'start_time': round(all_beats[start_idx], 3),
-            'end_time': round(all_beats[end_idx], 3),
-            'duration': round(all_beats[end_idx] - all_beats[start_idx], 3),
-            'avg_intensity': round(avg_intensity, 4),
-        })
-
-    # Classify intensity levels
-    if four_counts:
-        intensities = [ec['avg_intensity'] for ec in four_counts]
-        p33 = float(np.percentile(intensities, 33))
-        p67 = float(np.percentile(intensities, 67))
-        for ec in four_counts:
-            if ec['avg_intensity'] >= p67:
-                ec['level'] = 'HIGH'
-            elif ec['avg_intensity'] >= p33:
-                ec['level'] = 'MEDIUM'
-            else:
-                ec['level'] = 'LOW'
-
-    print(f"[Advanced] {len(four_counts)} four-counts", file=sys.stderr)
-
     # --- Common paths for generated files ---
     reports_output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                       'public', 'uploads', 'reports')
     track_basename = os.path.splitext(os.path.basename(audio_path))[0]
 
-    # --- 7.5 SPECTROGRAM (PNG image) ---
+    # --- 7.5 WAVEFORM OVERVIEW (DAW-style PNG) ---
     try:
         import matplotlib
-        matplotlib.use('Agg')  # non-interactive backend
+        matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        spec_filename = f"{track_basename}_spectrogram.png"
-        spec_path = os.path.join(reports_output_dir, spec_filename)
 
-        # Mel spectrogram
-        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, hop_length=2048, n_mels=128)
-        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+        waveform_filename = f"{track_basename}_waveform.png"
+        waveform_path = os.path.join(reports_output_dir, waveform_filename)
 
-        fig, ax = plt.subplots(1, 1, figsize=(16, 4), dpi=100)
+        # Downsample waveform for visualization (target ~2000 points)
+        chunk_size = max(1, len(y) // 2000)
+        n_chunks = len(y) // chunk_size
+        y_trimmed = y[:n_chunks * chunk_size].reshape(n_chunks, chunk_size)
+        waveform_max = np.max(np.abs(y_trimmed), axis=1)
+        waveform_rms = np.sqrt(np.mean(y_trimmed ** 2, axis=1))
+        times_wf = np.linspace(0, duration, n_chunks)
+
+        # RMS envelope for color mapping
+        rms_norm = waveform_rms / (np.max(waveform_rms) + 1e-10)
+
+        fig, ax = plt.subplots(1, 1, figsize=(18, 2.5), dpi=100)
         fig.patch.set_facecolor('#1f2937')
-        ax.set_facecolor('#1f2937')
+        ax.set_facecolor('#111827')
 
-        img = librosa.display.specshow(mel_spec_db, x_axis='time', y_axis='mel',
-                                        sr=sr, hop_length=2048, ax=ax, cmap='magma')
-        # Mark downbeats (every 8th beat from winning row)
+        # Draw waveform as filled area with gradient-like coloring
+        # Background: dim fill for peak envelope
+        ax.fill_between(times_wf, -waveform_max, waveform_max,
+                         color='#4b5563', alpha=0.3)
+        # Foreground: brighter RMS envelope
+        ax.fill_between(times_wf, -waveform_rms, waveform_rms,
+                         color='#8b5cf6', alpha=0.7)
+
+        # Mark downbeats (every 8th beat)
         downbeat_times = [all_beats[i] for i in range(0, len(all_beats), 8)]
         for dt in downbeat_times:
-            ax.axvline(dt, color='white', alpha=0.15, linewidth=0.5)
+            ax.axvline(dt, color='#f59e0b', alpha=0.25, linewidth=0.5)
 
-        ax.set_xlabel('Time', color='#9ca3af', fontsize=9)
-        ax.set_ylabel('Hz', color='#9ca3af', fontsize=9)
-        ax.tick_params(colors='#9ca3af', labelsize=8)
+        # Time axis
+        ax.set_xlim(0, duration)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xlabel('Time', color='#9ca3af', fontsize=8)
+        ax.tick_params(axis='x', colors='#9ca3af', labelsize=7)
+        ax.tick_params(axis='y', left=False, labelleft=False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_color('#374151')
 
-        cbar = fig.colorbar(img, ax=ax, format='%+2.0f dB')
-        cbar.ax.tick_params(colors='#9ca3af', labelsize=8)
-        cbar.set_label('dB', color='#9ca3af', fontsize=9)
-
-        plt.tight_layout(pad=0.5)
-        plt.savefig(spec_path, facecolor='#1f2937', edgecolor='none')
+        plt.tight_layout(pad=0.3)
+        plt.savefig(waveform_path, facecolor='#1f2937', edgecolor='none')
         plt.close(fig)
 
-        spectrogram_path = f"/uploads/reports/{spec_filename}"
-        print(f"[Advanced] Spectrogram saved: {spec_path}", file=sys.stderr)
+        spectrogram_path = f"/uploads/reports/{waveform_filename}"
+        print(f"[Advanced] Waveform saved: {waveform_path}", file=sys.stderr)
+
+        # Export waveform data for interactive chart (~500 points)
+        wf_step = max(1, len(times_wf) // 500)
+        waveform_data = []
+        for wi in range(0, len(times_wf), wf_step):
+            waveform_data.append({
+                'time': round(float(times_wf[wi]), 3),
+                'peak': round(float(waveform_max[wi]), 4),
+                'rms': round(float(waveform_rms[wi]), 4),
+            })
+        print(f"[Advanced] Waveform data: {len(waveform_data)} points for interactive chart", file=sys.stderr)
     except Exception as e:
-        print(f"[Advanced] Spectrogram failed: {e}", file=sys.stderr)
+        print(f"[Advanced] Waveform failed: {e}", file=sys.stderr)
         spectrogram_path = None
+        waveform_data = []
 
-    # --- 7.6 CLICK TRACK (WAV with metronome overlay) ---
-    try:
-        click_filename = f"{track_basename}_click.wav"
-        click_path = os.path.join(reports_output_dir, click_filename)
-
-        click_duration_sec = 0.05  # 50ms
-        click_samples = int(click_duration_sec * sr)
-        t_click = np.linspace(0, click_duration_sec, click_samples)
-
-        # High click (beat 1) and low click (beats 2-8)
-        click_high = np.sin(2 * np.pi * 1200 * t_click) * np.exp(-t_click * 60)
-        click_low = np.sin(2 * np.pi * 800 * t_click) * np.exp(-t_click * 60)
-
-        y_click = y.copy()
-        for i, beat_time in enumerate(all_beats):
-            beat_sample = int(beat_time * sr)
-            end_sample = min(beat_sample + click_samples, len(y_click))
-            n = end_sample - beat_sample
-            if n <= 0:
-                continue
-            click = click_high[:n] if (i % 8 == 0) else click_low[:n]
-            y_click[beat_sample:end_sample] += click * 0.25
-
-        # Normalize
-        max_val = np.max(np.abs(y_click))
-        if max_val > 0:
-            y_click = y_click / max_val * 0.95
-
-        sf.write(click_path, y_click, sr)
-        click_track_path = f"/uploads/reports/{click_filename}"
-        print(f"[Advanced] Click track saved: {click_path}", file=sys.stderr)
-    except Exception as e:
-        print(f"[Advanced] Click track generation failed: {e}", file=sys.stderr)
-        click_track_path = None
-
-    # --- 7.7 MARKERS EXPORT (TXT) ---
+    # --- 7.6 MARKERS EXPORT (TXT) ---
     try:
         markers_filename = f"{track_basename}_markers.txt"
         markers_path = os.path.join(reports_output_dir, markers_filename)
@@ -982,6 +1026,14 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         print(f"[Advanced] Markers export failed: {e}", file=sys.stderr)
         markers_export_path = None
 
+    # --- 7.8 STRUCTURE ANOMALIES (bridges, breaks, remates) ---
+    try:
+        structure_events = detect_structure_anomalies(y, y_harmonic, y_percussive, sr, all_beats)
+        print(f"[Advanced] Structure analysis complete", file=sys.stderr)
+    except Exception as e:
+        print(f"[Advanced] Structure analysis failed: {e}", file=sys.stderr)
+        structure_events = []
+
     # ================================================================
     # Librosa global summary (INFO ONLY)
     # ================================================================
@@ -1005,11 +1057,11 @@ def generate_output(audio_path, all_beats, rows, winning_row_num, winning_row,
         'top_madmom_beats': top_madmom_beats,
         'beats': beats_detailed,
         'librosa_summary': librosa_summary,
-        'four_counts': four_counts,
         'spectrogram': spectrogram_path,
+        'waveform_data': waveform_data,
+        'structure_events': structure_events,
         'climaxes': climaxes,
         'tempo_changes': tempo_changes,
-        'click_track': click_track_path,
         'markers_file': markers_export_path,
         'bpm': bpm,
         'offset': round(offset, 3),
