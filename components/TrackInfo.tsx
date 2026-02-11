@@ -36,6 +36,10 @@ export default function TrackInfo({}: TrackInfoProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isShifting, setIsShifting] = useState(false);
 
+  // Structure analysis (MSAF) state
+  const [structureResult, setStructureResult] = useState<any>(null);
+  const [isAnalyzingStructure, setIsAnalyzingStructure] = useState(false);
+
   // Bridge state
   const [bridges, setBridges] = useState<number[]>([]);
   const [isSavingBridge, setIsSavingBridge] = useState(false);
@@ -300,6 +304,32 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
+  // === Structure analysis (MSAF) ===
+  const handleStructureAnalysis = async () => {
+    if (!currentTrack || isAnalyzingStructure) return;
+    setIsAnalyzingStructure(true);
+    setStructureResult(null);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let errMsg = "Structure analysis failed";
+        try { errMsg = JSON.parse(text).error || errMsg; } catch { errMsg = text.slice(0, 200); }
+        throw new Error(errMsg);
+      }
+      const data = await res.json();
+      setStructureResult(data);
+    } catch (e) {
+      console.error("Structure analysis failed:", e);
+      alert(`Ошибка структурного анализа: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setIsAnalyzingStructure(false);
+    }
+  };
+
   // === Bridge handlers ===
 
   const saveBridges = async (newBridges: number[]) => {
@@ -439,20 +469,10 @@ export default function TrackInfo({}: TrackInfoProps) {
               <button
                 type="button"
                 onClick={() => handleReanalyze("correlation")}
-                disabled={
-                  isReanalyzing || currentTrack.analyzerType === "correlation"
-                }
-                title={
-                  currentTrack.analyzerType === "correlation"
-                    ? "Текущий анализ"
-                    : "Перезапустить корреляционный анализ (оптимальная фаза)"
-                }
+                disabled={isReanalyzing}
+                title="Запустить корреляционный анализ"
                 className={`text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
-                  currentTrack.analyzerType === "correlation"
-                    ? "opacity-60"
-                    : isReanalyzing
-                      ? "opacity-50"
-                      : ""
+                  isReanalyzing ? "opacity-50" : ""
                 }`}
               >
                 {isReanalyzing ? (
@@ -604,6 +624,84 @@ export default function TrackInfo({}: TrackInfoProps) {
                   {ca.reportPath && (
                     <DashboardChart reportPath={ca.reportPath} />
                   )}
+
+                  {/* Structure Analysis (MSAF) */}
+                  <details className="group mt-3">
+                    <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
+                      Structure Analysis
+                      {structureResult && (
+                        <span className="text-cyan-400 ml-1 text-xs">
+                          ({structureResult.total_sections} sections, {structureResult.algorithm})
+                        </span>
+                      )}
+                    </summary>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={handleStructureAnalysis}
+                        disabled={isAnalyzingStructure}
+                        className={`text-xs px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-white transition-colors inline-flex items-center gap-1.5 ${
+                          isAnalyzingStructure ? "opacity-50 cursor-not-allowed" : ""
+                        }`}
+                      >
+                        {isAnalyzingStructure && (
+                          <svg className="w-4 h-4 animate-spin shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        )}
+                        {isAnalyzingStructure ? "Анализ структуры…" : "Запустить анализ структуры"}
+                      </button>
+
+                      {structureResult && !structureResult.error && (
+                        <div className="mt-3 space-y-2">
+                          {/* Structure visualization PNG */}
+                          {structureResult.structure_png && (
+                            <div className="flex justify-center">
+                              <img
+                                src={`${structureResult.structure_png}?t=${Date.now()}`}
+                                alt="Structure Segmentation"
+                                className="rounded max-w-full"
+                              />
+                            </div>
+                          )}
+
+                          {/* Sections list */}
+                          <div className="space-y-1 max-h-64 overflow-y-auto">
+                            {structureResult.sections?.map((sec: any, i: number) => (
+                              <div
+                                key={i}
+                                className={`flex items-center gap-3 text-xs px-2 py-1 rounded bg-gray-800/50 ${
+                                  sec.possible_bridge ? "text-amber-400" : "text-gray-300"
+                                }`}
+                              >
+                                <span className="font-mono w-16 text-gray-500">
+                                  {Math.floor(sec.start_time / 60)}:{Math.floor(sec.start_time % 60).toString().padStart(2, '0')}
+                                  –{Math.floor(sec.end_time / 60)}:{Math.floor(sec.end_time % 60).toString().padStart(2, '0')}
+                                </span>
+                                <span className="font-bold w-6">{sec.label}</span>
+                                <span className="text-gray-500">{sec.duration?.toFixed(1)}s</span>
+                                {sec.possible_bridge && (
+                                  <span className="text-xs px-1.5 rounded bg-amber-900/40 text-amber-300">
+                                    Bridge?
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Legend */}
+                          <div className="text-xs text-gray-500 mt-2">
+                            <p>A/B/C — различные секции. Повтор (A-B-A-B) = куплет-припев.</p>
+                            <p>Bridge? — короткий переход между длинными секциями (Parada/Yamasi).</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {structureResult?.error && (
+                        <p className="text-red-400 text-xs mt-2">{structureResult.error}</p>
+                      )}
+                    </div>
+                  </details>
                 </div>
               );
             })()}

@@ -1,0 +1,27 @@
+# MSAF Structure Analysis Dependencies
+# Install in a SEPARATE venv or alongside existing deps carefully.
+#
+# MSAF is an older library with potential version conflicts.
+# The fallback (librosa_novelty) works WITHOUT msaf — only needs librosa + scipy.
+#
+# Option 1: Full MSAF (best results, but may conflict with newer libs)
+#   pip install msaf
+#   Note: msaf pins older numpy/scipy/sklearn versions.
+#   If conflicts arise, use Option 2 instead.
+#
+# Option 2: Librosa-only fallback (no msaf needed, already in your venv)
+#   librosa>=0.10.0
+#   scipy>=1.10.0
+#   matplotlib>=3.7.0
+#   numpy>=1.23.0
+#
+# The script auto-detects whether msaf is installed and falls back gracefully.
+
+# Core (already installed in your venv)
+librosa>=0.10.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+numpy>=1.23.0
+
+# Optional — install only if you want full MSAF algorithms (CNMF, Foote)
+# msaf>=0.1.8
