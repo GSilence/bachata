@@ -53,9 +53,10 @@ export async function POST(
 
     const body = await request.json().catch(() => ({}));
     const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
+    /** Дефолт basic: корреляция отключена в UI; при включении вернуть "correlation". */
     const analyzer: AnalyzerType = validAnalyzers.includes(body.analyzer)
       ? body.analyzer
-      : "correlation";
+      : "basic";
 
     const relativePath = pathOriginal.replace(/^\//, "");
     const filePath = join(process.cwd(), "public", relativePath);

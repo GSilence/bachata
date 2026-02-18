@@ -31,11 +31,14 @@ export async function POST(request: NextRequest) {
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
     const comment = formData.get("comment") as string | null;
-    const analyzer = (formData.get("analyzer") as string) || "correlation";
+    /** Дефолт basic: корреляция отключена; при включении вернуть "correlation". */
+    const analyzer = (formData.get("analyzer") as string) || "basic";
     const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
-    const analyzerOption: AnalyzerType = validAnalyzers.includes(analyzer as AnalyzerType)
+    const analyzerOption: AnalyzerType = validAnalyzers.includes(
+      analyzer as AnalyzerType,
+    )
       ? (analyzer as AnalyzerType)
-      : "correlation";
+      : "basic";
     // BPM и Offset всегда определяются автоматически
     const autoBpm = true;
     const autoOffset = true;
@@ -114,9 +117,7 @@ export async function POST(request: NextRequest) {
     const titleArtistDuplicate = await prisma.track.findFirst({
       where: {
         title: trimmedTitle,
-        ...(trimmedArtist
-          ? { artist: trimmedArtist }
-          : { artist: null }),
+        ...(trimmedArtist ? { artist: trimmedArtist } : { artist: null }),
       },
     });
 
@@ -169,7 +170,11 @@ export async function POST(request: NextRequest) {
     // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
     // gridMap нужен для корректного отслеживания битов с учетом мостиков
     // Параллельно запускаем определение жанра
-    let genreResult: { genre_hint: string; confidence: number; is_bachata_compatible: boolean } | null = null;
+    let genreResult: {
+      genre_hint: string;
+      confidence: number;
+      is_bachata_compatible: boolean;
+    } | null = null;
 
     try {
       console.log("\n" + "=".repeat(80));
@@ -188,7 +193,9 @@ export async function POST(request: NextRequest) {
 
       genreResult = genreRes;
       if (genreResult) {
-        console.log(`Genre detected: ${genreResult.genre_hint} (confidence: ${(genreResult.confidence * 100).toFixed(0)}%)`);
+        console.log(
+          `Genre detected: ${genreResult.genre_hint} (confidence: ${(genreResult.confidence * 100).toFixed(0)}%)`,
+        );
       }
 
       console.log("\n" + "=".repeat(80));

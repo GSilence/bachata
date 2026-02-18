@@ -12,9 +12,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+function getResultPath(trackTitle: string): string {
+  const safe = trackTitle.replace(/[^a-zA-Z0-9_\-а-яА-ЯёЁ ]/g, "_");
+  return join(process.cwd(), "public", "uploads", "reports", `${safe}_bridge_analysis.json`);
+}
+
 /**
- * GET /api/tracks/[id]/structure
- * Returns saved structure analysis results if available.
+ * GET /api/tracks/[id]/bridge-analysis
+ * Returns saved bridge analysis results if available.
  */
 export async function GET(
   request: NextRequest,
@@ -36,12 +41,13 @@ export async function GET(
       return NextResponse.json({ error: "Track not found" }, { status: 404 });
     }
 
+    // Derive filename from audio file (same as Python script uses)
     const pathOriginal = track.pathOriginal;
     if (!pathOriginal) {
       return NextResponse.json({ found: false });
     }
     const audioBasename = pathOriginal.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
-    const resultPath = join(process.cwd(), "public", "uploads", "reports", `${audioBasename}_structure_analysis.json`);
+    const resultPath = join(process.cwd(), "public", "uploads", "reports", `${audioBasename}_bridge_analysis.json`);
 
     if (!existsSync(resultPath)) {
       return NextResponse.json({ found: false });
@@ -56,9 +62,11 @@ export async function GET(
 }
 
 /**
- * POST /api/tracks/[id]/structure
- * Runs MSAF structure analysis on the track audio.
+ * POST /api/tracks/[id]/bridge-analysis
+ * Runs Spleeter-based bridge detection on the track audio.
  * Saves results to JSON file for persistence.
+ *
+ * Body (optional): { threshold?: number, window_beats?: number }
  */
 export async function POST(
   request: NextRequest,
@@ -108,18 +116,27 @@ export async function POST(
       );
     }
 
+    // Get BPM and offset from track record
+    const bpm = track.bpm || 130;
+    const offset = track.offset || 0;
+
+    // Optional params from request body
+    const body = await request.json().catch(() => ({}));
+    const threshold = body.threshold ?? 0.15;
+    const windowBeats = body.window_beats ?? 4;
+
     const pythonPath = process.env.DEMUCS_PYTHON_PATH || "python";
-    const scriptPath = join(process.cwd(), "scripts", "analyze_structure_msaf.py");
+    const scriptPath = join(process.cwd(), "scripts", "analyze_bridge_spleeter.py");
 
     if (!existsSync(scriptPath)) {
       return NextResponse.json(
-        { error: "Structure analysis script not found" },
+        { error: "Bridge analysis script not found" },
         { status: 500 },
       );
     }
 
-    const command = `"${pythonPath}" "${scriptPath}" "${filePath}"`;
-    console.log(`[Structure] Running: ${command}`);
+    const command = `"${pythonPath}" "${scriptPath}" "${filePath}" ${bpm} ${offset} ${threshold} ${windowBeats}`;
+    console.log(`[Bridge] Running: ${command}`);
 
     const { stdout, stderr } = await execAsync(command, {
       maxBuffer: 10 * 1024 * 1024,
@@ -127,22 +144,22 @@ export async function POST(
     });
 
     if (stderr) {
-      console.log(`[Structure] stderr: ${stderr}`);
+      console.log(`[Bridge] stderr: ${stderr}`);
     }
 
     const result = JSON.parse(stdout.trim());
 
     // Save results to JSON file for persistence
     const audioBasename = pathOriginal.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
-    const resultPath = join(process.cwd(), "public", "uploads", "reports", `${audioBasename}_structure_analysis.json`);
+    const resultPath = join(process.cwd(), "public", "uploads", "reports", `${audioBasename}_bridge_analysis.json`);
     const toSave = { success: true, trackId, ...result };
     writeFileSync(resultPath, JSON.stringify(toSave, null, 2));
-    console.log(`[Structure] Results saved: ${resultPath}`);
+    console.log(`[Bridge] Results saved: ${resultPath}`);
 
     return NextResponse.json(toSave);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("Structure analysis error:", error);
+    console.error("Bridge analysis error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

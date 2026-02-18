@@ -1,0 +1,4 @@
+Microsoft Windows [Version 10.0.26200.7840]
+(c) Корпорация Майкрософт (Microsoft Corporation). Все права защищены.
+
+d:\Sites\bachata>

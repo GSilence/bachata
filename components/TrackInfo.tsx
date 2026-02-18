@@ -8,7 +8,19 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { GridMap } from "@/types";
 
-const DashboardChart = dynamic(() => import("./DashboardChart"), { ssr: false });
+const DashboardChart = dynamic(() => import("./DashboardChart"), {
+  ssr: false,
+});
+const BridgeAnalysisChart = dynamic(
+  () => import("./charts/BridgeAnalysisChart"),
+  { ssr: false },
+);
+const V2AnalysisDisplay = dynamic(() => import("./charts/V2AnalysisDisplay"), {
+  ssr: false,
+});
+
+/** Отключено: корреляционный анализ не показывается и не запускается. Включить обратно — поменять на true. */
+const ENABLE_CORRELATION_ANALYSIS = false;
 
 interface TrackInfoProps {}
 
@@ -40,6 +52,14 @@ export default function TrackInfo({}: TrackInfoProps) {
   const [structureResult, setStructureResult] = useState<any>(null);
   const [isAnalyzingStructure, setIsAnalyzingStructure] = useState(false);
 
+  // Bridge analysis (Spleeter/HPSS) state
+  const [bridgeResult, setBridgeResult] = useState<any>(null);
+  const [isAnalyzingBridges, setIsAnalyzingBridges] = useState(false);
+
+  // V2 analysis state
+  const [v2Result, setV2Result] = useState<any>(null);
+  const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
+
   // Bridge state
   const [bridges, setBridges] = useState<number[]>([]);
   const [isSavingBridge, setIsSavingBridge] = useState(false);
@@ -60,9 +80,11 @@ export default function TrackInfo({}: TrackInfoProps) {
       if (!beats || !Array.isArray(beats)) throw new Error("No beats data");
 
       const bom = "\uFEFF";
-      const header = "Beat,Energy,Madmom,Harmonic,BPM,Intensity,Centroid,Flatness,Onset_str,ZCR";
-      const rows = beats.map((b: any) =>
-        `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ''},${b.local_bpm ?? ''},${b.intensity ?? ''},${b.spectral_centroid ?? ''},${b.spectral_flatness ?? ''},${b.onset_strength ?? ''},${b.zcr ?? ''}`
+      const header =
+        "Beat,Energy,Madmom,Harmonic,BPM,Intensity,Centroid,Flatness,Onset_str,ZCR";
+      const rows = beats.map(
+        (b: any) =>
+          `${b.id + 1},${b.energy},${b.madmom_score},${b.harmonic ?? ""},${b.local_bpm ?? ""},${b.intensity ?? ""},${b.spectral_centroid ?? ""},${b.spectral_flatness ?? ""},${b.onset_strength ?? ""},${b.zcr ?? ""}`,
       );
       const csv = bom + header + "\n" + rows.join("\n");
 
@@ -70,7 +92,8 @@ export default function TrackInfo({}: TrackInfoProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const trackName = currentTrack?.title?.replace(/[^a-zA-Z0-9а-яА-Я]/g, "_") || "beats";
+      const trackName =
+        currentTrack?.title?.replace(/[^a-zA-Z0-9а-яА-Я]/g, "_") || "beats";
       a.download = `${trackName}_beats.csv`;
       document.body.appendChild(a);
       a.click();
@@ -117,7 +140,7 @@ export default function TrackInfo({}: TrackInfoProps) {
     };
   }, [isPlaying, currentTrack]);
 
-  // При смене трека — показываем бит 1
+  // При смене трека — показываем бит 1 + загружаем сохранённые результаты анализов
   useEffect(() => {
     if (currentTrack) {
       setLiveBeatInfo({
@@ -125,8 +148,35 @@ export default function TrackInfo({}: TrackInfoProps) {
         number: 1,
         isBridge: false,
       });
+      // Reset and load saved analysis results
+      setStructureResult(null);
+      setBridgeResult(null);
+      // Load saved structure analysis
+      fetch(`/api/tracks/${currentTrack.id}/structure`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.found) setStructureResult(data);
+        })
+        .catch(() => {});
+      // Load saved bridge analysis
+      fetch(`/api/tracks/${currentTrack.id}/bridge-analysis`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.found) setBridgeResult(data);
+        })
+        .catch(() => {});
+      // Load saved v2 analysis
+      fetch(`/api/tracks/${currentTrack.id}/analyze-v2`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.found) setV2Result(data);
+        })
+        .catch(() => {});
     } else {
       setLiveBeatInfo(null);
+      setStructureResult(null);
+      setBridgeResult(null);
+      setV2Result(null);
     }
   }, [currentTrack?.id]);
 
@@ -269,7 +319,9 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
-  const handleReanalyze = async (analyzer: "basic" | "extended" | "correlation") => {
+  const handleReanalyze = async (
+    analyzer: "basic" | "extended" | "correlation",
+  ) => {
     if (!currentTrack || isReanalyzing) return;
     setReanalyzing(true);
     try {
@@ -281,7 +333,11 @@ export default function TrackInfo({}: TrackInfoProps) {
       if (!res.ok) {
         const text = await res.text();
         let errMsg = "Ошибка перезапуска анализа";
-        try { errMsg = JSON.parse(text).error || errMsg; } catch { errMsg = text.slice(0, 200); }
+        try {
+          errMsg = JSON.parse(text).error || errMsg;
+        } catch {
+          errMsg = text.slice(0, 200);
+        }
         throw new Error(errMsg);
       }
       const data = await res.json();
@@ -317,16 +373,57 @@ export default function TrackInfo({}: TrackInfoProps) {
       if (!res.ok) {
         const text = await res.text();
         let errMsg = "Structure analysis failed";
-        try { errMsg = JSON.parse(text).error || errMsg; } catch { errMsg = text.slice(0, 200); }
+        try {
+          errMsg = JSON.parse(text).error || errMsg;
+        } catch {
+          errMsg = text.slice(0, 200);
+        }
         throw new Error(errMsg);
       }
       const data = await res.json();
       setStructureResult(data);
     } catch (e) {
       console.error("Structure analysis failed:", e);
-      alert(`Ошибка структурного анализа: ${e instanceof Error ? e.message : "Unknown error"}`);
+      alert(
+        `Ошибка структурного анализа: ${e instanceof Error ? e.message : "Unknown error"}`,
+      );
     } finally {
       setIsAnalyzingStructure(false);
+    }
+  };
+
+  // === Bridge deep analysis (Spleeter/HPSS) ===
+  const handleBridgeAnalysis = async () => {
+    if (!currentTrack || isAnalyzingBridges) return;
+    setIsAnalyzingBridges(true);
+    setBridgeResult(null);
+    try {
+      const res = await fetch(
+        `/api/tracks/${currentTrack.id}/bridge-analysis`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      if (!res.ok) {
+        const text = await res.text();
+        let errMsg = "Bridge analysis failed";
+        try {
+          errMsg = JSON.parse(text).error || errMsg;
+        } catch {
+          errMsg = text.slice(0, 200);
+        }
+        throw new Error(errMsg);
+      }
+      const data = await res.json();
+      setBridgeResult(data);
+    } catch (e) {
+      console.error("Bridge analysis failed:", e);
+      alert(
+        `Ошибка анализа мостиков: ${e instanceof Error ? e.message : "Unknown error"}`,
+      );
+    } finally {
+      setIsAnalyzingBridges(false);
     }
   };
 
@@ -404,7 +501,8 @@ export default function TrackInfo({}: TrackInfoProps) {
           {currentTrack.genreHint && (
             <span
               className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${
-                currentTrack.genreHint === "bachata" || currentTrack.genreHint === "latin"
+                currentTrack.genreHint === "bachata" ||
+                currentTrack.genreHint === "latin"
                   ? "bg-green-900/40 text-green-400 border border-green-700/50"
                   : "bg-gray-700/40 text-gray-400 border border-gray-600/50"
               }`}
@@ -460,22 +558,70 @@ export default function TrackInfo({}: TrackInfoProps) {
           <div className="mt-4 sm:mt-6 mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-400">Расклад:</span>
             <span className="text-sm text-white">
-              {currentTrack.analyzerType === "correlation"
+              {ENABLE_CORRELATION_ANALYSIS &&
+              currentTrack.analyzerType === "correlation"
                 ? "Корреляция"
                 : currentTrack.analyzerType || "не указан"}
             </span>
             <div className="flex items-center gap-2 ml-2">
-              {/* Basic and Extended analyzers hidden — correlation is the active analyzer */}
+              {ENABLE_CORRELATION_ANALYSIS && (
+                <button
+                  type="button"
+                  onClick={() => handleReanalyze("correlation")}
+                  disabled={isReanalyzing}
+                  title="Запустить корреляционный анализ"
+                  className={`text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
+                    isReanalyzing ? "opacity-50" : ""
+                  }`}
+                >
+                  {isReanalyzing ? (
+                    <svg
+                      className="w-4 h-4 animate-spin shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                  ) : null}
+                  {isReanalyzing ? "Анализ…" : "Корреляция"}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => handleReanalyze("correlation")}
-                disabled={isReanalyzing}
-                title="Запустить корреляционный анализ"
-                className={`text-xs px-2 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
-                  isReanalyzing ? "opacity-50" : ""
+                onClick={async () => {
+                  if (!currentTrack || isAnalyzingV2) return;
+                  setIsAnalyzingV2(true);
+                  setV2Result(null);
+                  try {
+                    const res = await fetch(
+                      `/api/tracks/${currentTrack.id}/analyze-v2`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                      },
+                    );
+                    const data = await res.json();
+                    setV2Result(data);
+                  } catch (e) {
+                    console.error("V2 analysis error:", e);
+                    setV2Result({ error: String(e) });
+                  } finally {
+                    setIsAnalyzingV2(false);
+                  }
+                }}
+                disabled={isAnalyzingV2}
+                title="Запустить анализ v2 (ряды + мостики)"
+                className={`text-xs px-2 py-1.5 rounded bg-indigo-700 hover:bg-indigo-600 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
+                  isAnalyzingV2 ? "opacity-50" : ""
                 }`}
               >
-                {isReanalyzing ? (
+                {isAnalyzingV2 ? (
                   <svg
                     className="w-4 h-4 animate-spin shrink-0"
                     fill="none"
@@ -490,26 +636,34 @@ export default function TrackInfo({}: TrackInfoProps) {
                     />
                   </svg>
                 ) : null}
-                {isReanalyzing ? "Анализ…" : "Корреляция"}
+                {isAnalyzingV2 ? "Анализ v2…" : "Анализ v2"}
               </button>
             </div>
           </div>
 
-          {/* Корреляционный анализ: таблица рядов */}
-          {currentTrack.analyzerType === "correlation" &&
+          {/* Корреляционный анализ: таблица рядов (отключено через ENABLE_CORRELATION_ANALYSIS) */}
+          {ENABLE_CORRELATION_ANALYSIS &&
+            currentTrack.analyzerType === "correlation" &&
             currentTrack.gridMap &&
-            (currentTrack.gridMap as any).correlationAnalysis && (() => {
+            (currentTrack.gridMap as any).correlationAnalysis &&
+            (() => {
               const ca = (currentTrack.gridMap as any).correlationAnalysis;
               const verdict = ca.verdict;
               const rowAnalysis = ca.row_analysis;
               if (!rowAnalysis) return null;
-              const rows = Object.entries(rowAnalysis as Record<string, any>)
-                .sort(([a], [b]) => a.localeCompare(b));
+              const rows = Object.entries(
+                rowAnalysis as Record<string, any>,
+              ).sort(([a], [b]) => a.localeCompare(b));
               return (
                 <div className="mb-4 sm:mb-6">
                   <details className="group">
                     <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
-                      Row Analysis {verdict && <span className="text-green-400 ml-1">(Row {verdict.winning_row})</span>}
+                      Row Analysis{" "}
+                      {verdict && (
+                        <span className="text-green-400 ml-1">
+                          (Row {verdict.winning_row})
+                        </span>
+                      )}
                     </summary>
                     <div className="mt-2 overflow-x-auto">
                       <table className="text-xs w-full border-collapse">
@@ -526,18 +680,31 @@ export default function TrackInfo({}: TrackInfoProps) {
                         <tbody>
                           {rows.map(([key, row]: [string, any]) => {
                             const rowNum = parseInt(key.replace("row_", ""));
-                            const isWinner = verdict && rowNum === verdict.winning_row;
+                            const isWinner =
+                              verdict && rowNum === verdict.winning_row;
                             return (
                               <tr
                                 key={key}
                                 className={`border-b border-gray-800 ${isWinner ? "bg-green-900/20 text-green-300" : "text-gray-300"}`}
                               >
-                                <td className="py-1 px-2 font-mono">{rowNum}</td>
-                                <td className="py-1 px-2 text-right font-mono">{row.count}</td>
-                                <td className="py-1 px-2 text-right font-mono">{row.madmom_sum?.toFixed(3)}</td>
-                                <td className="py-1 px-2 text-right font-mono">{row.madmom_avg?.toFixed(3)}</td>
-                                <td className="py-1 px-2 text-right font-mono">{row.madmom_max?.toFixed(3)}</td>
-                                <td className="py-1 px-2">{isWinner ? "<<" : ""}</td>
+                                <td className="py-1 px-2 font-mono">
+                                  {rowNum}
+                                </td>
+                                <td className="py-1 px-2 text-right font-mono">
+                                  {row.count}
+                                </td>
+                                <td className="py-1 px-2 text-right font-mono">
+                                  {row.madmom_sum?.toFixed(3)}
+                                </td>
+                                <td className="py-1 px-2 text-right font-mono">
+                                  {row.madmom_avg?.toFixed(3)}
+                                </td>
+                                <td className="py-1 px-2 text-right font-mono">
+                                  {row.madmom_max?.toFixed(3)}
+                                </td>
+                                <td className="py-1 px-2">
+                                  {isWinner ? "<<" : ""}
+                                </td>
                               </tr>
                             );
                           })}
@@ -546,46 +713,95 @@ export default function TrackInfo({}: TrackInfoProps) {
                       {verdict && (
                         <div className="text-xs text-gray-500 mt-2 space-y-1">
                           <p>
-                            Offset: {verdict.start_time}s (beat #{verdict.start_beat_id})
+                            Offset: {verdict.start_time}s (beat #
+                            {verdict.start_beat_id})
                             {verdict.diff_percent !== undefined && (
                               <span className="ml-2">
-                                | Diff: <span className={verdict.diff_percent >= 5 ? "text-green-400" : "text-yellow-400"}>{verdict.diff_percent.toFixed(1)}%</span>
+                                | Diff:{" "}
+                                <span
+                                  className={
+                                    verdict.diff_percent >= 5
+                                      ? "text-green-400"
+                                      : "text-yellow-400"
+                                  }
+                                >
+                                  {verdict.diff_percent.toFixed(1)}%
+                                </span>
                               </span>
                             )}
                           </p>
-                          {verdict.bridge_times_full && verdict.bridge_times_full.length > 0 && (
-                            <p className="text-yellow-400/80">
-                              <span className="text-gray-500">Bridges (Full):</span>{" "}
-                              {verdict.bridge_times_full.map((t: number) => `${t}s`).join(", ")}
-                            </p>
-                          )}
-                          {verdict.break_times_full && verdict.break_times_full.length > 0 && (
-                            <p className="text-orange-400/80">
-                              <span className="text-gray-500">Breaks (Full):</span>{" "}
-                              {verdict.break_times_full.map((t: number) => `${t}s`).join(", ")}
-                            </p>
-                          )}
-                          {verdict.bridge_times_strong && verdict.bridge_times_strong.length > 0 && (
-                            <p className="text-yellow-300/80">
-                              <span className="text-gray-500">Bridges (Strong):</span>{" "}
-                              {verdict.bridge_times_strong.map((t: number) => `${t}s`).join(", ")}
-                            </p>
-                          )}
-                          {verdict.break_times_strong && verdict.break_times_strong.length > 0 && (
-                            <p className="text-orange-300/80">
-                              <span className="text-gray-500">Breaks (Strong):</span>{" "}
-                              {verdict.break_times_strong.map((t: number) => `${t}s`).join(", ")}
-                            </p>
-                          )}
+                          {verdict.bridge_times_full &&
+                            verdict.bridge_times_full.length > 0 && (
+                              <p className="text-yellow-400/80">
+                                <span className="text-gray-500">
+                                  Bridges (Full):
+                                </span>{" "}
+                                {verdict.bridge_times_full
+                                  .map((t: number) => `${t}s`)
+                                  .join(", ")}
+                              </p>
+                            )}
+                          {verdict.break_times_full &&
+                            verdict.break_times_full.length > 0 && (
+                              <p className="text-orange-400/80">
+                                <span className="text-gray-500">
+                                  Breaks (Full):
+                                </span>{" "}
+                                {verdict.break_times_full
+                                  .map((t: number) => `${t}s`)
+                                  .join(", ")}
+                              </p>
+                            )}
+                          {verdict.bridge_times_strong &&
+                            verdict.bridge_times_strong.length > 0 && (
+                              <p className="text-yellow-300/80">
+                                <span className="text-gray-500">
+                                  Bridges (Strong):
+                                </span>{" "}
+                                {verdict.bridge_times_strong
+                                  .map((t: number) => `${t}s`)
+                                  .join(", ")}
+                              </p>
+                            )}
+                          {verdict.break_times_strong &&
+                            verdict.break_times_strong.length > 0 && (
+                              <p className="text-orange-300/80">
+                                <span className="text-gray-500">
+                                  Breaks (Strong):
+                                </span>{" "}
+                                {verdict.break_times_strong
+                                  .map((t: number) => `${t}s`)
+                                  .join(", ")}
+                              </p>
+                            )}
                           {verdict.bridge_detection && (
                             <div className="space-y-0.5">
                               {(["bd2", "bd3", "bd5"] as const).map((key) => {
-                                const bd = (verdict.bridge_detection as Record<string, any>)?.[key];
+                                const bd = (
+                                  verdict.bridge_detection as Record<
+                                    string,
+                                    any
+                                  >
+                                )?.[key];
                                 if (!bd) return null;
-                                const label = key === "bd2" ? "BD-2" : key === "bd3" ? "BD-3" : "BD-5";
+                                const label =
+                                  key === "bd2"
+                                    ? "BD-2"
+                                    : key === "bd3"
+                                      ? "BD-3"
+                                      : "BD-5";
                                 return (
-                                  <p key={key} className={bd.has_bridge ? "text-red-400" : "text-green-400/80"}>
-                                    <span className="text-gray-500">{label}:</span>{" "}
+                                  <p
+                                    key={key}
+                                    className={
+                                      bd.has_bridge
+                                        ? "text-red-400"
+                                        : "text-green-400/80"
+                                    }
+                                  >
+                                    <span className="text-gray-500">
+                                      {label}:
+                                    </span>{" "}
                                     {bd.summary}
                                   </p>
                                 );
@@ -599,8 +815,18 @@ export default function TrackInfo({}: TrackInfoProps) {
                                 download
                                 className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 hover:underline"
                               >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                <svg
+                                  className="w-3 h-3"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                  />
                                 </svg>
                                 Скачать биты (JSON)
                               </a>
@@ -608,8 +834,18 @@ export default function TrackInfo({}: TrackInfoProps) {
                                 onClick={() => downloadBeatsCSV(ca.reportPath)}
                                 className="inline-flex items-center gap-1 text-green-400 hover:text-green-300 hover:underline"
                               >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                <svg
+                                  className="w-3 h-3"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                  />
                                 </svg>
                                 Скачать биты (CSV)
                               </button>
@@ -631,7 +867,8 @@ export default function TrackInfo({}: TrackInfoProps) {
                       Structure Analysis
                       {structureResult && (
                         <span className="text-cyan-400 ml-1 text-xs">
-                          ({structureResult.total_sections} sections, {structureResult.algorithm})
+                          ({structureResult.total_sections} sections,{" "}
+                          {structureResult.algorithm})
                         </span>
                       )}
                     </summary>
@@ -641,15 +878,29 @@ export default function TrackInfo({}: TrackInfoProps) {
                         onClick={handleStructureAnalysis}
                         disabled={isAnalyzingStructure}
                         className={`text-xs px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-white transition-colors inline-flex items-center gap-1.5 ${
-                          isAnalyzingStructure ? "opacity-50 cursor-not-allowed" : ""
+                          isAnalyzingStructure
+                            ? "opacity-50 cursor-not-allowed"
+                            : ""
                         }`}
                       >
                         {isAnalyzingStructure && (
-                          <svg className="w-4 h-4 animate-spin shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          <svg
+                            className="w-4 h-4 animate-spin shrink-0"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
                           </svg>
                         )}
-                        {isAnalyzingStructure ? "Анализ структуры…" : "Запустить анализ структуры"}
+                        {isAnalyzingStructure
+                          ? "Анализ структуры…"
+                          : "Запустить анализ структуры"}
                       </button>
 
                       {structureResult && !structureResult.error && (
@@ -667,44 +918,238 @@ export default function TrackInfo({}: TrackInfoProps) {
 
                           {/* Sections list */}
                           <div className="space-y-1 max-h-64 overflow-y-auto">
-                            {structureResult.sections?.map((sec: any, i: number) => (
-                              <div
-                                key={i}
-                                className={`flex items-center gap-3 text-xs px-2 py-1 rounded bg-gray-800/50 ${
-                                  sec.possible_bridge ? "text-amber-400" : "text-gray-300"
-                                }`}
-                              >
-                                <span className="font-mono w-16 text-gray-500">
-                                  {Math.floor(sec.start_time / 60)}:{Math.floor(sec.start_time % 60).toString().padStart(2, '0')}
-                                  –{Math.floor(sec.end_time / 60)}:{Math.floor(sec.end_time % 60).toString().padStart(2, '0')}
-                                </span>
-                                <span className="font-bold w-6">{sec.label}</span>
-                                <span className="text-gray-500">{sec.duration?.toFixed(1)}s</span>
-                                {sec.possible_bridge && (
-                                  <span className="text-xs px-1.5 rounded bg-amber-900/40 text-amber-300">
-                                    Bridge?
+                            {structureResult.sections?.map(
+                              (sec: any, i: number) => (
+                                <div
+                                  key={i}
+                                  className={`flex items-center gap-3 text-xs px-2 py-1 rounded bg-gray-800/50 ${
+                                    sec.possible_bridge
+                                      ? "text-amber-400"
+                                      : "text-gray-300"
+                                  }`}
+                                >
+                                  <span className="font-mono w-16 text-gray-500">
+                                    {Math.floor(sec.start_time / 60)}:
+                                    {Math.floor(sec.start_time % 60)
+                                      .toString()
+                                      .padStart(2, "0")}
+                                    –{Math.floor(sec.end_time / 60)}:
+                                    {Math.floor(sec.end_time % 60)
+                                      .toString()
+                                      .padStart(2, "0")}
                                   </span>
-                                )}
-                              </div>
-                            ))}
+                                  <span className="font-bold w-6">
+                                    {sec.label}
+                                  </span>
+                                  <span className="text-gray-500">
+                                    {sec.duration?.toFixed(1)}s
+                                  </span>
+                                  {sec.possible_bridge && (
+                                    <span className="text-xs px-1.5 rounded bg-amber-900/40 text-amber-300">
+                                      Bridge?
+                                    </span>
+                                  )}
+                                </div>
+                              ),
+                            )}
                           </div>
 
                           {/* Legend */}
                           <div className="text-xs text-gray-500 mt-2">
-                            <p>A/B/C — различные секции. Повтор (A-B-A-B) = куплет-припев.</p>
-                            <p>Bridge? — короткий переход между длинными секциями (Parada/Yamasi).</p>
+                            <p>
+                              A/B/C — различные секции. Повтор (A-B-A-B) =
+                              куплет-припев.
+                            </p>
+                            <p>
+                              Bridge? — короткий переход между длинными секциями
+                              (Parada/Yamasi).
+                            </p>
                           </div>
                         </div>
                       )}
 
                       {structureResult?.error && (
-                        <p className="text-red-400 text-xs mt-2">{structureResult.error}</p>
+                        <p className="text-red-400 text-xs mt-2">
+                          {structureResult.error}
+                        </p>
+                      )}
+                    </div>
+                  </details>
+
+                  {/* Bridge Deep Analysis (Spleeter/HPSS) */}
+                  <details className="group mt-3">
+                    <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
+                      Bridge Detection (Sherlock)
+                      {bridgeResult && !bridgeResult.error && (
+                        <span className="text-amber-400 ml-1 text-xs">
+                          ({bridgeResult.bridges_count} bridge
+                          {bridgeResult.bridges_count !== 1 ? "s" : ""},{" "}
+                          {bridgeResult.separation_method})
+                        </span>
+                      )}
+                    </summary>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={handleBridgeAnalysis}
+                        disabled={isAnalyzingBridges}
+                        className={`text-xs px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 text-white transition-colors inline-flex items-center gap-1.5 ${
+                          isAnalyzingBridges
+                            ? "opacity-50 cursor-not-allowed"
+                            : ""
+                        }`}
+                      >
+                        {isAnalyzingBridges && (
+                          <svg
+                            className="w-4 h-4 animate-spin shrink-0"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                          </svg>
+                        )}
+                        {isAnalyzingBridges
+                          ? "Анализ мостиков…"
+                          : "Запустить Sherlock"}
+                      </button>
+
+                      {bridgeResult && !bridgeResult.error && (
+                        <div className="mt-3 space-y-3">
+                          {/* Interactive stems energy chart */}
+                          {bridgeResult.stems_energy?.length > 0 && (
+                            <BridgeAnalysisChart
+                              stemsEnergy={bridgeResult.stems_energy}
+                              bridges={bridgeResult.bridges || []}
+                            />
+                          )}
+
+                          {/* Static PNG fallback/supplement */}
+                          {bridgeResult.visualization && (
+                            <details className="group">
+                              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                                PNG визуализация (по стемам отдельно)
+                              </summary>
+                              <div className="flex justify-center mt-1">
+                                <img
+                                  src={`${bridgeResult.visualization}?t=${Date.now()}`}
+                                  alt="Bridge Detection Stems"
+                                  className="rounded max-w-full"
+                                />
+                              </div>
+                            </details>
+                          )}
+
+                          {/* Bridges list */}
+                          {bridgeResult.bridges?.length > 0 ? (
+                            <div className="space-y-1">
+                              <p className="text-xs text-gray-400 font-medium">
+                                Найдено мостиков: {bridgeResult.bridges_count}
+                              </p>
+                              {bridgeResult.bridges.map((b: any, i: number) => (
+                                <div
+                                  key={i}
+                                  className="flex items-center gap-3 text-xs px-2 py-1.5 rounded bg-gray-800/50 text-amber-300"
+                                >
+                                  <span className="font-bold text-amber-400">
+                                    #{i + 1}
+                                  </span>
+                                  <span className="font-mono text-gray-400">
+                                    {Math.floor(b.start_time / 60)}:
+                                    {Math.floor(b.start_time % 60)
+                                      .toString()
+                                      .padStart(2, "0")}
+                                    –{Math.floor(b.end_time / 60)}:
+                                    {Math.floor(b.end_time % 60)
+                                      .toString()
+                                      .padStart(2, "0")}
+                                  </span>
+                                  <span className="text-gray-500">
+                                    {b.duration.toFixed(1)}s
+                                  </span>
+                                  <span className="text-gray-500">
+                                    beats {b.beat_start}–{b.beat_end}
+                                  </span>
+                                  <span className="text-xs px-1.5 rounded bg-gray-700 text-gray-300">
+                                    {b.stems_triggered.join(" + ")}
+                                  </span>
+                                  <span
+                                    className={`text-xs px-1.5 rounded ${
+                                      b.confidence > 0.7
+                                        ? "bg-red-900/40 text-red-300"
+                                        : "bg-yellow-900/40 text-yellow-300"
+                                    }`}
+                                  >
+                                    {(b.confidence * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-gray-500 text-xs">
+                              Мостиков не обнаружено (threshold:{" "}
+                              {bridgeResult.threshold}).
+                            </p>
+                          )}
+
+                          {/* Info */}
+                          <div className="text-xs text-gray-500">
+                            <p>
+                              Метод:{" "}
+                              {bridgeResult.separation_method === "demucs"
+                                ? "Demucs htdemucs"
+                                : bridgeResult.separation_method === "spleeter"
+                                  ? "Spleeter 4stems"
+                                  : "HPSS fallback (librosa)"}
+                              .
+                            </p>
+                            <p>
+                              Алгоритм: Bass Hole + Other Hole + Vocal Dropoff →
+                              голосование (2+ из 3 = Bridge).
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {bridgeResult?.error && (
+                        <p className="text-red-400 text-xs mt-2">
+                          {bridgeResult.error}
+                        </p>
                       )}
                     </div>
                   </details>
                 </div>
               );
             })()}
+
+          {/* V2 Analysis results */}
+          {v2Result && !v2Result.error && (
+            <div className="mb-4 sm:mb-6">
+              <details open>
+                <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
+                  Анализ v2 —{" "}
+                  {v2Result.track_type === "popsa" ? "Попса" : "Бачата"}
+                  {v2Result.bridges?.length > 0 && (
+                    <span className="text-yellow-400 ml-1">
+                      ({v2Result.bridges.length} мостик
+                      {v2Result.bridges.length > 1 ? "а" : ""})
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2">
+                  <V2AnalysisDisplay data={v2Result} />
+                </div>
+              </details>
+            </div>
+          )}
+          {v2Result?.error && (
+            <p className="text-red-400 text-xs mb-4">{v2Result.error}</p>
+          )}
 
           {/* Сдвиг сетки (offset) — заблокирован при наличии бриджей */}
           {analysisCompleted && (

@@ -52,7 +52,8 @@ export default function LibraryPage() {
   const router = useRouter();
   const { user, isLoading, checkAuth } = useAuthStore();
   const [items, setItems] = useState<QueueItem[]>([]);
-  const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("correlation");
+  /** По умолчанию basic, т.к. корреляция отключена (ENABLE_CORRELATION_ANALYSIS). Вернуть "correlation" при включении. */
+  const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("basic");
   const [isExtracting, setIsExtracting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -130,7 +131,11 @@ export default function LibraryPage() {
 
   const processOne = async (
     item: QueueItem,
-  ): Promise<{ id: string; status: "done" | "error" | "duplicate"; error?: string }> => {
+  ): Promise<{
+    id: string;
+    status: "done" | "error" | "duplicate";
+    error?: string;
+  }> => {
     const m = item.metadata;
     if (!m.title?.trim()) {
       return {
