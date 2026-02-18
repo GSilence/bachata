@@ -13,7 +13,7 @@ interface TrackMetadata {
 }
 
 type ItemStatus = "pending" | "processing" | "done" | "error" | "duplicate";
-type AnalyzerChoice = "basic" | "extended" | "correlation";
+type AnalyzerChoice = "v2";
 
 interface QueueItem {
   id: string;
@@ -52,8 +52,8 @@ export default function LibraryPage() {
   const router = useRouter();
   const { user, isLoading, checkAuth } = useAuthStore();
   const [items, setItems] = useState<QueueItem[]>([]);
-  /** По умолчанию basic, т.к. корреляция отключена (ENABLE_CORRELATION_ANALYSIS). Вернуть "correlation" при включении. */
-  const [uploadAnalyzer, setUploadAnalyzer] = useState<AnalyzerChoice>("basic");
+  /** При загрузке используется только анализ v2 (ряды + мостики). */
+  const [uploadAnalyzer] = useState<AnalyzerChoice>("v2");
   const [isExtracting, setIsExtracting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);

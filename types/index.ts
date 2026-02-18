@@ -57,7 +57,7 @@ export interface Track {
   isProcessed: boolean;
   gridMap: GridMap | null; // сложная структура с grid (verse/bridge секции) от madmom анализа
   beatGrid: Beat[] | null; // Pre-calculated beat grid for rhythm counting
-  analyzerType?: "basic" | "extended" | "correlation" | null; // какой анализатор использовался: basic / extended / correlation
+  analyzerType?: "basic" | "extended" | "correlation" | "v2" | null; // какой анализатор: v2 (по умолчанию при загрузке), остальные отключены
   genreHint?: string | null; // автоопределённый жанр: "bachata", "latin", "pop" и т.д.
 }
 

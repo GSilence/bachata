@@ -264,7 +264,8 @@ export default function TrackInfo({}: TrackInfoProps) {
 
   const analysisCompleted =
     currentTrack &&
-    (currentTrack.analyzerType === "basic" ||
+    (currentTrack.analyzerType === "v2" ||
+      currentTrack.analyzerType === "basic" ||
       currentTrack.analyzerType === "extended" ||
       currentTrack.analyzerType === "correlation");
 
@@ -558,10 +559,12 @@ export default function TrackInfo({}: TrackInfoProps) {
           <div className="mt-4 sm:mt-6 mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-400">Расклад:</span>
             <span className="text-sm text-white">
-              {ENABLE_CORRELATION_ANALYSIS &&
-              currentTrack.analyzerType === "correlation"
-                ? "Корреляция"
-                : currentTrack.analyzerType || "не указан"}
+              {currentTrack.analyzerType === "v2"
+                ? "v2 (ряды + мостики)"
+                : ENABLE_CORRELATION_ANALYSIS &&
+                    currentTrack.analyzerType === "correlation"
+                  ? "Корреляция"
+                  : currentTrack.analyzerType || "не указан"}
             </span>
             <div className="flex items-center gap-2 ml-2">
               {ENABLE_CORRELATION_ANALYSIS && (

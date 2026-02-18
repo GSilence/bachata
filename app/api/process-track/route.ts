@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { writeFileSync, mkdirSync } from "fs";
 import { randomUUID, createHash } from "crypto";
 import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
 import { analyzeGenre } from "@/lib/analyzeGenre";
 import { requireAdmin } from "@/lib/auth";
+
+const execAsync = promisify(exec);
 
 // Настройки для работы с большими файлами и долгими операциями
 export const runtime = "nodejs";
@@ -31,14 +36,9 @@ export async function POST(request: NextRequest) {
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
     const comment = formData.get("comment") as string | null;
-    /** Дефолт basic: корреляция отключена; при включении вернуть "correlation". */
-    const analyzer = (formData.get("analyzer") as string) || "basic";
-    const validAnalyzers: AnalyzerType[] = ["basic", "extended", "correlation"];
-    const analyzerOption: AnalyzerType = validAnalyzers.includes(
-      analyzer as AnalyzerType,
-    )
-      ? (analyzer as AnalyzerType)
-      : "basic";
+    /** При загрузке используем только анализ v2 (ряды + мостики). Остальные отключены. */
+    const analyzer = (formData.get("analyzer") as string) || "v2";
+    const useV2 = analyzer === "v2";
     // BPM и Offset всегда определяются автоматически
     const autoBpm = true;
     const autoOffset = true;
@@ -166,6 +166,8 @@ export async function POST(request: NextRequest) {
     let baseBpm: number | null = null;
     let baseOffset: number | null = null;
     let gridMap: any = null;
+    /** Полный результат v2 (для сохранения в отчёт — чтобы UI показывал те же квадраты, что и при загрузке) */
+    let v2ReportResult: Record<string, unknown> | null = null;
 
     // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
     // gridMap нужен для корректного отслеживания битов с учетом мостиков
@@ -178,19 +180,70 @@ export async function POST(request: NextRequest) {
 
     try {
       console.log("\n" + "=".repeat(80));
-      console.log("Starting audio analysis for GridMap, BPM and Offset...");
+      console.log("Starting audio analysis (v2: rows + bridges)...");
       console.log(`Audio file: ${filePath}`);
       console.log("=".repeat(80) + "\n");
 
-      // Запускаем анализ ритма и жанра параллельно
-      const [analysisResult, genreRes] = await Promise.all([
-        analyzeTrack(filePath, { analyzer: analyzerOption, reportName: title }),
-        analyzeGenre(filePath).catch((err) => {
-          console.warn("Genre detection failed (non-critical):", err.message);
-          return null;
-        }),
-      ]);
+      if (useV2) {
+        // Анализ v2: скрипт analyze-track-v2.py → gridMap с v2Layout и мостиками
+        const pythonPath = process.env.DEMUCS_PYTHON_PATH || "python";
+        const scriptPath = join(
+          process.cwd(),
+          "scripts",
+          "analyze-track-v2.py",
+        );
+        if (!existsSync(scriptPath)) {
+          throw new Error("V2 analysis script not found: " + scriptPath);
+        }
+        const command = `"${pythonPath}" "${scriptPath}" "${filePath}"`;
+        const { stdout, stderr } = await execAsync(command, {
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 300000,
+        });
+        if (stderr) console.log("[V2] stderr:", stderr);
+        const result = JSON.parse(stdout.trim());
+        if (result.error) throw new Error(result.error);
 
+        finalBpm = result.bpm ?? 120;
+        baseBpm = result.bpm ?? null;
+        finalOffset = result.song_start_time ?? 0;
+        baseOffset = result.song_start_time ?? null;
+        const layout = Array.isArray(result.layout) ? result.layout : [];
+        const bridges = Array.isArray(result.bridges) ? result.bridges : [];
+        gridMap = {
+          bpm: finalBpm,
+          offset: finalOffset,
+          grid: [],
+          duration: result.duration ?? undefined,
+          v2Layout: layout,
+          bridges: bridges.map((b: { time_sec?: number }) => b.time_sec ?? 0),
+        };
+        v2ReportResult = result;
+        console.log(
+          `V2: BPM=${finalBpm}, offset=${finalOffset}s, layout segments=${layout.length}, bridges=${bridges.length}`,
+        );
+      } else {
+        // Резерв: старый анализатор (basic), если когда-нибудь понадобится
+        const analysisResult = await analyzeTrack(filePath, {
+          analyzer: "basic",
+          reportName: title,
+        });
+        finalBpm = analysisResult.bpm;
+        baseBpm = analysisResult.bpm;
+        finalOffset = analysisResult.offset;
+        baseOffset = analysisResult.offset;
+        if (analysisResult.gridMap) {
+          gridMap = analysisResult.gridMap;
+          if (analysisResult.duration)
+            gridMap.duration = analysisResult.duration;
+        }
+      }
+
+      // Жанр — параллельно с v2 не запускаем, чтобы не удваивать время; можно запустить после при желании
+      const genreRes = await analyzeGenre(filePath).catch((err) => {
+        console.warn("Genre detection failed (non-critical):", err.message);
+        return null;
+      });
       genreResult = genreRes;
       if (genreResult) {
         console.log(
@@ -201,38 +254,13 @@ export async function POST(request: NextRequest) {
       console.log("\n" + "=".repeat(80));
       console.log("Audio analysis completed successfully!");
       console.log("=".repeat(80) + "\n");
-
-      // BPM и Offset всегда определяются автоматически
-      finalBpm = analysisResult.bpm;
-      baseBpm = analysisResult.bpm;
-      console.log(`Auto-detected BPM: ${finalBpm}`);
-
-      finalOffset = analysisResult.offset;
-      baseOffset = analysisResult.offset;
-      console.log(`Auto-detected Offset: ${finalOffset}s`);
-
-      // ВСЕГДА сохраняем gridMap (если доступен) - он нужен для beat tracking
-      if (analysisResult.gridMap) {
-        gridMap = analysisResult.gridMap;
-        // Сохраняем duration в gridMap для использования при генерации beatGrid
-        if (analysisResult.duration) {
-          gridMap.duration = analysisResult.duration;
-        }
-        console.log(
-          `Detected gridMap with ${analysisResult.gridMap.grid.length} sections, duration: ${analysisResult.duration || "unknown"}s`,
-        );
-      } else {
-        console.warn("GridMap not available in analysis result");
-      }
     } catch (error: any) {
       console.warn(
         "Audio analysis failed, using provided/default values:",
         error.message,
       );
-      // Если анализ не удался, используем введенные значения как базовые
       baseBpm = finalBpm;
       baseOffset = finalOffset;
-      // gridMap останется null - будет использован линейный beat tracking
     }
 
     // Подготавливаем метаданные для сохранения
@@ -268,7 +296,7 @@ export async function POST(request: NextRequest) {
         pathBass: null,
         pathOther: null,
         isProcessed: false, // Трек еще не разложен на стемы
-        analyzerType: analyzerOption,
+        analyzerType: useV2 ? "v2" : "basic",
         fileHash: fileHash,
         genreHint: genreResult?.genre_hint || null,
         gridMap: gridMap
@@ -281,6 +309,24 @@ export async function POST(request: NextRequest) {
           : { metadata: metadata }, // Если нет gridMap, создаем объект с метаданными
       },
     });
+
+    // Сохраняем полный отчёт v2 в тот же файл, откуда читает GET analyze-v2 — тогда квадраты/цвета в UI совпадают с загрузкой
+    if (useV2 && v2ReportResult) {
+      try {
+        const audioBasename = fileName.replace(/\.[^.]+$/, "");
+        const reportsDir = join(process.cwd(), "public", "uploads", "reports");
+        if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
+        const reportPath = join(
+          reportsDir,
+          `${audioBasename}_v2_analysis.json`,
+        );
+        const toSave = { success: true, trackId: track.id, ...v2ReportResult };
+        writeFileSync(reportPath, JSON.stringify(toSave, null, 2));
+        console.log("[process-track] V2 report saved: " + reportPath);
+      } catch (e) {
+        console.warn("[process-track] Failed to save V2 report:", e);
+      }
+    }
 
     return NextResponse.json({
       success: true,
