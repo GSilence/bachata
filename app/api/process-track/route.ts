@@ -279,53 +279,77 @@ export async function POST(request: NextRequest) {
         : null,
     };
 
-    // Создаем запись в БД
+    // Создаем запись в БД (минимальный gridMap; для v2 сразу перезапишем как у кнопки «Анализ v2»)
     const track = await prisma.track.create({
       data: {
         title: title,
         artist: artist || null,
-        filename: fileName, // Для совместимости со старой схемой
+        filename: fileName,
         bpm: finalBpm,
         offset: finalOffset,
         baseBpm: baseBpm,
         baseOffset: baseOffset,
         isFree: true,
         pathOriginal: `/uploads/raw/${fileName}`,
-        pathVocals: null, // Будет заполнено после обработки через Demucs
+        pathVocals: null,
         pathDrums: null,
         pathBass: null,
         pathOther: null,
-        isProcessed: false, // Трек еще не разложен на стемы
+        isProcessed: false,
         analyzerType: useV2 ? "v2" : "basic",
         fileHash: fileHash,
         genreHint: genreResult?.genre_hint || null,
-        gridMap: gridMap
-          ? JSON.parse(
-              JSON.stringify({
-                ...gridMap,
-                metadata: metadata, // Сохраняем метаданные в gridMap
-              }),
-            )
-          : { metadata: metadata }, // Если нет gridMap, создаем объект с метаданными
+        gridMap:
+          gridMap != null
+            ? JSON.parse(JSON.stringify({ ...gridMap, metadata }))
+            : { metadata },
       },
     });
 
-    // Сохраняем полный отчёт v2 в тот же файл, откуда читает GET analyze-v2 — тогда квадраты/цвета в UI совпадают с загрузкой
+    // Для v2: делаем 1 в 1 то же, что кнопка «Запустить анализ v2» — обновляем gridMap и сохраняем отчёт
     if (useV2 && v2ReportResult) {
-      try {
-        const audioBasename = fileName.replace(/\.[^.]+$/, "");
-        const reportsDir = join(process.cwd(), "public", "uploads", "reports");
-        if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
-        const reportPath = join(
-          reportsDir,
-          `${audioBasename}_v2_analysis.json`,
-        );
-        const toSave = { success: true, trackId: track.id, ...v2ReportResult };
-        writeFileSync(reportPath, JSON.stringify(toSave, null, 2));
-        console.log("[process-track] V2 report saved: " + reportPath);
-      } catch (e) {
-        console.warn("[process-track] Failed to save V2 report:", e);
-      }
+      const result = v2ReportResult as {
+        layout?: unknown[];
+        bridges?: { time_sec?: number }[];
+        bpm?: number;
+        duration?: number;
+      };
+      const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
+      const v2Layout = Array.isArray(result.layout) ? result.layout : [];
+      const v2BridgesTimes = Array.isArray(result.bridges)
+        ? result.bridges.map((b) => b.time_sec ?? 0)
+        : [];
+      const mergedGridMap = {
+        ...existingGridMap,
+        bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
+        offset: track.offset ?? existingGridMap.offset,
+        duration: result.duration ?? existingGridMap.duration,
+        v2Layout,
+        bridges:
+          v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
+      };
+      await prisma.track.update({
+        where: { id: track.id },
+        data: { gridMap: mergedGridMap as object },
+      });
+
+      const audioBasename = fileName.replace(/\.[^.]+$/, "");
+      const reportsDir = join(process.cwd(), "public", "uploads", "reports");
+      if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
+      const reportPath = join(reportsDir, `${audioBasename}_v2_analysis.json`);
+      const toSave = { success: true, trackId: track.id, ...v2ReportResult };
+      writeFileSync(reportPath, JSON.stringify(toSave, null, 2));
+      console.log("[process-track] V2: gridMap updated and report saved");
+
+      // Возвращаем трек с актуальным gridMap (как после кнопки «Анализ v2»)
+      const updatedTrack = await prisma.track.findUnique({
+        where: { id: track.id },
+      });
+      return NextResponse.json({
+        success: true,
+        track: updatedTrack ?? track,
+        message: "Track processed successfully",
+      });
     }
 
     return NextResponse.json({

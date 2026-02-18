@@ -119,18 +119,32 @@ export function generateBeatGridFromDownbeats(
   if (v2Layout && v2Layout.length > 0) {
     for (const beat of skeletonBeats) {
       const T = beat.time;
-      const seg = v2Layout.find(
+      let segIndex = v2Layout.findIndex(
         (s) => T >= s.time_start - 0.05 && T <= s.time_end + 0.05,
       );
-      const segment =
-        seg ??
-        (T < v2Layout[0].time_start
-          ? v2Layout[0]
-          : v2Layout[v2Layout.length - 1]);
+      if (segIndex < 0) {
+        segIndex = T < v2Layout[0].time_start ? 0 : v2Layout.length - 1;
+      }
+      const segment = v2Layout[segIndex];
       const timeStart = segment.time_start;
       const row1Start = segment.row1_start;
       const localBeatIndex = Math.round((T - timeStart) / beatInterval);
-      beat.number = ((((row1Start - 1 + localBeatIndex) % 8) + 8) % 8) + 1;
+
+      const isBridgeBeat =
+        segIndex > 0 && localBeatIndex >= 0 && localBeatIndex < 4;
+      beat.isBridge = isBridgeBeat;
+
+      if (segIndex === 0) {
+        // Первый сегмент (до первого мостика): счёт по row1_start
+        beat.number =
+          ((((row1Start - 1 + localBeatIndex) % 8) + 8) % 8) + 1;
+      } else if (isBridgeBeat) {
+        // Мостик: всегда 1, 2, 3, 4
+        beat.number = localBeatIndex + 1;
+      } else {
+        // После мостика: новый цикл 1…8 (следующие биты после 1,2,3,4 снова с 1)
+        beat.number = ((localBeatIndex - 4) % 8 + 8) % 8 + 1;
+      }
     }
     return skeletonBeats;
   }
