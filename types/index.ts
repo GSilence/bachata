@@ -9,6 +9,15 @@ export interface GridSection {
   beats: number; // количество битов в секции
 }
 
+/** Сегмент раскладки v2: от мостика к мостику, row1_start = 1 или 5 (счёт РАЗ/ПЯТЬ) */
+export interface V2LayoutSegment {
+  from_beat: number;
+  to_beat: number;
+  time_start: number;
+  time_end: number;
+  row1_start: 1 | 5;
+}
+
 export interface GridMap {
   bpm: number;
   offset: number;
@@ -17,6 +26,8 @@ export interface GridMap {
   totalBeats?: number; // Общее количество beats для справки
   duration?: number; // Длительность трека в секундах (из анализа)
   bridges?: number[]; // Массив времён начала бриджей (секунды), задаётся админом вручную
+  /** Раскладка v2 (мостики): сегменты с row1_start для счёта при воспроизведении */
+  v2Layout?: V2LayoutSegment[];
 }
 
 export interface Beat {

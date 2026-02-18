@@ -114,6 +114,27 @@ export function generateBeatGridFromDownbeats(
   // ============================================
   // ШАГ 2: НАЛОЖЕНИЕ СТРУКТУРЫ (Labeling)
   // ============================================
+  // Приоритет: раскладка v2 (мостики) — счёт 1-8 по сегментам с учётом row1_start (РАЗ/ПЯТЬ)
+  const v2Layout = gridMap.v2Layout;
+  if (v2Layout && v2Layout.length > 0) {
+    for (const beat of skeletonBeats) {
+      const T = beat.time;
+      const seg = v2Layout.find(
+        (s) => T >= s.time_start - 0.05 && T <= s.time_end + 0.05,
+      );
+      const segment =
+        seg ??
+        (T < v2Layout[0].time_start
+          ? v2Layout[0]
+          : v2Layout[v2Layout.length - 1]);
+      const timeStart = segment.time_start;
+      const row1Start = segment.row1_start;
+      const localBeatIndex = Math.round((T - timeStart) / beatInterval);
+      beat.number = ((((row1Start - 1 + localBeatIndex) % 8) + 8) % 8) + 1;
+    }
+    return skeletonBeats;
+  }
+
   // Если нет секций, просто нумеруем по порядку (1-8)
   if (sections.length === 0) {
     let beatNumber = 1;

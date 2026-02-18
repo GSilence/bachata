@@ -262,14 +262,15 @@ export class AudioEngine {
     this.currentBeatIndex = 0;
     this._isPlaying = false; // Reset playing state
 
-    // 3. Beat Grid — из gridMap (с бриджами и секциями) или fallback 1–8
+    // 3. Beat Grid — из gridMap (v2 раскладка, бриджи, секции) или fallback 1–8
     const duration = track.gridMap?.duration || 180;
     const bpm = track.bpm || 120;
     const offset = track.offset || 0;
     if (
       track.gridMap &&
       ((track.gridMap.grid && track.gridMap.grid.length > 0) ||
-        (track.gridMap.bridges && track.gridMap.bridges.length > 0))
+        (track.gridMap.bridges && track.gridMap.bridges.length > 0) ||
+        (track.gridMap.v2Layout && track.gridMap.v2Layout.length > 0))
     ) {
       this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
     } else {
@@ -320,7 +321,8 @@ export class AudioEngine {
         if (
           t.gridMap &&
           ((t.gridMap.grid && t.gridMap.grid.length > 0) ||
-            (t.gridMap.bridges && t.gridMap.bridges.length > 0))
+            (t.gridMap.bridges && t.gridMap.bridges.length > 0) ||
+            (t.gridMap.v2Layout && t.gridMap.v2Layout.length > 0))
         ) {
           this.beatGrid = generateBeatGridFromDownbeats(
             { ...t.gridMap, duration },
@@ -596,7 +598,8 @@ export class AudioEngine {
     if (
       track.gridMap &&
       ((track.gridMap.grid && track.gridMap.grid.length > 0) ||
-        (track.gridMap.bridges && track.gridMap.bridges.length > 0))
+        (track.gridMap.bridges && track.gridMap.bridges.length > 0) ||
+        (track.gridMap.v2Layout && track.gridMap.v2Layout.length > 0))
     ) {
       this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
     } else {
@@ -665,7 +668,11 @@ export class AudioEngine {
     return this.beatGrid;
   }
 
-  getCurrentBeatInfo(): { time: number; number: number; isBridge: boolean } | null {
+  getCurrentBeatInfo(): {
+    time: number;
+    number: number;
+    isBridge: boolean;
+  } | null {
     if (this.beatGrid.length === 0) return null;
 
     const currentTime = this.getCurrentTime();
@@ -673,7 +680,11 @@ export class AudioEngine {
     for (let i = this.beatGrid.length - 1; i >= 0; i--) {
       const beat = this.beatGrid[i];
       if (beat.time <= currentTime) {
-        return { time: beat.time, number: beat.number, isBridge: !!beat.isBridge };
+        return {
+          time: beat.time,
+          number: beat.number,
+          isBridge: !!beat.isBridge,
+        };
       }
     }
 
@@ -904,8 +915,7 @@ export class AudioEngine {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
           if (!useWebAudioVoice) this.playVoiceCount(beat.number);
-          if (this.onBeatUpdate)
-            this.onBeatUpdate(beat.number, beat.isBridge);
+          if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         }
         this.currentBeatIndex++;
       }
@@ -917,8 +927,7 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (!useWebAudioVoice) this.playVoiceCount(beat.number);
-        if (this.onBeatUpdate)
-          this.onBeatUpdate(beat.number, beat.isBridge);
+        if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         this.currentBeatIndex++;
       }
     }

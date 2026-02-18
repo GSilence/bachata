@@ -154,7 +154,32 @@ export async function POST(
     );
     const toSave = { success: true, trackId, ...result };
     writeFileSync(resultPath, JSON.stringify(toSave, null, 2));
-    console.log(`[V2 Analysis] Results saved: ${resultPath}`);
+    console.log("[V2 Analysis] Results saved: " + resultPath);
+
+    // Применяем раскладку v2 к треку в БД — счёт при воспроизведении будет учитывать мостики
+    const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
+    const v2Layout = Array.isArray(result.layout) ? result.layout : [];
+    const v2BridgesTimes = Array.isArray(result.bridges)
+      ? (result.bridges as { time_sec?: number }[]).map((b) => b.time_sec ?? 0)
+      : [];
+    const mergedGridMap = {
+      ...existingGridMap,
+      bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
+      offset: track.offset ?? existingGridMap.offset,
+      duration: result.duration ?? existingGridMap.duration,
+      v2Layout,
+      bridges:
+        v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
+    };
+    await prisma.track.update({
+      where: { id: trackId },
+      data: { gridMap: mergedGridMap as object },
+    });
+    console.log(
+      "[V2 Analysis] Track gridMap updated with v2Layout (" +
+        v2Layout.length +
+        " segments)",
+    );
 
     return NextResponse.json(toSave);
   } catch (error: unknown) {

@@ -608,6 +608,45 @@ export default function TrackInfo({}: TrackInfoProps) {
                     );
                     const data = await res.json();
                     setV2Result(data);
+                    // Сразу применяем раскладку v2 к воспроизведению (мостики учтены в счёте)
+                    if (
+                      currentTrack &&
+                      data.success &&
+                      Array.isArray(data.layout) &&
+                      data.layout.length > 0
+                    ) {
+                      const existing =
+                        currentTrack.gridMap as unknown as Record<
+                          string,
+                          unknown
+                        > | null;
+                      const base =
+                        existing && typeof existing === "object"
+                          ? { ...existing }
+                          : {};
+                      const mergedGridMap: GridMap = {
+                        bpm: (data.bpm ?? currentTrack.bpm) as number,
+                        offset: (currentTrack.offset ??
+                          base.offset ??
+                          0) as number,
+                        grid: (base.grid as GridMap["grid"]) ?? [],
+                        bridges: Array.isArray(data.bridges)
+                          ? data.bridges.map(
+                              (b: { time_sec?: number }) => b.time_sec ?? 0,
+                            )
+                          : (base.bridges as number[] | undefined),
+                        duration: (data.duration ?? base.duration) as
+                          | number
+                          | undefined,
+                        v2Layout: data.layout as GridMap["v2Layout"],
+                      };
+                      const updatedTrack = {
+                        ...currentTrack,
+                        gridMap: mergedGridMap,
+                      };
+                      updateCurrentTrack(updatedTrack);
+                      audioEngine.reloadBeatGrid(updatedTrack);
+                    }
                   } catch (e) {
                     console.error("V2 analysis error:", e);
                     setV2Result({ error: String(e) });
@@ -1246,6 +1285,26 @@ export default function TrackInfo({}: TrackInfoProps) {
                 >
                   {isSavingBridge ? "Сохранение..." : "+ Бридж здесь"}
                 </button>
+                {v2Result &&
+                  !v2Result.error &&
+                  v2Result.bridges?.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const times: number[] = v2Result.bridges.map(
+                          (b: any) => b.time_sec,
+                        );
+                        saveBridges(times);
+                      }}
+                      disabled={isSavingBridge || isReanalyzing}
+                      title="Применить мостики из v2 анализа"
+                      className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isSavingBridge
+                        ? "Сохранение..."
+                        : `← из v2 (${v2Result.bridges.length})`}
+                    </button>
+                  )}
               </div>
 
               {/* Линейка битов (live) */}
