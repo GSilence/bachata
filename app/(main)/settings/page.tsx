@@ -47,7 +47,7 @@ export default function SettingsPage() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch("/api/tracks");
+      const response = await fetch("/api/tracks", { cache: "no-store" });
       if (response.ok) {
         const data = await response.json();
         setTracks(data);

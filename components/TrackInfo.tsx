@@ -366,7 +366,7 @@ export default function TrackInfo({}: TrackInfoProps) {
         throw new Error(errMsg);
       }
       const data = await res.json();
-      const listRes = await fetch("/api/tracks");
+      const listRes = await fetch("/api/tracks", { cache: "no-store" });
       const list = await listRes.json();
       if (Array.isArray(list)) setTracks(list);
       const updated = list?.find(

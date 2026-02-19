@@ -456,17 +456,33 @@ export const usePlayerStore = create<PlayerState>()(
     {
       name: "player-storage",
       partialize: (state) => ({
-        // Сохраняем только ID трека, чтобы при загрузке найти его в списке
-        // audioEngine НЕ сохраняем (это объект класса)
         savedTrackId: state.currentTrack?.id ?? null,
+        playlistFilter: state.playlistFilter,
+        searchQuery: state.searchQuery,
+        bridgeFilterWith: state.bridgeFilterWith,
+        bridgeFilterWithout: state.bridgeFilterWithout,
+        squareSortDirection: state.squareSortDirection,
+        squareDominanceMin: state.squareDominanceMin,
+        squareDominanceMax: state.squareDominanceMax,
       }),
       storage: trackStorage,
-      // Восстанавливаем только savedTrackId, не весь currentTrack и не audioEngine
       merge: (persistedState: any, currentState: any) => {
+        const stored = persistedState?.state ?? persistedState ?? {};
         return {
           ...currentState,
-          savedTrackId: persistedState?.savedTrackId ?? null,
-          // audioEngine всегда null при восстановлении
+          savedTrackId: stored.savedTrackId ?? null,
+          playlistFilter: stored.playlistFilter ?? currentState.playlistFilter,
+          searchQuery: stored.searchQuery ?? currentState.searchQuery,
+          bridgeFilterWith:
+            stored.bridgeFilterWith ?? currentState.bridgeFilterWith,
+          bridgeFilterWithout:
+            stored.bridgeFilterWithout ?? currentState.bridgeFilterWithout,
+          squareSortDirection:
+            stored.squareSortDirection ?? currentState.squareSortDirection,
+          squareDominanceMin:
+            stored.squareDominanceMin ?? currentState.squareDominanceMin,
+          squareDominanceMax:
+            stored.squareDominanceMax ?? currentState.squareDominanceMax,
           audioEngine: null,
         };
       },

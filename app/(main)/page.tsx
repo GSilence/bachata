@@ -132,7 +132,7 @@ export default function PlaybackPage() {
 
     let cancelled = false;
 
-    fetch("/api/tracks")
+    fetch("/api/tracks", { cache: "no-store" })
       .then((res) => {
         if (!res.ok) {
           if (res.status === 500) {
