@@ -86,6 +86,8 @@ interface V2Result {
   square_analysis: {
     parts: Record<string, SquarePart>;
     verdict: string;
+    /** Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100 (только при square_confirmed) */
+    row_dominance_pct?: number;
   };
   /** Таблица позиций рядов 1 и 5: энергия пикового бита, вероятность минимума в окне ±4 (100% = подозрение на мостик) */
   indicator_tact_table?: {
@@ -307,6 +309,19 @@ export default function V2AnalysisDisplay({ data }: Props) {
               {data.square_analysis.verdict === "has_bridges"
                 ? "есть красные"
                 : "все зелёные"}
+              {typeof data.square_analysis.row_dominance_pct === "number" && (
+                <span
+                  className={
+                    (data.square_analysis.row_dominance_pct ?? 0) >= 0
+                      ? "text-green-400 ml-1"
+                      : "text-amber-400 ml-1"
+                  }
+                  title="Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100. 0% = поровну, отрицательный = ПЯТЬ больше."
+                >
+                  (разница РАЗ−ПЯТЬ:{" "}
+                  {data.square_analysis.row_dominance_pct.toFixed(1)}%)
+                </span>
+              )}
             </summary>
             <div className="mt-2 space-y-4">
               {/* Мадмом: 4 строки (1/1, 1/2, 1/3, 1/5) */}

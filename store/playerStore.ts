@@ -74,6 +74,11 @@ export const usePlayerStore = create<PlayerState>()(
       voiceLanguage: restoredSettings.voiceLanguage,
       playlistFilter: "free",
       searchQuery: "",
+      bridgeFilterWith: true,
+      bridgeFilterWithout: true,
+      squareSortDirection: "none",
+      squareDominanceMin: 0,
+      squareDominanceMax: 100,
       isReanalyzing: false,
 
       // AudioEngine reference (kept for compatibility, but we import directly now)
@@ -202,6 +207,14 @@ export const usePlayerStore = create<PlayerState>()(
       },
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),
+      setBridgeFilterWith: (value) => set({ bridgeFilterWith: value }),
+      setBridgeFilterWithout: (value) => set({ bridgeFilterWithout: value }),
+      setSquareSortDirection: (dir) => set({ squareSortDirection: dir }),
+      setSquareDominanceRange: (min, max) =>
+        set({
+          squareDominanceMin: Math.max(0, Math.min(100, min)),
+          squareDominanceMax: Math.max(0, Math.min(100, max)),
+        }),
       setAudioEngine: (engine) => set({ audioEngine: engine }),
 
       // AudioEngine methods - call audioEngine directly
@@ -239,6 +252,10 @@ export const usePlayerStore = create<PlayerState>()(
           playMode,
           playlistFilter,
           searchQuery,
+          bridgeFilterWith,
+          bridgeFilterWithout,
+          squareDominanceMin,
+          squareDominanceMax,
           isPlaying,
         } = get();
         if (!currentTrack || tracks.length === 0) return;
@@ -258,6 +275,21 @@ export const usePlayerStore = create<PlayerState>()(
           }
           // TODO: 'my' и 'all' фильтры для будущей реализации
 
+          // Мостики: с / без
+          const hasBridges = (track.gridMap?.bridges?.length ?? 0) > 0;
+          if (hasBridges && !bridgeFilterWith) return false;
+          if (!hasBridges && !bridgeFilterWithout) return false;
+
+          // Квадратные: диапазон % превосходства
+          if (!hasBridges && track.gridMap) {
+            const pct = (track.gridMap as { rowDominancePercent?: number })
+              .rowDominancePercent;
+            if (pct != null) {
+              if (pct < squareDominanceMin) return false;
+              if (pct > squareDominanceMax) return false;
+            }
+          }
+
           // Поиск по названию
           if (searchQuery) {
             const query = searchQuery.toLowerCase();
@@ -272,28 +304,57 @@ export const usePlayerStore = create<PlayerState>()(
           return true;
         });
 
-        if (filteredTracks.length === 0) return;
+        const squareSortDirection = get().squareSortDirection;
+        const sortedForPlay =
+          squareSortDirection === "none"
+            ? filteredTracks
+            : (() => {
+                const hasBridges = (t: Track) =>
+                  (t.gridMap?.bridges?.length ?? 0) > 0;
+                const getDominance = (t: Track) =>
+                  (t.gridMap as { rowDominancePercent?: number })
+                    ?.rowDominancePercent ?? -Infinity;
+                const squareTracks = filteredTracks.filter(
+                  (t) => !hasBridges(t),
+                );
+                const bridgeTracks = filteredTracks.filter((t) =>
+                  hasBridges(t),
+                );
+                const sortedSquare =
+                  squareSortDirection === "desc"
+                    ? [...squareTracks].sort((a, b) => {
+                        const d = getDominance(b) - getDominance(a);
+                        return d !== 0 ? d : a.id - b.id;
+                      })
+                    : [...squareTracks].sort((a, b) => {
+                        const d = getDominance(a) - getDominance(b);
+                        return d !== 0 ? d : a.id - b.id;
+                      });
+                return [...sortedSquare, ...bridgeTracks];
+              })();
 
-        const currentIndex = filteredTracks.findIndex(
+        if (sortedForPlay.length === 0) return;
+
+        const currentIndex = sortedForPlay.findIndex(
           (t) => t.id === currentTrack.id,
         );
         console.log(
-          `playNext: currentTrack=${currentTrack.title} (id=${currentTrack.id}), currentIndex=${currentIndex}, playMode=${playMode}, filteredCount=${filteredTracks.length}, wasPlaying=${isPlaying}`,
+          `playNext: currentTrack=${currentTrack.title} (id=${currentTrack.id}), currentIndex=${currentIndex}, playMode=${playMode}, filteredCount=${sortedForPlay.length}, wasPlaying=${isPlaying}`,
         );
         console.log(
           `Filtered tracks:`,
-          filteredTracks.map((t) => `${t.title} (id=${t.id})`),
+          sortedForPlay.map((t) => `${t.title} (id=${t.id})`),
         );
 
         let nextTrack: Track | null = null;
 
         if (playMode === "random") {
-          let randomIndex = Math.floor(Math.random() * filteredTracks.length);
+          let randomIndex = Math.floor(Math.random() * sortedForPlay.length);
           // Если только один трек, не выбираем его снова
-          if (filteredTracks.length > 1 && randomIndex === currentIndex) {
-            randomIndex = (randomIndex + 1) % filteredTracks.length;
+          if (sortedForPlay.length > 1 && randomIndex === currentIndex) {
+            randomIndex = (randomIndex + 1) % sortedForPlay.length;
           }
-          nextTrack = filteredTracks[randomIndex];
+          nextTrack = sortedForPlay[randomIndex];
           console.log(
             `Random: selected index=${randomIndex}, track=${nextTrack?.title} (id=${nextTrack?.id})`,
           );
@@ -310,14 +371,14 @@ export const usePlayerStore = create<PlayerState>()(
             console.warn(
               "Current track not found in filtered list, selecting first track",
             );
-            if (filteredTracks.length > 0) {
-              nextTrack = filteredTracks[0];
+            if (sortedForPlay.length > 0) {
+              nextTrack = sortedForPlay[0];
             }
           } else {
-            const nextIndex = (currentIndex + 1) % filteredTracks.length;
-            nextTrack = filteredTracks[nextIndex];
+            const nextIndex = (currentIndex + 1) % sortedForPlay.length;
+            nextTrack = sortedForPlay[nextIndex];
             console.log(
-              `Sequential: currentIndex=${currentIndex}, nextIndex=${nextIndex}, total=${filteredTracks.length}`,
+              `Sequential: currentIndex=${currentIndex}, nextIndex=${nextIndex}, total=${sortedForPlay.length}`,
             );
             console.log(
               `Sequential: currentTrack=${currentTrack.title} (id=${currentTrack.id}), nextTrack=${nextTrack?.title} (id=${nextTrack?.id})`,

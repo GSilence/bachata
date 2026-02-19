@@ -84,7 +84,8 @@ export class AudioEngine {
   private updateIntervalId: NodeJS.Timeout | null = null; // Для работы в фоне (неактивная вкладка)
 
   // Voice filter для управления воспроизведением голоса
-  private voiceFilter: "mute" | "on1" | "on1and5" | "full" = "full";
+  private voiceFilter: "mute" | "on1" | "on1times3" | "on1and5" | "full" =
+    "full";
   private voiceLanguage: "en" | "pt" = "en";
 
   // Voice count files (Howl — запасной путь)
@@ -490,7 +491,7 @@ export class AudioEngine {
     if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
       const beat = this.beatGrid[immediateBeatIndex];
       if (beat) {
-        this.playVoiceCount(beat.number);
+        this.playVoiceCount(beat.number, immediateBeatIndex);
         this.currentBeatIndex = immediateBeatIndex + 1;
       }
     }
@@ -724,7 +725,7 @@ export class AudioEngine {
     if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
       const beat = this.beatGrid[immediateBeatIndex];
       if (beat) {
-        this.playVoiceCount(beat.number);
+        this.playVoiceCount(beat.number, immediateBeatIndex);
         this.currentBeatIndex = immediateBeatIndex + 1;
       }
     }
@@ -829,7 +830,7 @@ export class AudioEngine {
     });
   }
 
-  setVoiceFilter(filter: "mute" | "on1" | "on1and5" | "full") {
+  setVoiceFilter(filter: "mute" | "on1" | "on1times3" | "on1and5" | "full") {
     this.voiceFilter = filter;
   }
 
@@ -914,7 +915,8 @@ export class AudioEngine {
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
         if (currentTime - beat.time < 0.25) {
-          if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+          if (!useWebAudioVoice)
+            this.playVoiceCount(beat.number, this.currentBeatIndex);
           if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         }
         this.currentBeatIndex++;
@@ -926,7 +928,8 @@ export class AudioEngine {
         this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
-        if (!useWebAudioVoice) this.playVoiceCount(beat.number);
+        if (!useWebAudioVoice)
+          this.playVoiceCount(beat.number, this.currentBeatIndex);
         if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         this.currentBeatIndex++;
       }
@@ -939,12 +942,20 @@ export class AudioEngine {
     // Не нужно создавать новый интервал здесь
   }
 
-  private shouldPlayVoiceForBeat(beatNumber: number): boolean {
+  private shouldPlayVoiceForBeat(
+    beatNumber: number,
+    beatIndex?: number,
+  ): boolean {
     switch (this.voiceFilter) {
       case "mute":
         return false;
       case "on1":
         return beatNumber === 1;
+      case "on1times3":
+        if (beatNumber !== 1) return false;
+        if (beatIndex == null) return false;
+        const cycle = Math.floor(beatIndex / 8);
+        return cycle % 3 === 0;
       case "on1and5":
         return beatNumber === 1 || beatNumber === 5;
       case "full":
@@ -1051,16 +1062,16 @@ export class AudioEngine {
     ) {
       const beat = this.beatGrid[i];
       if (beat.time > horizon) break;
-      if (this.shouldPlayVoiceForBeat(beat.number)) {
+      if (this.shouldPlayVoiceForBeat(beat.number, i)) {
         this.scheduleVoiceAt(beat.number, nowWall + (beat.time - nowTrack));
       }
       this.lastScheduledVoiceBeatIndex = i;
     }
   }
 
-  private playVoiceCount(beatNumber: number) {
+  private playVoiceCount(beatNumber: number, beatIndex?: number) {
     if (beatNumber < 1 || beatNumber > 8) return;
-    if (!this.shouldPlayVoiceForBeat(beatNumber)) return;
+    if (!this.shouldPlayVoiceForBeat(beatNumber, beatIndex)) return;
 
     // Приоритет: Web Audio (буфер в браузере, точное время, работает в фоне)
     if (this.voiceCtx && this.voiceBuffers.has(beatNumber)) {

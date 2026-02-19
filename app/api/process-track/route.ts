@@ -319,6 +319,15 @@ export async function POST(request: NextRequest) {
       const v2BridgesTimes = Array.isArray(result.bridges)
         ? result.bridges.map((b) => b.time_sec ?? 0)
         : [];
+      const squareAnalysis = (
+        result as {
+          square_analysis?: { verdict?: string; row_dominance_pct?: number };
+        }
+      ).square_analysis;
+      const rowDominancePercent =
+        typeof squareAnalysis?.row_dominance_pct === "number"
+          ? squareAnalysis.row_dominance_pct
+          : undefined;
       const mergedGridMap = {
         ...existingGridMap,
         bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
@@ -327,6 +336,7 @@ export async function POST(request: NextRequest) {
         v2Layout,
         bridges:
           v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
+        ...(rowDominancePercent != null && { rowDominancePercent }),
       };
       await prisma.track.update({
         where: { id: track.id },

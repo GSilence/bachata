@@ -165,11 +165,35 @@ export default function TrackInfo({}: TrackInfoProps) {
           if (data.found) setBridgeResult(data);
         })
         .catch(() => {});
-      // Load saved v2 analysis
+      // Load saved v2 analysis (GET также считает rowDominancePercent из Row Analysis и пишет в БД)
       fetch(`/api/tracks/${currentTrack.id}/analyze-v2`)
         .then((r) => r.json())
         .then((data) => {
           if (data.found) setV2Result(data);
+          if (
+            data.found &&
+            typeof data.rowDominancePercent === "number" &&
+            currentTrack
+          ) {
+            const existing =
+              (currentTrack.gridMap as unknown as Record<string, unknown>) ||
+              {};
+            const mergedGridMap: GridMap = {
+              ...(currentTrack.gridMap || {}),
+              rowDominancePercent: data.rowDominancePercent,
+            } as GridMap;
+            const updatedTrack = {
+              ...currentTrack,
+              gridMap: mergedGridMap,
+            };
+            updateCurrentTrack(updatedTrack);
+            const currentTracks = usePlayerStore.getState().tracks;
+            setTracks(
+              currentTracks.map((t) =>
+                t.id === currentTrack.id ? updatedTrack : t,
+              ),
+            );
+          }
         })
         .catch(() => {});
     } else {
@@ -627,6 +651,13 @@ export default function TrackInfo({}: TrackInfoProps) {
                         existing && typeof existing === "object"
                           ? { ...existing }
                           : {};
+                      const squareAnalysis = data.square_analysis as
+                        | { verdict?: string; row_dominance_pct?: number }
+                        | undefined;
+                      const rowDominancePercent =
+                        typeof squareAnalysis?.row_dominance_pct === "number"
+                          ? squareAnalysis.row_dominance_pct
+                          : undefined;
                       const mergedGridMap: GridMap = {
                         bpm: (data.bpm ?? currentTrack.bpm) as number,
                         offset: (currentTrack.offset ??
@@ -642,6 +673,9 @@ export default function TrackInfo({}: TrackInfoProps) {
                           | number
                           | undefined,
                         v2Layout: data.layout as GridMap["v2Layout"],
+                        ...(rowDominancePercent != null && {
+                          rowDominancePercent,
+                        }),
                       };
                       const updatedTrack = {
                         ...currentTrack,
@@ -649,6 +683,11 @@ export default function TrackInfo({}: TrackInfoProps) {
                       };
                       updateCurrentTrack(updatedTrack);
                       audioEngine.reloadBeatGrid(updatedTrack);
+                      setTracks(
+                        tracks.map((t) =>
+                          t.id === currentTrack.id ? updatedTrack : t,
+                        ),
+                      );
                     }
                   } catch (e) {
                     console.error("V2 analysis error:", e);
@@ -1180,6 +1219,19 @@ export default function TrackInfo({}: TrackInfoProps) {
                     <span className="text-yellow-400 ml-1">
                       ({v2Result.bridges.length} мостик
                       {v2Result.bridges.length > 1 ? "а" : ""})
+                    </span>
+                  )}
+                  {typeof v2Result.square_analysis?.row_dominance_pct ===
+                    "number" && (
+                    <span
+                      className={
+                        (v2Result.square_analysis.row_dominance_pct ?? 0) >= 0
+                          ? "text-green-400 ml-1"
+                          : "text-amber-400 ml-1"
+                      }
+                    >
+                      (разница РАЗ−ПЯТЬ:{" "}
+                      {v2Result.square_analysis.row_dominance_pct.toFixed(1)}%)
                     </span>
                   )}
                 </summary>

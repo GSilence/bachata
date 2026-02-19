@@ -1,5 +1,5 @@
 export type PlayMode = "sequential" | "random" | "loop";
-export type VoiceFilter = "mute" | "on1" | "on1and5" | "full";
+export type VoiceFilter = "mute" | "on1" | "on1times3" | "on1and5" | "full";
 export type VoiceLanguage = "en" | "pt";
 export type PlaylistFilter = "free" | "my" | "all";
 
@@ -28,6 +28,8 @@ export interface GridMap {
   bridges?: number[]; // Массив времён начала бриджей (секунды), задаётся админом вручную
   /** Раскладка v2 (мостики): сегменты с row1_start для счёта при воспроизведении */
   v2Layout?: V2LayoutSegment[];
+  /** Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100. 0% = поровну. */
+  rowDominancePercent?: number;
 }
 
 export interface Beat {
@@ -98,6 +100,16 @@ export interface PlayerState {
   // Плейлист
   playlistFilter: PlaylistFilter;
   searchQuery: string;
+  /** Показывать треки с мостиками (по умолчанию true) */
+  bridgeFilterWith: boolean;
+  /** Показывать треки без мостиков (по умолчанию true) */
+  bridgeFilterWithout: boolean;
+  /** Сортировка по % доминирования РАЗ над ПЯТЬ: none = без сортировки, asc/desc = только песни без мостиков; с мостиками внизу */
+  squareSortDirection: "none" | "asc" | "desc";
+  /** Фильтр по % доминирования: от (двойной ползунок) */
+  squareDominanceMin: number;
+  /** Фильтр по % доминирования: до (двойной ползунок) */
+  squareDominanceMax: number;
 
   // Переоценка расклада (блокирует страницу, не сохраняется)
   isReanalyzing: boolean;
@@ -123,6 +135,10 @@ export interface PlayerState {
   setVoiceLanguage: (language: VoiceLanguage) => void;
   setPlaylistFilter: (filter: PlaylistFilter) => void;
   setSearchQuery: (query: string) => void;
+  setBridgeFilterWith: (value: boolean) => void;
+  setBridgeFilterWithout: (value: boolean) => void;
+  setSquareSortDirection: (dir: "none" | "asc" | "desc") => void;
+  setSquareDominanceRange: (min: number, max: number) => void;
   setAudioEngine: (engine: any | null) => void;
 
   // AudioEngine methods (синхронизируют Zustand и Howler)

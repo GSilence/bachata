@@ -38,6 +38,10 @@ export default function SettingsPanel({
   const voiceFilters: { value: VoiceFilter; label: string }[] = [
     { value: "mute", label: "Mute (Только музыка)" },
     { value: "on1", label: 'On 1 (Голос говорит "One" на первую долю)' },
+    {
+      value: "on1times3",
+      label: 'On 1 × 3 (Голос говорит "One" только каждый третий РАЗ)',
+    },
     { value: "on1and5", label: 'On 1 & 5 (Голос говорит "One" и "Five")' },
     { value: "full", label: "Full (Счет 1-8)" },
   ];

@@ -3,12 +3,13 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SettingsPanel from "@/components/SettingsPanel";
-import ThresholdSettings from "@/components/ThresholdSettings";
 import { useAuthStore } from "@/store/authStore";
 
 interface TrackStats {
   total: number;
   processed: number;
+  withBridges: number;
+  withoutBridges: number;
   avgBpm: number;
   minBpm: number;
   maxBpm: number;
@@ -53,14 +54,21 @@ export default function SettingsPage() {
 
         if (data.length > 0) {
           const bpms = data.map((t: any) => t.bpm).filter((b: number) => b > 0);
+          const withBridges = data.filter(
+            (t: any) => (t.gridMap?.bridges?.length ?? 0) > 0,
+          ).length;
           setStats({
             total: data.length,
             processed: data.filter((t: any) => t.isProcessed).length,
-            avgBpm: Math.round(
-              bpms.reduce((a: number, b: number) => a + b, 0) / bpms.length,
-            ),
-            minBpm: Math.min(...bpms),
-            maxBpm: Math.max(...bpms),
+            withBridges,
+            withoutBridges: data.length - withBridges,
+            avgBpm: bpms.length
+              ? Math.round(
+                  bpms.reduce((a: number, b: number) => a + b, 0) / bpms.length,
+                )
+              : 0,
+            minBpm: bpms.length ? Math.min(...bpms) : 0,
+            maxBpm: bpms.length ? Math.max(...bpms) : 0,
           });
         }
       }
@@ -70,7 +78,11 @@ export default function SettingsPage() {
   };
 
   const handleReanalyzeAll = async () => {
-    if (!confirm("Перезапустить анализ для ВСЕХ треков? Это может занять несколько минут.")) {
+    if (
+      !confirm(
+        "Перезапустить анализ для ВСЕХ треков? Это может занять несколько минут.",
+      )
+    ) {
       return;
     }
 
@@ -161,7 +173,7 @@ export default function SettingsPage() {
             </svg>
             Статистика библиотеки
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="text-2xl font-bold text-white">{stats.total}</div>
               <div className="text-sm text-gray-400">Всего треков</div>
@@ -171,6 +183,18 @@ export default function SettingsPage() {
                 {stats.processed}
               </div>
               <div className="text-sm text-gray-400">Обработано</div>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-yellow-400">
+                {stats.withBridges}
+              </div>
+              <div className="text-sm text-gray-400">С мостиками</div>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-cyan-400">
+                {stats.withoutBridges}
+              </div>
+              <div className="text-sm text-gray-400">Без мостиков</div>
             </div>
             <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="text-2xl font-bold text-purple-400">
@@ -312,7 +336,7 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Настройки анализа */}
+      {/* Переанализ всех треков (v2: ряды + мостики) */}
       <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <svg
@@ -325,86 +349,80 @@ export default function SettingsPage() {
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={2}
-              d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
             />
           </svg>
-          Настройки анализа энергии
+          Переанализ всех треков
         </h2>
-
         <p className="text-gray-400 text-sm mb-4">
-          Пороговые значения для определения мостиков (тихих участков) и брейков (громких участков).
-          После изменения настроек запустите переанализ всех треков.
+          Запускает текущий метод анализа (v2: ряды + мостики) для каждого трека
+          в библиотеке.
         </p>
-
-        <ThresholdSettings />
-
-        <div className="mt-6 pt-4 border-t border-gray-700">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handleReanalyzeAll}
-              disabled={isReanalyzing || !stats?.total}
-              className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-            >
-              {isReanalyzing ? (
-                <>
-                  <svg
-                    className="w-5 h-5 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  Анализирую...
-                </>
-              ) : (
-                <>
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleReanalyzeAll}
+            disabled={isReanalyzing || !stats?.total}
+            className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+          >
+            {isReanalyzing ? (
+              <>
+                <svg
+                  className="w-5 h-5 animate-spin"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
                     stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                  Переанализировать все треки
-                </>
-              )}
-            </button>
-
-            {reanalyzeResult && (
-              <span className="text-sm">
-                <span className="text-green-400">{reanalyzeResult.success}</span>
-                <span className="text-gray-500"> / {reanalyzeResult.total}</span>
-                {reanalyzeResult.errors > 0 && (
-                  <span className="text-red-400 ml-2">({reanalyzeResult.errors} ошибок)</span>
-                )}
-              </span>
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+                Анализирую...
+              </>
+            ) : (
+              <>
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                Переанализировать все треки
+              </>
             )}
-          </div>
-
-          {!stats?.total && (
-            <p className="text-yellow-500 text-sm mt-2">
-              В базе данных нет треков для анализа.
-            </p>
+          </button>
+          {reanalyzeResult && (
+            <span className="text-sm">
+              <span className="text-green-400">{reanalyzeResult.success}</span>
+              <span className="text-gray-500"> / {reanalyzeResult.total}</span>
+              {reanalyzeResult.errors > 0 && (
+                <span className="text-red-400 ml-2">
+                  ({reanalyzeResult.errors} ошибок)
+                </span>
+              )}
+            </span>
           )}
         </div>
+        {!stats?.total && (
+          <p className="text-yellow-500 text-sm mt-2">
+            В базе данных нет треков для анализа.
+          </p>
+        )}
       </div>
 
       {/* Превью данных */}

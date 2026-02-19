@@ -376,12 +376,26 @@ def analyze_square(beats, start_idx, row1_offset):
     has_red = any(p['status'] == 'red' for p in parts.values())
     verdict = 'has_bridges' if has_red else 'square_confirmed'
 
+    # Разница в % — на сколько РАЗ больше ПЯТЬ: (R1-R5)/R5*100 (0% = поровну, отрицательный = ПЯТЬ больше)
+    # Считаем для всех (и square_confirmed, и has_bridges), чтобы в отчёте всегда было значение
+    row_dominance_pct = None
+    if parts:
+        total_r1 = sum(p['row1_energy'] for p in parts.values())
+        total_r5 = sum(p['row5_energy'] for p in parts.values())
+        if total_r5 > 0:
+            row_dominance_pct = round((total_r1 - total_r5) / total_r5 * 100, 2)
+
     log(f"[Phase 2] Square analysis: {verdict} (n_used={n_used}, tail dropped={n - n_used})")
+    if row_dominance_pct is not None:
+        log(f"  row_dominance_pct ((R1-R5)/R5*100): {row_dominance_pct}%")
     for name, p in parts.items():
         log(f"  {name}: madmom R1={p['row1_madmom']} R5={p['row5_madmom']} → {p['status_madmom']} | "
             f"energy R1={p['row1_energy']} R5={p['row5_energy']} → {p['status_energy']}")
 
-    return {'parts': parts, 'verdict': verdict}
+    out = {'parts': parts, 'verdict': verdict}
+    if row_dominance_pct is not None:
+        out['row_dominance_pct'] = row_dominance_pct
+    return out
 
 
 # ==========================================

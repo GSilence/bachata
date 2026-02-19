@@ -60,7 +60,46 @@ export async function GET(
     }
 
     const data = JSON.parse(readFileSync(resultPath, "utf-8"));
-    return NextResponse.json({ found: true, ...data });
+
+    // Вычисляем % превосходства из Row Analysis (РАЗ/ПЯТЬ по рядам 1–4 и 5–8): (R1−R5)/R5×100
+    let rowDominancePercent: number | undefined;
+    const rowAnalysis = data.row_analysis as
+      | Record<string, { madmom_sum?: number }>
+      | undefined;
+    if (rowAnalysis && typeof rowAnalysis === "object") {
+      const r1 =
+        (rowAnalysis["row_1"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_2"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_3"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_4"]?.madmom_sum ?? 0);
+      const r5 =
+        (rowAnalysis["row_5"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_6"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_7"]?.madmom_sum ?? 0) +
+        (rowAnalysis["row_8"]?.madmom_sum ?? 0);
+      if (r5 > 0) {
+        rowDominancePercent = Math.round(((r1 - r5) / r5) * 100 * 100) / 100;
+      }
+    }
+
+    if (rowDominancePercent != null && prisma) {
+      const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
+      await prisma.track.update({
+        where: { id: trackId },
+        data: {
+          gridMap: {
+            ...existingGridMap,
+            rowDominancePercent,
+          } as object,
+        },
+      });
+    }
+
+    return NextResponse.json({
+      found: true,
+      ...data,
+      ...(rowDominancePercent != null && { rowDominancePercent }),
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
@@ -162,6 +201,14 @@ export async function POST(
     const v2BridgesTimes = Array.isArray(result.bridges)
       ? (result.bridges as { time_sec?: number }[]).map((b) => b.time_sec ?? 0)
       : [];
+    const squareAnalysis = result.square_analysis as
+      | { verdict?: string; row_dominance_pct?: number }
+      | undefined;
+    const rowDominancePercent =
+      typeof squareAnalysis?.row_dominance_pct === "number"
+        ? squareAnalysis.row_dominance_pct
+        : undefined;
+
     const mergedGridMap = {
       ...existingGridMap,
       bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
@@ -170,6 +217,7 @@ export async function POST(
       v2Layout,
       bridges:
         v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
+      ...(rowDominancePercent != null && { rowDominancePercent }),
     };
     await prisma.track.update({
       where: { id: trackId },
