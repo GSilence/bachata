@@ -11,20 +11,30 @@ import type {
   PlaylistFilter,
 } from "@/types";
 
-// Функция для сохранения/восстановления трека из localStorage
+// Хранилище для persist: zustand передаёт в setItem объект { state, version }, не строку
 const trackStorage = {
-  getItem: (name: string): string | null => {
+  getItem: (
+    name: string,
+  ): { state: Record<string, unknown>; version?: number } | null => {
     if (typeof window === "undefined") return null;
     try {
-      return localStorage.getItem(name);
+      const raw = localStorage.getItem(name);
+      if (raw == null) return null;
+      return JSON.parse(raw) as {
+        state: Record<string, unknown>;
+        version?: number;
+      };
     } catch {
       return null;
     }
   },
-  setItem: (name: string, value: string): void => {
+  setItem: (
+    name: string,
+    value: { state: Record<string, unknown>; version?: number },
+  ): void => {
     if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(name, value);
+      localStorage.setItem(name, JSON.stringify(value));
     } catch {
       // Ignore storage errors
     }
@@ -467,22 +477,37 @@ export const usePlayerStore = create<PlayerState>()(
       }),
       storage: trackStorage,
       merge: (persistedState: any, currentState: any) => {
+        // Формат в localStorage: { state: { ... }, version } или сразу { ... }
         const stored = persistedState?.state ?? persistedState ?? {};
+        const get = <T>(key: string, defaultVal: T): T =>
+          Object.prototype.hasOwnProperty.call(stored, key)
+            ? (stored[key] as T)
+            : defaultVal;
         return {
           ...currentState,
           savedTrackId: stored.savedTrackId ?? null,
-          playlistFilter: stored.playlistFilter ?? currentState.playlistFilter,
-          searchQuery: stored.searchQuery ?? currentState.searchQuery,
-          bridgeFilterWith:
-            stored.bridgeFilterWith ?? currentState.bridgeFilterWith,
-          bridgeFilterWithout:
-            stored.bridgeFilterWithout ?? currentState.bridgeFilterWithout,
-          squareSortDirection:
-            stored.squareSortDirection ?? currentState.squareSortDirection,
-          squareDominanceMin:
-            stored.squareDominanceMin ?? currentState.squareDominanceMin,
-          squareDominanceMax:
-            stored.squareDominanceMax ?? currentState.squareDominanceMax,
+          playlistFilter: get("playlistFilter", currentState.playlistFilter),
+          searchQuery: get("searchQuery", currentState.searchQuery),
+          bridgeFilterWith: get(
+            "bridgeFilterWith",
+            currentState.bridgeFilterWith,
+          ),
+          bridgeFilterWithout: get(
+            "bridgeFilterWithout",
+            currentState.bridgeFilterWithout,
+          ),
+          squareSortDirection: get(
+            "squareSortDirection",
+            currentState.squareSortDirection,
+          ),
+          squareDominanceMin: get(
+            "squareDominanceMin",
+            currentState.squareDominanceMin,
+          ),
+          squareDominanceMax: get(
+            "squareDominanceMax",
+            currentState.squareDominanceMax,
+          ),
           audioEngine: null,
         };
       },
@@ -496,34 +521,9 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
 
   try {
     const stored = trackStorage.getItem("player-storage");
-    if (!stored) return null;
+    if (!stored?.state) return null;
 
-    // Проверяем, что это валидная JSON строка
-    if (typeof stored !== "string") {
-      // Если это не строка, значит что-то не так - очищаем
-      try {
-        trackStorage.removeItem("player-storage");
-      } catch {
-        // Игнорируем ошибки очистки
-      }
-      return null;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(stored);
-    } catch {
-      // Если не удалось распарсить - очищаем поврежденные данные
-      try {
-        trackStorage.removeItem("player-storage");
-      } catch {
-        // Игнорируем ошибки очистки
-      }
-      return null;
-    }
-
-    // Zustand persist сохраняет данные в формате { state: { ... }, version: ... }
-    const savedTrackId = parsed?.state?.savedTrackId;
+    const savedTrackId = stored.state.savedTrackId;
 
     if (savedTrackId && typeof savedTrackId === "number") {
       const track = tracks.find((t) => t.id === savedTrackId);
