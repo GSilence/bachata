@@ -6,7 +6,6 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { writeFileSync, mkdirSync } from "fs";
 import { randomUUID, createHash } from "crypto";
-import { analyzeTrack, type AnalyzerType } from "@/lib/analyzeAudio";
 import { analyzeGenre } from "@/lib/analyzeGenre";
 import { requireAdmin } from "@/lib/auth";
 
@@ -222,21 +221,6 @@ export async function POST(request: NextRequest) {
         console.log(
           `V2: BPM=${finalBpm}, offset=${finalOffset}s, layout segments=${layout.length}, bridges=${bridges.length}`,
         );
-      } else {
-        // Резерв: старый анализатор (basic), если когда-нибудь понадобится
-        const analysisResult = await analyzeTrack(filePath, {
-          analyzer: "basic",
-          reportName: title,
-        });
-        finalBpm = analysisResult.bpm;
-        baseBpm = analysisResult.bpm;
-        finalOffset = analysisResult.offset;
-        baseOffset = analysisResult.offset;
-        if (analysisResult.gridMap) {
-          gridMap = analysisResult.gridMap;
-          if (analysisResult.duration)
-            gridMap.duration = analysisResult.duration;
-        }
       }
 
       // Жанр — параллельно с v2 не запускаем, чтобы не удваивать время; можно запустить после при желании

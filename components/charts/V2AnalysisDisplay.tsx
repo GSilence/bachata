@@ -24,16 +24,16 @@ interface Bridge {
 }
 
 interface SquarePart {
-  row1_madmom?: number;
-  row5_madmom?: number;
-  status_madmom?: "green" | "red";
+  row1_mel?: number;
+  row5_mel?: number;
+  status_mel?: "green" | "red";
   row1_energy?: number;
   row5_energy?: number;
   status_energy?: "green" | "red";
   status: "green" | "red";
   time_start?: number;
   time_end?: number;
-  /** Старый формат (только мадмом) */
+  /** Старый формат */
   row1?: number;
   row5?: number;
 }
@@ -103,8 +103,19 @@ interface V2Result {
   layout: LayoutSegment[];
 }
 
+interface PerBeat {
+  id: number;
+  time: number;
+  energy: number;
+  mel_energy: number;
+  madmom_score: number;
+}
+
+// Добавляем per_beat_data в V2Result
+type V2ResultWithBeats = V2Result & { per_beat_data?: PerBeat[] };
+
 interface Props {
-  data: V2Result;
+  data: V2ResultWithBeats;
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -131,6 +142,26 @@ function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function downloadBeatsCSV(beats: PerBeat[]) {
+  const bom = "\ufeff";
+  const header = "Beat,Time_sec,Energy,Mel_Energy,Madmom\n";
+  const rows = beats
+    .map(
+      (b) =>
+        `${b.id},${b.time.toFixed(3)},${b.energy.toFixed(6)},${(b.mel_energy ?? 0).toFixed(2)},${b.madmom_score.toFixed(4)}`,
+    )
+    .join("\n");
+  const blob = new Blob([bom + header + rows], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "beats_v2.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function V2AnalysisDisplay({ data }: Props) {
@@ -324,10 +355,10 @@ export default function V2AnalysisDisplay({ data }: Props) {
               )}
             </summary>
             <div className="mt-2 space-y-4">
-              {/* Мадмом: 4 строки (1/1, 1/2, 1/3, 1/5) */}
+              {/* Mel Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}
               <div>
                 <div className="text-xs font-medium text-gray-400 mb-1.5">
-                  Мадмом
+                  Mel Energy
                 </div>
                 <div className="space-y-2">
                   {[
@@ -347,15 +378,14 @@ export default function V2AnalysisDisplay({ data }: Props) {
                     if (entries.length === 0) return null;
                     return (
                       <div
-                        key={`madmom-${rowIdx}`}
+                        key={`mel-${rowIdx}`}
                         className="flex flex-wrap gap-1.5 items-stretch"
                       >
                         {entries.map(([name, part]) => {
-                          const hasNew =
-                            part.row1_madmom != null &&
-                            part.row5_madmom != null;
-                          const status = hasNew
-                            ? part.status_madmom
+                          const hasMel =
+                            part.row1_mel != null && part.row5_mel != null;
+                          const status = hasMel
+                            ? part.status_mel
                             : (part.status as "green" | "red");
                           return (
                             <div
@@ -378,10 +408,10 @@ export default function V2AnalysisDisplay({ data }: Props) {
                                   </>
                                 )}
                               <br />
-                              {hasNew ? (
+                              {hasMel ? (
                                 <>
-                                  R1 {(part.row1_madmom ?? 0).toFixed(2)} / R5{" "}
-                                  {(part.row5_madmom ?? 0).toFixed(2)}
+                                  R1 {(part.row1_mel ?? 0).toFixed(0)} / R5{" "}
+                                  {(part.row5_mel ?? 0).toFixed(0)}
                                 </>
                               ) : (
                                 <>
@@ -471,6 +501,17 @@ export default function V2AnalysisDisplay({ data }: Props) {
                   })}
                 </div>
               </div>
+              {data.per_beat_data && data.per_beat_data.length > 0 && (
+                <div className="pt-1">
+                  <button
+                    onClick={() => downloadBeatsCSV(data.per_beat_data!)}
+                    className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
+                    title="Beat, Time_sec, Energy, Mel_Energy, Madmom — UTF-8 с BOM, открывается в Excel"
+                  >
+                    ↓ CSV побитов
+                  </button>
+                </div>
+              )}
             </div>
           </details>
         )}

@@ -46,7 +46,12 @@
       "Bash(dir:*)",
       "Bash(1)",
       "Bash(D:SitesbachatavenvScriptspython.exe:*)",
-      "Bash(cmd /c:*)"
+      "Bash(cmd /c:*)",
+      "Bash(powershell.exe -File:*)",
+      "Bash(git checkout:*)",
+      "Bash(grep:*)",
+      "Bash(D:/Sites/bachata/venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(''scripts/analyze-track-v2.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(D:/Sites/bachata/venv/Scripts/python.exe:*)"
     ]
   }
 }

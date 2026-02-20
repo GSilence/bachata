@@ -87,6 +87,24 @@ def get_band_energy(y, sr, time_sec, window_sec=0.08):
     return float(np.sqrt(np.mean(chunk ** 2)))
 
 
+def precompute_mel_spectrogram(y, sr, hop_length=512):
+    """Предварительно вычисляет mel spectrogram для всего трека."""
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, hop_length=hop_length)
+    return mel_spec, hop_length
+
+
+def get_mel_energy(mel_spec, sr, hop_length, time_sec, window_sec=0.08):
+    """Mel-weighted energy: среднее суммарной мощности по мел-банкам в окне вокруг бита."""
+    fps = sr / hop_length
+    center_frame = int(time_sec * fps)
+    half_window = max(1, int(window_sec * fps / 2))
+    start = max(0, center_frame - half_window)
+    end = min(mel_spec.shape[1], center_frame + half_window + 1)
+    if start >= end:
+        return 0.0
+    return float(np.mean(np.sum(mel_spec[:, start:end], axis=0)))
+
+
 def log(msg):
     print(msg, file=sys.stderr)
 
@@ -164,17 +182,19 @@ def classify_peaks(activations, all_beats, rnn_fps):
 # ФАЗА 1: Вычисление Row 1 и Row 5
 # ==========================================
 
-def compute_beat_data(all_beats, activations, rnn_fps, y, sr):
-    """Вычисляет energy и madmom_score для каждого бита."""
+def compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec=None, mel_hop=512):
+    """Вычисляет energy, mel_energy и madmom_score для каждого бита."""
     beats = []
     for i, beat_time in enumerate(all_beats):
         energy = get_band_energy(y, sr, beat_time)
+        mel_e = get_mel_energy(mel_spec, sr, mel_hop, beat_time) if mel_spec is not None else 0.0
         frame = min(int(beat_time * rnn_fps), len(activations) - 1)
         madmom_score = float(activations[frame, 1]) if activations.ndim > 1 else float(activations[frame])
         beats.append({
             'id': i,
             'time': beat_time,
             'energy': energy,
+            'mel_energy': mel_e,
             'madmom_score': madmom_score,
         })
     return beats
@@ -250,56 +270,96 @@ def find_song_start(beats, config, peak1_pos, peak2_pos):
 def determine_rows(beats, start_idx, config):
     """
     Заход 3 Фазы 1: Итоговый истинный РАЗ.
-    Суммы первых 8 тактов ряда 1 и ряда 5 (от найденного РАЗ).
-    Если ряд 5 > ряд 1 — обрезаем до первых 4 тактов в каждом ряду; если после обрезки
-    ряд 5 всё ещё доминирует → истинный РАЗ = ряд 5 (своп). Иначе истинный РАЗ = ряд 1.
+    Гибридный подход:
+      1. Сравниваем суммы энергии (RMS 4-битовых тактов) для первых 8 восьмёрок.
+      2. Если разница >= ENERGY_DECISIVE_THRESHOLD → доверяем энергии.
+      3. Если разница < порога (почти квадрат) → переходим к madmom_score пиков.
+    Во всех случаях: если ряд 5 больше ряда 1 — применяем обрезку до первых 4
+    значений и перепроверяем. Своп только если доминирование сохранилось.
     Возвращает: (row1_offset, row_swapped)
+
+    Логика выбора метода:
+    - Энергия: надёжна когда разница рядов чёткая (>= 5%). Прямо отражает громкость.
+    - Madmom: надёжен когда у треков почти равная энергия, но madmom имеет
+      более чёткий нейросетевой сигнал. Fallback для почти-квадратных треков.
     """
+    ENERGY_DECISIVE_THRESHOLD = 0.05  # 5%: если разница >= — доверяем энергии
+
     n_quarters = config['initial_quarters_count']  # 8
 
-    # Первые 8 тактов ряда 1 (start_idx, start_idx+8, ...) и ряда 5 (start_idx+4, start_idx+12, ...)
-    row1_energy_sums = []
-    row5_energy_sums = []
+    # Собираем энергию тактов и madmom_score пиков для каждой восьмёрки
+    row1_energy = []
+    row5_energy = []
+    row1_madmom = []
+    row5_madmom = []
 
     for q in range(n_quarters):
         r1_start = start_idx + q * 8
         r5_start = start_idx + q * 8 + 4
 
         if r1_start + 3 < len(beats):
-            row1_energy_sums.append(sum(beats[j]['energy'] for j in range(r1_start, r1_start + 4)))
+            row1_energy.append(sum(beats[j]['energy'] for j in range(r1_start, r1_start + 4)))
+            row1_madmom.append(beats[r1_start]['madmom_score'])
+        elif r1_start < len(beats):
+            row1_energy.append(beats[r1_start]['energy'])
+            row1_madmom.append(beats[r1_start]['madmom_score'])
+
         if r5_start + 3 < len(beats):
-            row5_energy_sums.append(sum(beats[j]['energy'] for j in range(r5_start, r5_start + 4)))
+            row5_energy.append(sum(beats[j]['energy'] for j in range(r5_start, r5_start + 4)))
+            row5_madmom.append(beats[r5_start]['madmom_score'])
+        elif r5_start < len(beats):
+            row5_energy.append(beats[r5_start]['energy'])
+            row5_madmom.append(beats[r5_start]['madmom_score'])
 
-    if not row1_energy_sums or not row5_energy_sums:
+    if not row1_energy or not row5_energy:
         return 0, False
 
-    sum_r1 = sum(row1_energy_sums)
-    sum_r5 = sum(row5_energy_sums)
+    sum_r1_e = sum(row1_energy)
+    sum_r5_e = sum(row5_energy)
+    total_e = max(sum_r1_e, sum_r5_e, 0.001)
+    diff_e = abs(sum_r1_e - sum_r5_e) / total_e
 
-    log(f"[Phase 1] Pass 3 — Row 1 sum (first 8): {sum_r1:.4f}, Row 5 sum (first 8): {sum_r5:.4f}")
+    log(f"[Phase 1] Pass 3 (energy) — Row 1: {sum_r1_e:.4f}, Row 5: {sum_r5_e:.4f}, diff={diff_e*100:.1f}%")
 
-    if sum_r1 > sum_r5:
-        log("[Phase 1] Row 1 dominates — true РАЗ = row 1")
-        return 0, False
+    def check_swap_with_trim(vals_r1, vals_r5, method_name):
+        """Проверяет доминирование с обрезкой до первых 4. Возвращает True если нужен своп."""
+        sum1 = sum(vals_r1)
+        sum5 = sum(vals_r5)
+        log(f"[Phase 1] {method_name}: Row 1={sum1:.4f}, Row 5={sum5:.4f}")
+        if sum1 >= sum5:
+            log(f"[Phase 1] {method_name}: Row 1 dominates — true РАЗ = row 1")
+            return False
+        # R5 > R1 → обрезаем до первых 4
+        trim = 4
+        r1t = vals_r1[:trim]
+        r5t = vals_r5[:trim]
+        if not r1t or not r5t:
+            log(f"[Phase 1] {method_name}: not enough data for trim — no swap")
+            return False
+        sum1t = sum(r1t)
+        sum5t = sum(r5t)
+        log(f"[Phase 1] {method_name} after trim (first 4): Row 1={sum1t:.4f}, Row 5={sum5t:.4f}")
+        if sum1t >= sum5t:
+            log(f"[Phase 1] {method_name} after trim: Row 1 dominates — true РАЗ = row 1")
+            return False
+        log(f"[Phase 1] {method_name} after trim: Row 5 still dominates — swap")
+        return True
 
-    # Ряд 5 больше → обрезаем: оставляем только первые 4 такта в каждом ряду (убираем с конца)
-    trim_count = 4
-    r1_first4 = row1_energy_sums[:trim_count]
-    r5_first4 = row5_energy_sums[:trim_count]
-    if not r1_first4 or not r5_first4:
-        log("[Phase 1] Not enough data for trim, keeping order")
-        return 0, False
+    if diff_e >= ENERGY_DECISIVE_THRESHOLD:
+        # Энергия решительна — доверяем ей
+        log(f"[Phase 1] Energy diff {diff_e*100:.1f}% >= {ENERGY_DECISIVE_THRESHOLD*100:.0f}% — using energy")
+        swap = check_swap_with_trim(row1_energy, row5_energy, "energy")
+    else:
+        # Почти квадрат — переходим к madmom
+        log(f"[Phase 1] Energy diff {diff_e*100:.1f}% < {ENERGY_DECISIVE_THRESHOLD*100:.0f}% — fallback to madmom peaks")
+        if not row1_madmom or not row5_madmom:
+            return 0, False
+        swap = check_swap_with_trim(row1_madmom, row5_madmom, "madmom")
 
-    sum_r1_trim = sum(r1_first4)
-    sum_r5_trim = sum(r5_first4)
-    log(f"[Phase 1] After trim (first 4 only): Row 1={sum_r1_trim:.4f}, Row 5={sum_r5_trim:.4f}")
-
-    if sum_r1_trim > sum_r5_trim:
-        log("[Phase 1] After trim Row 1 dominates — true РАЗ = row 1")
-        return 0, False
-
-    log("[Phase 1] Row 5 still dominates — true РАЗ = row 5, swap (song starts from row 5)")
-    return 4, True
+    if swap:
+        log("[Phase 1] Row 5 dominates — true РАЗ = row 5, swap (song starts from row 5)")
+        return 4, True
+    return 0, False
 
 
 # ==========================================
@@ -309,8 +369,8 @@ def determine_rows(beats, start_idx, config):
 def analyze_square(beats, start_idx, row1_offset):
     """
     Делим песню на РАВНЫЕ части по битам (в каждой части поровну РАЗ и ПЯТЬ).
-    Хвост при делении отбрасываем с конца. Сравниваем по мадмому и по энергии.
-    Зелёный: row1 > row5, красный: иначе. Вердикт has_bridges если есть красный (по мадмому или энергии).
+    Хвост при делении отбрасываем с конца. Сравниваем по energy и mel_energy.
+    Зелёный: row1 > row5, красный: иначе. Вердикт has_bridges если есть красный (по energy).
     """
     active_beats = beats[start_idx:]
     n = len(active_beats)
@@ -325,25 +385,25 @@ def analyze_square(beats, start_idx, row1_offset):
     used = active_beats[:n_used]
 
     def compare_part(beat_slice):
-        """Сравнивает Row 1 vs Row 5 по мадмому и по энергии. Возвращает суммы, статусы и временной промежуток."""
-        r1_m, r5_m = 0.0, 0.0
+        """Сравнивает Row 1 vs Row 5 по energy и mel_energy. Возвращает суммы, статусы и временной промежуток."""
         r1_e, r5_e = 0.0, 0.0
+        r1_mel, r5_mel = 0.0, 0.0
         for idx, b in enumerate(beat_slice):
             pos_in_8 = (idx + row1_offset) % 8
             if pos_in_8 < 4:
-                r1_m += b['madmom_score']
                 r1_e += b['energy']
+                r1_mel += b.get('mel_energy', 0.0)
             else:
-                r5_m += b['madmom_score']
                 r5_e += b['energy']
-        status_m = 'green' if r1_m > r5_m else 'red'
+                r5_mel += b.get('mel_energy', 0.0)
         status_e = 'green' if r1_e > r5_e else 'red'
+        status_mel = 'green' if r1_mel > r5_mel else 'red'
         time_start = round(beat_slice[0]['time'], 2)
         time_end = round(beat_slice[-1]['time'], 2)
         return {
-            'row1_madmom': round(r1_m, 4), 'row5_madmom': round(r5_m, 4), 'status_madmom': status_m,
             'row1_energy': round(r1_e, 4), 'row5_energy': round(r5_e, 4), 'status_energy': status_e,
-            'status': status_e,  # verdict based only on energy; madmom is informational
+            'row1_mel': round(r1_mel, 4), 'row5_mel': round(r5_mel, 4), 'status_mel': status_mel,
+            'status': status_e,  # вердикт по energy; mel — наблюдательный
             'time_start': time_start,
             'time_end': time_end,
         }
@@ -389,8 +449,8 @@ def analyze_square(beats, start_idx, row1_offset):
     if row_dominance_pct is not None:
         log(f"  row_dominance_pct ((R1-R5)/R5*100): {row_dominance_pct}%")
     for name, p in parts.items():
-        log(f"  {name}: madmom R1={p['row1_madmom']} R5={p['row5_madmom']} → {p['status_madmom']} | "
-            f"energy R1={p['row1_energy']} R5={p['row5_energy']} → {p['status_energy']}")
+        log(f"  {name}: energy R1={p['row1_energy']} R5={p['row5_energy']} → {p['status_energy']} | "
+            f"mel R1={p['row1_mel']:.2f} R5={p['row5_mel']:.2f} → {p['status_mel']}")
 
     out = {'parts': parts, 'verdict': verdict}
     if row_dominance_pct is not None:
@@ -716,16 +776,18 @@ def analyze_popsa(beats, start_idx):
 # ГЕНЕРАЦИЯ LAYOUT
 # ==========================================
 
-def generate_layout(quarters, bridges, start_idx, beats):
+def generate_layout(quarters, bridges, start_idx, beats, row1_offset=0):
     """
     Генерирует финальную раскладку рядов с учётом мостиков.
+    row1_offset=4 означает что первые 4 бита от start_idx — это ряд 5-8 (своп),
+    поэтому первый сегмент начинается со счёта 5, а не 1.
     """
     if not quarters:
         return []
 
     bridge_beats = set(b['beat'] for b in bridges)
     layout = []
-    current_row_start = 1
+    current_row_start = 5 if row1_offset == 4 else 1
     segment_start_beat = quarters[0]['beat_start_global']
 
     for i, q in enumerate(quarters):
@@ -813,7 +875,9 @@ def analyze_v2(audio_path):
     log(f"BPM: {bpm}")
 
     # --- Вычисление побитовых данных ---
-    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr)
+    log("Precomputing mel spectrogram...")
+    mel_spec, mel_hop = precompute_mel_spectrogram(y, sr)
+    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec, mel_hop)
 
     # === ФАЗА 0: Классификация ===
     peaks, peak1_pos, peak2_pos = classify_peaks(activations, all_beats, rnn_fps)
@@ -831,7 +895,26 @@ def analyze_v2(audio_path):
         log(f"  ... and {len(strong_rows_tact_list) - 20} more")
 
     row1_offset, row_swapped = determine_rows(beats, start_idx, config)
-    # При свопе row1_offset=4: истинный РАЗ = ряд 5, метки 1-4/5-8 сдвигаются в compute_quarters.
+
+    # === Нормализация стартовой позиции ===
+    # Если row_swapped=True, истинный РАЗ находится на 4 бита ПОЗЖЕ текущего start_idx.
+    # Сдвигаем start_idx к истинному РАЗ, затем откатываем назад кратно 8 битам,
+    # чтобы танцор не стоял долго в ожидании первого РАЗ.
+    if row_swapped and start_idx + 4 < len(beats):
+        start_idx += 4
+        row1_offset = 0
+        row_swapped = False
+        log(f"[Phase 1] Normalize: start shifted +4 to true РАЗ → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
+
+    # Откатываем к началу трека кратно 8 битам (сетка строится с самого начала)
+    shift_back = (start_idx // 8) * 8
+    if shift_back > 0:
+        start_idx -= shift_back
+        log(f"[Phase 1] Shift back {shift_back} beats → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
+
+    # Переопределяем ряды с новой стартовой позиции
+    row1_offset, row_swapped = determine_rows(beats, start_idx, config)
+    log(f"[Phase 1] Final: start_idx={start_idx} ({beats[start_idx]['time']:.2f}s), row_swapped={row_swapped}")
 
     # === Попса ===
     if peaks == 4:
@@ -855,6 +938,7 @@ def analyze_v2(audio_path):
             'beat_base': 1,
         'per_beat_data': [{'id': b['id'] + 1, 'time': round(b['time'], 3),
                                'energy': round(b['energy'], 4),
+                               'mel_energy': round(b.get('mel_energy', 0.0), 4),
                                'madmom_score': round(b['madmom_score'], 4)}
                               for b in beats],
         }
@@ -879,7 +963,7 @@ def analyze_v2(audio_path):
                                for ind in indicators]
 
     # === Layout ===
-    layout = generate_layout(quarters, bridges, start_idx, beats)
+    layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
 
     # === Суммы первых 2 квадратов для отчёта ===
     initial_r1, initial_r5 = 0.0, 0.0
@@ -937,6 +1021,7 @@ def analyze_v2(audio_path):
         'beat_base': 1,
         'per_beat_data': [{'id': beat1(b['id']), 'time': round(b['time'], 3),
                            'energy': round(b['energy'], 4),
+                           'mel_energy': round(b.get('mel_energy', 0.0), 4),
                            'madmom_score': round(b['madmom_score'], 4)}
                           for b in beats],
     }

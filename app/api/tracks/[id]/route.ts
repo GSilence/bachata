@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { rm } from 'fs/promises'
+import { rm, readdir } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { requireAdmin } from '@/lib/auth'
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdmin(request)
@@ -15,8 +15,9 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const trackId = parseInt(params.id)
-    
+    const { id } = await params
+    const trackId = parseInt(id)
+
     if (isNaN(trackId)) {
       return NextResponse.json(
         { error: 'Invalid track ID' },
@@ -24,7 +25,6 @@ export async function DELETE(
       )
     }
 
-    // Проверяем наличие Prisma Client
     if (!prisma) {
       return NextResponse.json(
         { error: 'Database not configured' },
@@ -44,23 +44,9 @@ export async function DELETE(
       )
     }
 
-    // Удаляем физические файлы
     const publicDir = join(process.cwd(), 'public')
-    
-    // Удаляем основной файл (filename)
-    if (track.filename) {
-      const mainFilePath = join(publicDir, track.filename)
-      if (existsSync(mainFilePath)) {
-        try {
-          await rm(mainFilePath)
-          console.log(`Deleted main file: ${track.filename}`)
-        } catch (error: any) {
-          console.warn(`Error deleting main file: ${error.message}`)
-        }
-      }
-    }
 
-    // Удаляем оригинальный файл (pathOriginal)
+    // Удаляем оригинальный аудиофайл
     if (track.pathOriginal) {
       const originalPath = join(publicDir, track.pathOriginal)
       if (existsSync(originalPath)) {
@@ -73,11 +59,39 @@ export async function DELETE(
       }
     }
 
+    // Удаляем report-файлы (все с префиксом {basename}_*)
+    if (track.pathOriginal) {
+      const basename = track.pathOriginal
+        .replace(/^.*[\\/]/, '')
+        .replace(/\.[^.]+$/, '')
+      const reportsDir = join(publicDir, 'uploads', 'reports')
+      if (existsSync(reportsDir)) {
+        try {
+          const files = await readdir(reportsDir)
+          const toDelete = files.filter((f) => f.startsWith(basename + '_'))
+          for (const f of toDelete) {
+            try {
+              await rm(join(reportsDir, f))
+              console.log(`Deleted report file: ${f}`)
+            } catch (e: any) {
+              console.warn(`Error deleting report file ${f}: ${e.message}`)
+            }
+          }
+        } catch (e: any) {
+          console.warn(`Error reading reports directory: ${e.message}`)
+        }
+      }
+    }
+
     // Удаляем stems (если есть)
     if (track.isProcessed) {
       const stemsDir = join(publicDir, 'uploads', 'stems')
-      const trackStemsDir = join(stemsDir, track.pathOriginal?.replace(/^uploads\/raw\//, '').replace(/\.[^/.]+$/, '') || `track-${trackId}`)
-      
+      const trackStemsDir = join(
+        stemsDir,
+        track.pathOriginal?.replace(/^uploads\/raw\//, '').replace(/\.[^/.]+$/, '') ||
+          `track-${trackId}`
+      )
+
       if (existsSync(trackStemsDir)) {
         try {
           await rm(trackStemsDir, { recursive: true, force: true })
@@ -87,12 +101,11 @@ export async function DELETE(
         }
       }
 
-      // Также удаляем отдельные файлы stems если они указаны
       const stemFiles = [
         track.pathVocals,
         track.pathDrums,
         track.pathBass,
-        track.pathOther
+        track.pathOther,
       ].filter(Boolean) as string[]
 
       for (const stemPath of stemFiles) {

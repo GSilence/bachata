@@ -212,7 +212,7 @@ export async function POST(
     const mergedGridMap = {
       ...existingGridMap,
       bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
-      offset: track.offset ?? existingGridMap.offset,
+      offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
       duration: result.duration ?? existingGridMap.duration,
       v2Layout,
       bridges:
@@ -221,7 +221,11 @@ export async function POST(
     };
     await prisma.track.update({
       where: { id: trackId },
-      data: { gridMap: mergedGridMap as object },
+      data: {
+        gridMap: mergedGridMap as object,
+        // Синхронизируем track.offset с новым song_start_time из v2-анализа
+        ...(result.song_start_time != null && { offset: result.song_start_time }),
+      },
     });
     console.log(
       "[V2 Analysis] Track gridMap updated with v2Layout (" +
