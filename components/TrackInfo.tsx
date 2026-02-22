@@ -6,12 +6,13 @@ import { useAuthStore } from "@/store/authStore";
 import { audioEngine } from "@/lib/audioEngine";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import React from "react";
 import type { GridMap } from "@/types";
+import { LiveBeatProvider, LiveBeatBlock } from "./LiveBeatContext";
 
-const V2AnalysisDisplay = dynamic(() => import("./charts/V2AnalysisDisplay"), {
-  ssr: false,
-});
-
+const V2AnalysisDisplay = React.memo(
+  dynamic(() => import("./charts/V2AnalysisDisplay"), { ssr: false }),
+);
 
 interface TrackInfoProps {}
 
@@ -39,7 +40,6 @@ export default function TrackInfo({}: TrackInfoProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isShifting, setIsShifting] = useState(false);
 
-
   // V2 analysis state
   const [v2Result, setV2Result] = useState<any>(null);
   const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
@@ -47,14 +47,6 @@ export default function TrackInfo({}: TrackInfoProps) {
   // Bridge state
   const [bridges, setBridges] = useState<number[]>([]);
   const [isSavingBridge, setIsSavingBridge] = useState(false);
-  const [liveBeatInfo, setLiveBeatInfo] = useState<{
-    time: number;
-    number: number;
-    isBridge: boolean;
-  } | null>(null);
-  const liveBeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-
   // Обновляем временные значения при смене трека
   useEffect(() => {
     if (currentTrack) {
@@ -67,37 +59,9 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   }, [currentTrack]);
 
-  // Обновляем live beat info во время воспроизведения
-  useEffect(() => {
-    if (isPlaying && currentTrack) {
-      liveBeatRef.current = setInterval(() => {
-        const info = audioEngine.getCurrentBeatInfo();
-        setLiveBeatInfo(info);
-      }, 50);
-    } else {
-      if (liveBeatRef.current) {
-        clearInterval(liveBeatRef.current);
-        liveBeatRef.current = null;
-      }
-      // При паузе — оставляем последний бит как есть (liveBeatInfo не сбрасываем)
-      // Бит 1 показываем только при первой загрузке трека (когда liveBeatInfo ещё null)
-    }
-    return () => {
-      if (liveBeatRef.current) {
-        clearInterval(liveBeatRef.current);
-        liveBeatRef.current = null;
-      }
-    };
-  }, [isPlaying, currentTrack]);
-
-  // При смене трека — показываем бит 1 + загружаем сохранённые результаты анализов
+  // При смене трека — загружаем сохранённые результаты анализов (начальный бит выставляет LiveBeatProvider)
   useEffect(() => {
     if (currentTrack) {
-      setLiveBeatInfo({
-        time: currentTrack.offset,
-        number: 1,
-        isBridge: false,
-      });
       // Load saved v2 analysis (GET также считает rowDominancePercent из Row Analysis и пишет в БД)
       fetch(`/api/tracks/${currentTrack.id}/analyze-v2`)
         .then((r) => r.json())
@@ -130,7 +94,6 @@ export default function TrackInfo({}: TrackInfoProps) {
         })
         .catch(() => {});
     } else {
-      setLiveBeatInfo(null);
       setV2Result(null);
     }
   }, [currentTrack?.id]);
@@ -274,7 +237,6 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
-
   // === Bridge handlers ===
 
   const saveBridges = async (newBridges: number[]) => {
@@ -305,10 +267,11 @@ export default function TrackInfo({}: TrackInfoProps) {
   };
 
   const handleAddBridgeHere = () => {
-    if (!currentTrack || isSavingBridge || !liveBeatInfo) return;
-
-    // Используем время бита из линейки — это именно то, что видит админ
-    const bridgeTime = liveBeatInfo.time;
+    if (!currentTrack || isSavingBridge) return;
+    const info = audioEngine.getCurrentBeatInfo();
+    if (!info) return;
+    // Используем время бита из движка — это именно то, что видит админ в линейке
+    const bridgeTime = info.time;
     const beatInterval = 60 / currentTrack.bpm;
 
     // Проверка дубликатов (в пределах половины бита)
@@ -408,7 +371,7 @@ export default function TrackInfo({}: TrackInfoProps) {
             <span className="text-sm text-white">
               {currentTrack.analyzerType === "v2"
                 ? "v2 (ряды + мостики)"
-                  : currentTrack.analyzerType || "не указан"}
+                : currentTrack.analyzerType || "не указан"}
             </span>
             <div className="flex items-center gap-2 ml-2">
               <button
@@ -472,7 +435,8 @@ export default function TrackInfo({}: TrackInfoProps) {
                       };
                       const updatedTrack = {
                         ...currentTrack,
-                        offset: (data.song_start_time ?? currentTrack.offset) as number,
+                        offset: (data.song_start_time ??
+                          currentTrack.offset) as number,
                         gridMap: mergedGridMap,
                       };
                       updateCurrentTrack(updatedTrack);
@@ -529,22 +493,13 @@ export default function TrackInfo({}: TrackInfoProps) {
                       {v2Result.bridges.length > 1 ? "а" : ""})
                     </span>
                   )}
-                  {typeof v2Result.square_analysis?.row_dominance_pct ===
-                    "number" && (
-                    <span
-                      className={
-                        (v2Result.square_analysis.row_dominance_pct ?? 0) >= 0
-                          ? "text-green-400 ml-1"
-                          : "text-amber-400 ml-1"
-                      }
-                    >
-                      (разница РАЗ−ПЯТЬ:{" "}
-                      {v2Result.square_analysis.row_dominance_pct.toFixed(1)}%)
-                    </span>
-                  )}
                 </summary>
                 <div className="mt-2">
-                  <V2AnalysisDisplay data={v2Result} />
+                  <V2AnalysisDisplay
+                    data={v2Result}
+                    trackId={currentTrack?.id}
+                    trackTitle={currentTrack?.title}
+                  />
                 </div>
               </details>
             </div>
@@ -670,99 +625,16 @@ export default function TrackInfo({}: TrackInfoProps) {
                   )}
               </div>
 
-              {/* Линейка битов (live) */}
-              <div className="mb-2 px-2 py-2 bg-gray-700/50 rounded">
-                <div className="flex items-center gap-1 mb-1">
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((beat) => {
-                    const isActive = liveBeatInfo?.number === beat;
-                    const isBridgeBeat = isActive && liveBeatInfo?.isBridge;
-                    return (
-                      <div
-                        key={beat}
-                        className={`flex-1 text-center text-sm font-mono font-bold py-1 rounded ${
-                          isActive
-                            ? isBridgeBeat
-                              ? "bg-yellow-500/30 text-yellow-400"
-                              : "bg-purple-500/30 text-purple-400"
-                            : "text-gray-500"
-                        }`}
-                      >
-                        {beat}
-                      </div>
-                    );
-                  })}
-                </div>
-                {liveBeatInfo && (
-                  <div className="flex items-center justify-between text-xs text-gray-400 font-mono">
-                    <div className="flex items-center gap-2">
-                      <span>{formatTime(liveBeatInfo.time)}</span>
-                      <span className="text-gray-500">
-                        ({liveBeatInfo.time.toFixed(3)}s)
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          if (!currentTrack || !audioEngine) return;
-                          const grid = audioEngine.getBeatGrid();
-                          if (!grid || grid.length === 0) return;
-                          // Находим индекс текущего бита в сетке
-                          let currentIdx = -1;
-                          for (let i = grid.length - 1; i >= 0; i--) {
-                            if (grid[i].time <= liveBeatInfo.time + 0.01) {
-                              currentIdx = i;
-                              break;
-                            }
-                          }
-                          const targetIdx = Math.max(0, currentIdx - 1);
-                          const targetBeat = grid[targetIdx];
-                          audioEngine.seek(targetBeat.time);
-                          setLiveBeatInfo({
-                            time: targetBeat.time,
-                            number: targetBeat.number,
-                            isBridge: !!targetBeat.isBridge,
-                          });
-                        }}
-                        disabled={!currentTrack || isReanalyzing}
-                        className="px-2 py-0.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="На 1 бит назад"
-                      >
-                        ◀
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!currentTrack || !audioEngine) return;
-                          const grid = audioEngine.getBeatGrid();
-                          if (!grid || grid.length === 0) return;
-                          let currentIdx = -1;
-                          for (let i = grid.length - 1; i >= 0; i--) {
-                            if (grid[i].time <= liveBeatInfo.time + 0.01) {
-                              currentIdx = i;
-                              break;
-                            }
-                          }
-                          const targetIdx = Math.min(
-                            grid.length - 1,
-                            currentIdx + 1,
-                          );
-                          const targetBeat = grid[targetIdx];
-                          audioEngine.seek(targetBeat.time);
-                          setLiveBeatInfo({
-                            time: targetBeat.time,
-                            number: targetBeat.number,
-                            isBridge: !!targetBeat.isBridge,
-                          });
-                        }}
-                        disabled={!currentTrack || isReanalyzing}
-                        className="px-2 py-0.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="На 1 бит вперёд"
-                      >
-                        ▶
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Линейка битов (live) — тик только здесь, без перерисовки анализа */}
+              <LiveBeatProvider
+                isPlaying={isPlaying}
+                currentTrack={currentTrack}
+              >
+                <LiveBeatBlock
+                  currentTrack={currentTrack}
+                  isReanalyzing={isReanalyzing}
+                />
+              </LiveBeatProvider>
 
               {/* Список бриджей */}
               {bridges.length > 0 && (

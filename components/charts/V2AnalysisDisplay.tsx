@@ -43,14 +43,6 @@ interface SquarePart {
   row5?: number;
 }
 
-interface LayoutSegment {
-  from_beat: number;
-  to_beat: number;
-  time_start: number;
-  time_end: number;
-  row1_start: number;
-}
-
 interface V2Result {
   success: boolean;
   track_type: "bachata" | "popsa";
@@ -117,7 +109,14 @@ interface V2Result {
     position: string;
     diff_pct: number;
   }[];
-  layout: LayoutSegment[];
+  /** Сегменты раскладки (не выводим в UI, но приходят с API) */
+  layout?: {
+    from_beat: number;
+    to_beat: number;
+    time_start: number;
+    time_end: number;
+    row1_start: number;
+  }[];
 }
 
 interface PerBeat {
@@ -215,10 +214,6 @@ export default function V2AnalysisDisplay({
         <span className="px-2 py-1 rounded text-xs bg-gray-700">
           BPM: {data.bpm}
         </span>
-        <span className="px-2 py-1 rounded text-xs bg-gray-700">
-          Начало: бит {data.song_start_beat} ({formatTime(data.song_start_time)}
-          )
-        </span>
         {data.row_swapped && (
           <span className="px-2 py-1 rounded text-xs bg-orange-700">
             Ряды свопнуты
@@ -272,31 +267,48 @@ export default function V2AnalysisDisplay({
         </div>
       ) : null}
 
-      {/* Row sums */}
-      {data.track_type === "bachata" && (
-        <div className="text-xs text-gray-400">
-          Row 1: {data.row1_sum?.toFixed(4)} | Row 5:{" "}
-          {data.row5_sum?.toFixed(4)}
-        </div>
-      )}
-
-      {/* Row Analysis (как в корреляции: 8 рядов, Beats / Sum / Avg / Max) */}
+      {/* Raw Analysis (8 рядов, Beats / Sum / Avg / Max + Perc sum/avg) */}
       {data.track_type === "bachata" &&
         data.row_analysis &&
         Object.keys(data.row_analysis).length > 0 && (
           <details className="group" open>
             <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
-              Row Analysis{" "}
-              {data.row_analysis_verdict && (
-                <span className="text-green-400 ml-1">
-                  (пики: Row{" "}
-                  {data.row_analysis_verdict.winning_rows?.join(", ") ??
-                    data.row_analysis_verdict.winning_row}
-                  )
-                </span>
-              )}
+              Raw Analysis
             </summary>
-            <div className="mt-2 overflow-x-auto">
+            <div className="mt-2 overflow-x-auto space-y-2">
+              {data.track_type === "bachata" &&
+                data.row_analysis_verdict &&
+                data.row_analysis && (
+                  <div
+                    className="text-xs text-gray-400"
+                    title="Лидирующие ряды и их madmom sum по всем битам"
+                  >
+                    {(
+                      data.row_analysis_verdict.winning_rows ?? [
+                        data.row_analysis_verdict.winning_row,
+                      ]
+                    ).map((r, i) => {
+                      const rowKey = `row_${r}`;
+                      const rowData = data.row_analysis![rowKey];
+                      const sum = rowData?.madmom_sum ?? 0;
+                      const sumStr =
+                        typeof sum === "number" ? sum.toFixed(3) : String(sum);
+                      return (
+                        <span key={r}>
+                          {i > 0 && " | "}
+                          <span className="text-green-400">Row {r}</span>:{" "}
+                          {sumStr}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              {data.row_analysis_verdict && (
+                <p className="text-xs text-green-400">
+                  Offset: {data.row_analysis_verdict.start_time}s (beat #
+                  {data.row_analysis_verdict.start_beat_id})
+                </p>
+              )}
               <table className="text-xs w-full border-collapse">
                 <thead>
                   <tr className="text-gray-500 border-b border-gray-700">
@@ -305,6 +317,8 @@ export default function V2AnalysisDisplay({
                     <th className="text-right py-1 px-2">Sum</th>
                     <th className="text-right py-1 px-2">Avg</th>
                     <th className="text-right py-1 px-2">Max</th>
+                    <th className="text-right py-1 px-2">Perc sum</th>
+                    <th className="text-right py-1 px-2">Perc avg</th>
                     <th className="text-left py-1 px-2"></th>
                   </tr>
                 </thead>
@@ -322,6 +336,16 @@ export default function V2AnalysisDisplay({
                       const isRowOne =
                         data.row_analysis_verdict?.row_one != null &&
                         rowNum === data.row_analysis_verdict.row_one;
+                      const beatsInRow =
+                        data.per_beat_data?.filter(
+                          (b) => (b.id - 1) % 8 === rowNum - 1,
+                        ) ?? [];
+                      const percSum = beatsInRow.reduce(
+                        (s, b) => s + (b.perceptual_energy ?? 0),
+                        0,
+                      );
+                      const percAvg =
+                        beatsInRow.length > 0 ? percSum / beatsInRow.length : 0;
                       return (
                         <tr
                           key={key}
@@ -344,6 +368,12 @@ export default function V2AnalysisDisplay({
                           <td className="py-1 px-2 text-right font-mono">
                             {row.madmom_max?.toFixed(3)}
                           </td>
+                          <td className="py-1 px-2 text-right font-mono">
+                            {percSum.toFixed(2)}
+                          </td>
+                          <td className="py-1 px-2 text-right font-mono">
+                            {percAvg.toFixed(2)}
+                          </td>
                           <td className="py-1 px-2">{isRowOne ? "<<" : ""}</td>
                         </tr>
                       );
@@ -352,15 +382,151 @@ export default function V2AnalysisDisplay({
               </table>
               {data.row_analysis_verdict && (
                 <div className="text-xs text-gray-500 mt-2 space-y-1">
-                  <p>
-                    Offset: {data.row_analysis_verdict.start_time}s (beat #
-                    {data.row_analysis_verdict.start_beat_id})
-                  </p>
+                  {(() => {
+                    // Та же логика, что и ниже: пропуск 4 тактов, следующие 8 тактов (tact_sum из таблицы)
+                    const SKIP_TACTS_PER_ROW = 4;
+                    const TAKE_TACTS_PER_ROW = 8;
+                    const winningRows =
+                      data.row_analysis_verdict?.winning_rows ??
+                      (data.row_analysis_verdict?.winning_row != null
+                        ? [data.row_analysis_verdict.winning_row]
+                        : []);
+                    if (winningRows.length < 2) return null;
+                    const [r1, r2] = winningRows;
+                    const pos1 = r1 - 1;
+                    const pos2 = r2 - 1;
+                    const table = data.strong_rows_tact_table ?? [];
+                    const row1Tacts = table
+                      .filter((t) => t.row_position === pos1)
+                      .sort((a, b) => a.beat - b.beat);
+                    const row2Tacts = table
+                      .filter((t) => t.row_position === pos2)
+                      .sort((a, b) => a.beat - b.beat);
+                    if (
+                      row1Tacts.length <
+                        SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW ||
+                      row2Tacts.length < SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW
+                    ) {
+                      return (
+                        <p className="text-gray-500 mt-1">
+                          По Perc sum: нет данных (таблица тактов пуста или мало
+                          записей)
+                        </p>
+                      );
+                    }
+                    const row1Slice = row1Tacts.slice(
+                      SKIP_TACTS_PER_ROW,
+                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
+                    );
+                    const row2Slice = row2Tacts.slice(
+                      SKIP_TACTS_PER_ROW,
+                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
+                    );
+                    const sum1 = row1Slice.reduce(
+                      (s, t) => s + (t.tact_sum ?? 0),
+                      0,
+                    );
+                    const sum2 = row2Slice.reduce(
+                      (s, t) => s + (t.tact_sum ?? 0),
+                      0,
+                    );
+                    const winnerRow = sum1 >= sum2 ? r1 : r2;
+                    const winnerSlice = sum1 >= sum2 ? row1Slice : row2Slice;
+                    const firstTact = winnerSlice[0];
+                    const startBeatId = firstTact?.beat ?? winnerRow;
+                    const startTime = firstTact?.time_sec ?? 0;
+                    return (
+                      <p className="text-gray-400 mt-1">
+                        По Perc sum: ряд {winnerRow} победил, старт с бита #
+                        {startBeatId} ({Number(startTime).toFixed(2)}s)
+                      </p>
+                    );
+                  })()}
+                  {(() => {
+                    // Как в таблице «Такты сильных рядов»: откидываем первые 4 ТАКТА в каждом ряду, суммируем tact_sum следующих 8 тактов
+                    const SKIP_TACTS_PER_ROW = 4;
+                    const TAKE_TACTS_PER_ROW = 8;
+                    const winningRows =
+                      data.row_analysis_verdict?.winning_rows ??
+                      (data.row_analysis_verdict?.winning_row != null
+                        ? [data.row_analysis_verdict.winning_row]
+                        : []);
+                    if (winningRows.length < 2) return null;
+                    const [r1, r2] = winningRows;
+                    // row_position в таблице 0–7, ряд 1 → 0, ряд 5 → 4
+                    const pos1 = r1 - 1;
+                    const pos2 = r2 - 1;
+
+                    const table = data.strong_rows_tact_table ?? [];
+                    const row1Tacts = table
+                      .filter((t) => t.row_position === pos1)
+                      .sort((a, b) => a.beat - b.beat);
+                    const row2Tacts = table
+                      .filter((t) => t.row_position === pos2)
+                      .sort((a, b) => a.beat - b.beat);
+
+                    if (
+                      row1Tacts.length <
+                        SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW ||
+                      row2Tacts.length < SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW
+                    ) {
+                      return (
+                        <p className="text-gray-500 mt-1">
+                          По тактам: нет данных (таблица тактов пуста или мало
+                          записей)
+                        </p>
+                      );
+                    }
+
+                    const row1Slice = row1Tacts.slice(
+                      SKIP_TACTS_PER_ROW,
+                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
+                    );
+                    const row2Slice = row2Tacts.slice(
+                      SKIP_TACTS_PER_ROW,
+                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
+                    );
+                    const sum1 = row1Slice.reduce(
+                      (s, t) => s + (t.tact_sum ?? 0),
+                      0,
+                    );
+                    const sum2 = row2Slice.reduce(
+                      (s, t) => s + (t.tact_sum ?? 0),
+                      0,
+                    );
+                    const winnerByTacts = sum1 >= sum2 ? r1 : r2;
+                    return (
+                      <p className="text-gray-400 mt-1">
+                        По 8 тактам ряда после пропуска 4 (tact_sum из таблицы):
+                        ряд {winnerByTacts} победил (Row {r1}: {sum1.toFixed(1)}{" "}
+                        | Row {r2}: {sum2.toFixed(1)})
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
             </div>
           </details>
         )}
+
+      {/* Графики побитовых данных (сразу после Raw Analysis) */}
+      {data.per_beat_data && data.per_beat_data.length > 0 && (
+        <div className="space-y-1">
+          <PerBeatChart
+            beats={data.per_beat_data}
+            height={220}
+            songStartBeat={data.song_start_beat}
+            songStartTime={data.song_start_time}
+          />
+          <button
+            onClick={() => downloadBeatsCSV(data.per_beat_data!, trackTitle)}
+            className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
+            title="Beat, Time_sec, Energy, Mel_Energy, Perceptual_Energy, Madmom — UTF-8 с BOM"
+          >
+            ↓ CSV побитов
+          </button>
+        </div>
+      )}
 
       {/* Таблица тактов сильных рядов (суммы энергий по тактам) */}
       {data.track_type === "bachata" &&
@@ -415,19 +581,6 @@ export default function V2AnalysisDisplay({
               {data.square_analysis.verdict === "has_bridges"
                 ? "есть красные"
                 : "все зелёные"}
-              {typeof data.square_analysis.row_dominance_pct === "number" && (
-                <span
-                  className={
-                    (data.square_analysis.row_dominance_pct ?? 0) >= 0
-                      ? "text-green-400 ml-1"
-                      : "text-amber-400 ml-1"
-                  }
-                  title="Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100. 0% = поровну, отрицательный = ПЯТЬ больше."
-                >
-                  (разница РАЗ−ПЯТЬ:{" "}
-                  {data.square_analysis.row_dominance_pct.toFixed(1)}%)
-                </span>
-              )}
             </summary>
             <div className="mt-2 space-y-4">
               {/* Mel Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}
@@ -576,29 +729,6 @@ export default function V2AnalysisDisplay({
                   })}
                 </div>
               </div>
-              {data.per_beat_data && data.per_beat_data.length > 0 && (
-                <div className="mt-3 mb-1">
-                  <PerBeatChart
-                    beats={data.per_beat_data}
-                    height={220}
-                    songStartBeat={data.song_start_beat}
-                    songStartTime={data.song_start_time}
-                  />
-                </div>
-              )}
-              {data.per_beat_data && data.per_beat_data.length > 0 && (
-                <div className="pt-1">
-                  <button
-                    onClick={() =>
-                      downloadBeatsCSV(data.per_beat_data!, trackTitle)
-                    }
-                    className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
-                    title="Beat, Time_sec, Energy, Mel_Energy, Perceptual_Energy, Madmom — UTF-8 с BOM"
-                  >
-                    ↓ CSV побитов
-                  </button>
-                </div>
-              )}
             </div>
           </details>
         )}
@@ -707,37 +837,6 @@ export default function V2AnalysisDisplay({
                 ))}
               </tbody>
             </table>
-          </div>
-        </details>
-      )}
-
-      {/* Layout / Bridges timeline */}
-      {data.layout && data.layout.length > 0 && (
-        <details open>
-          <summary className="cursor-pointer text-xs font-semibold text-gray-300 hover:text-white">
-            Раскладка рядов ({data.layout.length} сегментов)
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-1">
-            {data.layout.map((seg, i) => {
-              const isBridge = i > 0;
-              return (
-                <div
-                  key={i}
-                  className={`px-2 py-1 rounded text-xs ${
-                    seg.row1_start === 1
-                      ? "bg-blue-900/50 text-blue-300"
-                      : "bg-purple-900/50 text-purple-300"
-                  } ${isBridge ? "border-l-2 border-yellow-500" : ""}`}
-                >
-                  <div className="font-mono">
-                    {formatTime(seg.time_start)} — {formatTime(seg.time_end)}
-                  </div>
-                  <div>
-                    Бит {seg.from_beat}–{seg.to_beat} | Row {seg.row1_start}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </details>
       )}

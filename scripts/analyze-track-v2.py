@@ -59,7 +59,8 @@ def load_config():
         'indicator_window': 4,
         'popsa_peak_threshold': 0.70,
         'perc_bridge_threshold': 0.05,  # 5% — порог look-ahead для перцептивных мостиков
-        'perc_start_threshold': 0.20,   # 5% — порог превышения средней perceptual для поиска РАЗ
+        'perc_start_threshold': 0.20,   # 20% — порог: средняя по песне ниже среднего такта на N% → такт считаем РАЗ
+        'perceptual_window_sec': 0.05,   # окно для perceptual_energy (с). 0.08 = 80ms, 0.20 = 200ms (удобнее для уха). Откат: поставить 0.08
     }
     try:
         if os.path.exists(config_path):
@@ -96,7 +97,7 @@ def precompute_mel_spectrogram(y, sr, hop_length=512):
     return mel_spec, hop_length, mel_freqs
 
 
-def get_perceptual_energy(mel_spec, mel_freqs, sr, hop_length, time_sec, window_sec=0.08):
+def get_perceptual_energy(mel_spec, mel_freqs, sr, hop_length, time_sec, window_sec=0.20):
     """
     A-weighted perceptual energy (кривая Флетчера-Мэнсона).
     Применяет librosa.perceptual_weighting к мел-спектрограмме в окне вокруг бита.
@@ -192,12 +193,14 @@ def classify_peaks(activations, all_beats, rnn_fps):
 # ФАЗА 1: Вычисление Row 1 и Row 5
 # ==========================================
 
-def compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec=None, mel_hop=512, mel_freqs=None):
+def compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec=None, mel_hop=512, mel_freqs=None, perc_window_sec=None):
     """Вычисляет energy, mel_energy, perceptual_energy и madmom_score для каждого бита."""
+    if perc_window_sec is None:
+        perc_window_sec = 0.20
     beats = []
     for i, beat_time in enumerate(all_beats):
         energy = get_band_energy(y, sr, beat_time)
-        perc_e = get_perceptual_energy(mel_spec, mel_freqs, sr, mel_hop, beat_time) if (mel_spec is not None and mel_freqs is not None) else 0.0
+        perc_e = get_perceptual_energy(mel_spec, mel_freqs, sr, mel_hop, beat_time, window_sec=perc_window_sec) if (mel_spec is not None and mel_freqs is not None) else 0.0
         frame = min(int(beat_time * rnn_fps), len(activations) - 1)
         madmom_score = float(activations[frame, 1]) if activations.ndim > 1 else float(activations[frame])
         beats.append({
@@ -282,16 +285,14 @@ def find_song_start_perc(beats, peak1_pos, peak2_pos, config):
     Фаза 1: ищем РАЗ по таблице «Такты сильных рядов» (perceptual).
 
     Алгоритм:
-      1. Таблица тактов: для каждого такта сильного ряда считаем tact_sum и tact_avg по perceptual_energy.
+      1. Таблица тактов: для каждого такта сильного ряда — те же tact_sum/tact_avg (для вывода).
       2. Среднее perceptual по всей песне → mean_perc.
-      3. Идём по тактам по очереди: 1-й такт ряда 1, 1-й такт ряда 5, 2-й такт ряда 1, 2-й такт ряда 5, …
-      4. Сравниваем: пока средняя по песне НЕ ниже на 5% сравниваемого среднего такта — идём дальше.
-         Условие «средняя по песне ниже на 5%»: mean_perc < tact_avg * (1 - perc_start_threshold).
-         Первый такт, для которого это выполняется (т.е. tact_avg достаточно высокий) → начало этого такта = РАЗ.
+      3. Идём по тактам по очереди: 1-й такт ряда 1, 1-й ряда 5, 2-й ряда 1, …
+      4. В каждом такте смотрим биты по порядку. Первый бит (по всему треку), у которого
+         perceptual_energy > mean_perc, определяет такт: начало этого такта = РАЗ.
 
     Возвращает: (start_idx, strong_rows_tact_list, strong_rows_tact_by_row)
     """
-    threshold = config.get('perc_start_threshold', 0.05)
     table_list, table_by_row = build_strong_rows_tact_table(beats, peak1_pos, peak2_pos)
 
     perc_values = [b.get('perceptual_energy', 0.0) for b in beats]
@@ -301,25 +302,27 @@ def find_song_start_perc(beats, peak1_pos, peak2_pos, config):
         return 0, table_list, table_by_row
 
     mean_perc = float(np.mean(perc_values))
-    # Такт считаем «сильным», если средняя по песне ниже его среднего на 5%: mean_perc < tact_avg * (1 - 0.05)
-    # => tact_avg > mean_perc / (1 - threshold)
-    threshold_tact_avg = mean_perc / (1.0 - threshold)
-    log(f"[Phase 1] Perc mean (вся песня): {mean_perc:.2f} dB, порог такта (средняя ниже на {threshold*100:.0f}%): tact_avg > {threshold_tact_avg:.2f} dB")
+    log(f"[Phase 1] Perc mean (вся песня): {mean_perc:.2f} dB — ищем первый бит выше среднего в тактах сильных рядов")
     if table_list:
-        log(f"[Phase 1] Такты сильных рядов (perceptual): {len(table_list)} тактов, первые: "
-            f"row={table_list[0]['row_position']} beat={table_list[0]['beat']} tact_avg={table_list[0]['tact_avg']:.2f}, "
-            f"row={table_list[1]['row_position']} beat={table_list[1]['beat']} tact_avg={table_list[1]['tact_avg']:.2f}")
+        log(f"[Phase 1] Такты сильных рядов: {len(table_list)} тактов, первые: "
+            f"row={table_list[0]['row_position']} beat={table_list[0]['beat']}, "
+            f"row={table_list[1]['row_position']} beat={table_list[1]['beat']}")
 
-    # table_list уже в порядке: 1-й такт peak1, 1-й такт peak2, 2-й такт peak1, 2-й такт peak2, …
+    # Порядок: 1-й такт peak1, 1-й peak2, 2-й peak1, 2-й peak2, …
+    # Последний бит такта (j=3) не считаем РАЗ — скорее косяк исполнения, идём дальше.
     for row in table_list:
-        tact_avg = row['tact_avg']
-        if tact_avg > threshold_tact_avg:
-            bi = row['beat']
-            log(f"[Phase 1] РАЗ найден: beat {bi} (time {beats[bi]['time']:.2f}s), "
-                f"row_pos={row['row_position']}, tact_avg={tact_avg:.2f} dB > {threshold_tact_avg:.2f} dB (средняя по песне ниже на 5%)")
-            return bi, table_list, table_by_row
+        tact_start = row['beat']
+        for j in range(3):  # только биты 0, 1, 2 — не последний (3) в такте
+            bi = tact_start + j
+            if bi >= len(beats):
+                break
+            pe = beats[bi].get('perceptual_energy', 0.0)
+            if pe > mean_perc:
+                log(f"[Phase 1] РАЗ найден: первый бит выше среднего (не последний в такте) — beat {bi} (time {beats[bi]['time']:.2f}s), "
+                    f"perceptual_energy={pe:.2f} > mean {mean_perc:.2f} dB, row_pos={row['row_position']}, такт с beat {tact_start}")
+                return tact_start, table_list, table_by_row
 
-    log("[Phase 1] Ни один такт не превысил порог — используем beat 0")
+    log("[Phase 1] Нет бита выше среднего в тактах сильных рядов (или только на последнем бите такта) — используем beat 0")
     return 0, table_list, table_by_row
 
 
@@ -1037,7 +1040,9 @@ def analyze_v2(audio_path):
     # --- Вычисление побитовых данных ---
     log("Precomputing mel spectrogram...")
     mel_spec, mel_hop, mel_freqs = precompute_mel_spectrogram(y, sr)
-    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec, mel_hop, mel_freqs)
+    perc_window = config.get('perceptual_window_sec', 0.20)
+    log(f"Perceptual window: {perc_window*1000:.0f} ms")
+    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec, mel_hop, mel_freqs, perc_window_sec=perc_window)
 
     # --- local_bpm: локальный темп по интервалам между битами ---
     for i in range(len(beats)):

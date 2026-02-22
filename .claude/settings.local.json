@@ -51,7 +51,9 @@
       "Bash(git checkout:*)",
       "Bash(grep:*)",
       "Bash(D:/Sites/bachata/venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(''scripts/analyze-track-v2.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
-      "Bash(D:/Sites/bachata/venv/Scripts/python.exe:*)"
+      "Bash(D:/Sites/bachata/venv/Scripts/python.exe:*)",
+      "Bash(d:/Sites/bachata/venv/Scripts/python.exe:*)",
+      "Bash(D:/Sites/bachata/venv/Scripts/pip.exe show:*)"
     ]
   }
 }

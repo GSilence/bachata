@@ -492,8 +492,13 @@ export class AudioEngine {
       const beat = this.beatGrid[immediateBeatIndex];
       if (beat) {
         this.playVoiceCount(beat.number, immediateBeatIndex);
+        if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         this.currentBeatIndex = immediateBeatIndex + 1;
       }
+    } else {
+      // Нет "немедленного" бита — всё равно синхронизируем UI с текущей позицией
+      const beatInfo = this.getCurrentBeatInfo();
+      if (beatInfo && this.onBeatUpdate) this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
     }
 
     // С какого бита планировать счёт вперёд (Web Audio)
@@ -726,8 +731,13 @@ export class AudioEngine {
       const beat = this.beatGrid[immediateBeatIndex];
       if (beat) {
         this.playVoiceCount(beat.number, immediateBeatIndex);
+        if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
         this.currentBeatIndex = immediateBeatIndex + 1;
       }
+    } else {
+      // Нет немедленного бита — синхронизируем UI со смотанной позицией
+      const beatInfo = this.getCurrentBeatInfo();
+      if (beatInfo && this.onBeatUpdate) this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
     }
 
     // Notify UI immediately (smooth scrubbing)
@@ -914,25 +924,21 @@ export class AudioEngine {
         this.beatGrid[this.currentBeatIndex].time <= currentTime
       ) {
         const beat = this.beatGrid[this.currentBeatIndex];
-        if (currentTime - beat.time < 0.25) {
-          if (!useWebAudioVoice)
-            this.playVoiceCount(beat.number, this.currentBeatIndex);
-          if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
-        }
-        this.currentBeatIndex++;
-      }
+        const beatAge = currentTime - beat.time;
 
-      if (
-        this.currentBeatIndex < this.beatGrid.length &&
-        this.beatGrid[this.currentBeatIndex].time > currentTime &&
-        this.beatGrid[this.currentBeatIndex].time <= currentTime + 0.05
-      ) {
-        const beat = this.beatGrid[this.currentBeatIndex];
-        if (!useWebAudioVoice)
+        // Голос: играем только если бит свежий (< 250ms) — поздний звук режет слух.
+        if (beatAge < 0.25 && !useWebAudioVoice) {
           this.playVoiceCount(beat.number, this.currentBeatIndex);
+        }
+
+        // UI: обновляем ВСЕГДА — догоняем после паузы/throttling/фоновой вкладки.
         if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
+
         this.currentBeatIndex++;
       }
+      // Look-ahead убран: он показывал биты на 50ms раньше и путал счётчик
+      // при нерегулярных тиках интервала. Web Audio голос планируется через
+      // scheduleVoiceAhead() — отдельный механизм с запасом 1.5s.
     }
 
     // Планируем счёт вперёд (Web Audio). Единственный источник звука при useWebAudioVoice.

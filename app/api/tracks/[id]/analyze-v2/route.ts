@@ -224,7 +224,9 @@ export async function POST(
       data: {
         gridMap: mergedGridMap as object,
         // Синхронизируем track.offset с новым song_start_time из v2-анализа
-        ...(result.song_start_time != null && { offset: result.song_start_time }),
+        ...(result.song_start_time != null && {
+          offset: result.song_start_time,
+        }),
       },
     });
     console.log(
