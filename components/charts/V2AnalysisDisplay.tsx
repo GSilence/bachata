@@ -1,5 +1,10 @@
 "use client";
 
+import React from "react";
+import dynamic from "next/dynamic";
+
+const PerBeatChart = dynamic(() => import("./PerBeatChart"), { ssr: false });
+
 interface Indicator {
   quarter_index: number;
   beat: number;
@@ -24,9 +29,9 @@ interface Bridge {
 }
 
 interface SquarePart {
-  row1_mel?: number;
-  row5_mel?: number;
-  status_mel?: "green" | "red";
+  row1_perc?: number;
+  row5_perc?: number;
+  status_perc?: "green" | "red";
   row1_energy?: number;
   row5_energy?: number;
   status_energy?: "green" | "red";
@@ -100,6 +105,18 @@ interface V2Result {
   }[];
   indicators: Indicator[];
   bridges: Bridge[];
+  perc_bridge_candidates?: {
+    beat: number;
+    time_sec: number;
+    position: string;
+    perc_energy: number;
+  }[];
+  perc_confirmed_bridges?: {
+    beat: number;
+    time_sec: number;
+    position: string;
+    diff_pct: number;
+  }[];
   layout: LayoutSegment[];
 }
 
@@ -107,8 +124,9 @@ interface PerBeat {
   id: number;
   time: number;
   energy: number;
-  mel_energy: number;
+  perceptual_energy?: number;
   madmom_score: number;
+  local_bpm?: number;
 }
 
 // Добавляем per_beat_data в V2Result
@@ -116,6 +134,8 @@ type V2ResultWithBeats = V2Result & { per_beat_data?: PerBeat[] };
 
 interface Props {
   data: V2ResultWithBeats;
+  trackId?: number;
+  trackTitle?: string;
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -144,13 +164,25 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function downloadBeatsCSV(beats: PerBeat[]) {
+function sanitizeTitle(title: string): string {
+  return title
+    .substring(0, 40)
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .toLowerCase();
+}
+
+function downloadBeatsCSV(beats: PerBeat[], trackTitle?: string) {
+  const suffix = trackTitle ? `_${sanitizeTitle(trackTitle)}` : "";
   const bom = "\ufeff";
-  const header = "Beat,Time_sec,Energy,Mel_Energy,Madmom\n";
+  const header = "Beat,Time_sec,Energy,Perceptual_Energy,Madmom,Local_BPM\n";
   const rows = beats
     .map(
       (b) =>
-        `${b.id},${b.time.toFixed(3)},${b.energy.toFixed(6)},${(b.mel_energy ?? 0).toFixed(2)},${b.madmom_score.toFixed(4)}`,
+        `${b.id},${b.time.toFixed(3)},${b.energy.toFixed(6)},${(b.perceptual_energy ?? 0).toFixed(3)},${b.madmom_score.toFixed(4)},${(b.local_bpm ?? 0).toFixed(1)}`,
     )
     .join("\n");
   const blob = new Blob([bom + header + rows], {
@@ -159,12 +191,16 @@ function downloadBeatsCSV(beats: PerBeat[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "beats_v2.csv";
+  a.download = `beats_v2${suffix}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-export default function V2AnalysisDisplay({ data }: Props) {
+export default function V2AnalysisDisplay({
+  data,
+  trackId,
+  trackTitle,
+}: Props) {
   return (
     <div className="space-y-4 text-sm">
       {/* Header badges */}
@@ -196,6 +232,45 @@ export default function V2AnalysisDisplay({ data }: Props) {
           Мостиков: {data.bridges.length}
         </span>
       </div>
+
+      {/* Перцептивные мостики и кандидаты (наблюдательные, не влияют на сетку) */}
+      {data.perc_confirmed_bridges?.length ||
+      data.perc_bridge_candidates?.length ? (
+        <div className="space-y-1">
+          {data.perc_confirmed_bridges &&
+            data.perc_confirmed_bridges.length > 0 && (
+              <div className="text-xs">
+                <span className="text-gray-500">
+                  Перцептивные мостики ({data.perc_confirmed_bridges.length}):
+                </span>{" "}
+                {data.perc_confirmed_bridges.map((c, i) => (
+                  <span key={i} className="mr-2">
+                    <span className="text-orange-400 font-medium">
+                      {c.time_sec.toFixed(1)}s
+                    </span>
+                    <span className="text-gray-600 ml-0.5">+{c.diff_pct}%</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          {data.perc_bridge_candidates &&
+            data.perc_bridge_candidates.length > 0 && (
+              <div className="text-xs text-gray-600">
+                <span>Кандидаты (локал. мин.):</span>{" "}
+                {data.perc_bridge_candidates.map((c, i) => (
+                  <span key={i} className="mr-1.5">
+                    <span className="text-gray-500">
+                      {c.time_sec.toFixed(1)}s
+                    </span>
+                    <span className="text-gray-700 ml-0.5">
+                      ({c.perc_energy}dB)
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+        </div>
+      ) : null}
 
       {/* Row sums */}
       {data.track_type === "bachata" && (
@@ -382,10 +457,10 @@ export default function V2AnalysisDisplay({ data }: Props) {
                         className="flex flex-wrap gap-1.5 items-stretch"
                       >
                         {entries.map(([name, part]) => {
-                          const hasMel =
-                            part.row1_mel != null && part.row5_mel != null;
-                          const status = hasMel
-                            ? part.status_mel
+                          const hasPerc =
+                            part.row1_perc != null && part.row5_perc != null;
+                          const status = hasPerc
+                            ? part.status_perc
                             : (part.status as "green" | "red");
                           return (
                             <div
@@ -408,10 +483,10 @@ export default function V2AnalysisDisplay({ data }: Props) {
                                   </>
                                 )}
                               <br />
-                              {hasMel ? (
+                              {hasPerc ? (
                                 <>
-                                  R1 {(part.row1_mel ?? 0).toFixed(0)} / R5{" "}
-                                  {(part.row5_mel ?? 0).toFixed(0)}
+                                  R1 {(part.row1_perc ?? 0).toFixed(0)} / R5{" "}
+                                  {(part.row5_perc ?? 0).toFixed(0)}
                                 </>
                               ) : (
                                 <>
@@ -502,11 +577,23 @@ export default function V2AnalysisDisplay({ data }: Props) {
                 </div>
               </div>
               {data.per_beat_data && data.per_beat_data.length > 0 && (
+                <div className="mt-3 mb-1">
+                  <PerBeatChart
+                    beats={data.per_beat_data}
+                    height={220}
+                    songStartBeat={data.song_start_beat}
+                    songStartTime={data.song_start_time}
+                  />
+                </div>
+              )}
+              {data.per_beat_data && data.per_beat_data.length > 0 && (
                 <div className="pt-1">
                   <button
-                    onClick={() => downloadBeatsCSV(data.per_beat_data!)}
+                    onClick={() =>
+                      downloadBeatsCSV(data.per_beat_data!, trackTitle)
+                    }
                     className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
-                    title="Beat, Time_sec, Energy, Mel_Energy, Madmom — UTF-8 с BOM, открывается в Excel"
+                    title="Beat, Time_sec, Energy, Mel_Energy, Perceptual_Energy, Madmom — UTF-8 с BOM"
                   >
                     ↓ CSV побитов
                   </button>

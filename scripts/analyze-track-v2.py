@@ -58,6 +58,8 @@ def load_config():
         'bridge_dominance_threshold': 0.03,
         'indicator_window': 4,
         'popsa_peak_threshold': 0.70,
+        'perc_bridge_threshold': 0.05,  # 5% — порог look-ahead для перцептивных мостиков
+        'perc_start_threshold': 0.20,   # 5% — порог превышения средней perceptual для поиска РАЗ
     }
     try:
         if os.path.exists(config_path):
@@ -88,13 +90,18 @@ def get_band_energy(y, sr, time_sec, window_sec=0.08):
 
 
 def precompute_mel_spectrogram(y, sr, hop_length=512):
-    """Предварительно вычисляет mel spectrogram для всего трека."""
+    """Предварительно вычисляет mel spectrogram и mel-частоты для всего трека."""
     mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, hop_length=hop_length)
-    return mel_spec, hop_length
+    mel_freqs = librosa.mel_frequencies(n_mels=128, fmin=0.0, fmax=sr / 2.0)
+    return mel_spec, hop_length, mel_freqs
 
 
-def get_mel_energy(mel_spec, sr, hop_length, time_sec, window_sec=0.08):
-    """Mel-weighted energy: среднее суммарной мощности по мел-банкам в окне вокруг бита."""
+def get_perceptual_energy(mel_spec, mel_freqs, sr, hop_length, time_sec, window_sec=0.08):
+    """
+    A-weighted perceptual energy (кривая Флетчера-Мэнсона).
+    Применяет librosa.perceptual_weighting к мел-спектрограмме в окне вокруг бита.
+    Возвращает среднее значение в dB с A-взвешиванием.
+    """
     fps = sr / hop_length
     center_frame = int(time_sec * fps)
     half_window = max(1, int(window_sec * fps / 2))
@@ -102,7 +109,10 @@ def get_mel_energy(mel_spec, sr, hop_length, time_sec, window_sec=0.08):
     end = min(mel_spec.shape[1], center_frame + half_window + 1)
     if start >= end:
         return 0.0
-    return float(np.mean(np.sum(mel_spec[:, start:end], axis=0)))
+    chunk = mel_spec[:, start:end]
+    pw = librosa.perceptual_weighting(chunk, mel_freqs, kind='A')
+    val = float(np.mean(pw))
+    return val if np.isfinite(val) else 0.0
 
 
 def log(msg):
@@ -182,19 +192,19 @@ def classify_peaks(activations, all_beats, rnn_fps):
 # ФАЗА 1: Вычисление Row 1 и Row 5
 # ==========================================
 
-def compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec=None, mel_hop=512):
-    """Вычисляет energy, mel_energy и madmom_score для каждого бита."""
+def compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec=None, mel_hop=512, mel_freqs=None):
+    """Вычисляет energy, mel_energy, perceptual_energy и madmom_score для каждого бита."""
     beats = []
     for i, beat_time in enumerate(all_beats):
         energy = get_band_energy(y, sr, beat_time)
-        mel_e = get_mel_energy(mel_spec, sr, mel_hop, beat_time) if mel_spec is not None else 0.0
+        perc_e = get_perceptual_energy(mel_spec, mel_freqs, sr, mel_hop, beat_time) if (mel_spec is not None and mel_freqs is not None) else 0.0
         frame = min(int(beat_time * rnn_fps), len(activations) - 1)
         madmom_score = float(activations[frame, 1]) if activations.ndim > 1 else float(activations[frame])
         beats.append({
             'id': i,
             'time': beat_time,
             'energy': energy,
-            'mel_energy': mel_e,
+            'perceptual_energy': perc_e,
             'madmom_score': madmom_score,
         })
     return beats
@@ -204,7 +214,7 @@ def build_strong_rows_tact_table(beats, peak1_pos, peak2_pos):
     """
     Строим таблицу тактов для сильных рядов (peak1 и peak2).
     Для каждого бита сильного ряда: такт = этот бит + следующие 3.
-    tact_sum = сумма энергий 4 битов, tact_avg = tact_sum / 4.
+    tact_sum = сумма perceptual_energy 4 битов (dB), tact_avg = tact_sum / 4.
     Возвращает: (table_list, table_by_row)
     - table_list: список всех тактов по порядку битов [{row_position, beat, time_sec, tact_sum, tact_avg}, ...]
     - table_by_row: {peak1_pos: [...], peak2_pos: [...]} для вывода по рядам.
@@ -220,7 +230,7 @@ def build_strong_rows_tact_table(beats, peak1_pos, peak2_pos):
         pos = i % 8
         if pos != peak1_pos and pos != peak2_pos:
             continue
-        tact_sum = sum(beats[j]['energy'] for j in range(i, i + 4))
+        tact_sum = sum(beats[j].get('perceptual_energy', 0.0) for j in range(i, i + 4))
         tact_avg = tact_sum / 4.0
         row = {
             'row_position': pos,
@@ -267,31 +277,64 @@ def find_song_start(beats, config, peak1_pos, peak2_pos):
     return 0, table_list, table_by_row
 
 
+def find_song_start_perc(beats, peak1_pos, peak2_pos, config):
+    """
+    Фаза 1: ищем РАЗ по таблице «Такты сильных рядов» (perceptual).
+
+    Алгоритм:
+      1. Таблица тактов: для каждого такта сильного ряда считаем tact_sum и tact_avg по perceptual_energy.
+      2. Среднее perceptual по всей песне → mean_perc.
+      3. Идём по тактам по очереди: 1-й такт ряда 1, 1-й такт ряда 5, 2-й такт ряда 1, 2-й такт ряда 5, …
+      4. Сравниваем: пока средняя по песне НЕ ниже на 5% сравниваемого среднего такта — идём дальше.
+         Условие «средняя по песне ниже на 5%»: mean_perc < tact_avg * (1 - perc_start_threshold).
+         Первый такт, для которого это выполняется (т.е. tact_avg достаточно высокий) → начало этого такта = РАЗ.
+
+    Возвращает: (start_idx, strong_rows_tact_list, strong_rows_tact_by_row)
+    """
+    threshold = config.get('perc_start_threshold', 0.05)
+    table_list, table_by_row = build_strong_rows_tact_table(beats, peak1_pos, peak2_pos)
+
+    perc_values = [b.get('perceptual_energy', 0.0) for b in beats]
+    has_perc = any(v != 0.0 for v in perc_values)
+    if not has_perc:
+        log("[Phase 1] perceptual_energy недоступна — fallback beat 0")
+        return 0, table_list, table_by_row
+
+    mean_perc = float(np.mean(perc_values))
+    # Такт считаем «сильным», если средняя по песне ниже его среднего на 5%: mean_perc < tact_avg * (1 - 0.05)
+    # => tact_avg > mean_perc / (1 - threshold)
+    threshold_tact_avg = mean_perc / (1.0 - threshold)
+    log(f"[Phase 1] Perc mean (вся песня): {mean_perc:.2f} dB, порог такта (средняя ниже на {threshold*100:.0f}%): tact_avg > {threshold_tact_avg:.2f} dB")
+    if table_list:
+        log(f"[Phase 1] Такты сильных рядов (perceptual): {len(table_list)} тактов, первые: "
+            f"row={table_list[0]['row_position']} beat={table_list[0]['beat']} tact_avg={table_list[0]['tact_avg']:.2f}, "
+            f"row={table_list[1]['row_position']} beat={table_list[1]['beat']} tact_avg={table_list[1]['tact_avg']:.2f}")
+
+    # table_list уже в порядке: 1-й такт peak1, 1-й такт peak2, 2-й такт peak1, 2-й такт peak2, …
+    for row in table_list:
+        tact_avg = row['tact_avg']
+        if tact_avg > threshold_tact_avg:
+            bi = row['beat']
+            log(f"[Phase 1] РАЗ найден: beat {bi} (time {beats[bi]['time']:.2f}s), "
+                f"row_pos={row['row_position']}, tact_avg={tact_avg:.2f} dB > {threshold_tact_avg:.2f} dB (средняя по песне ниже на 5%)")
+            return bi, table_list, table_by_row
+
+    log("[Phase 1] Ни один такт не превысил порог — используем beat 0")
+    return 0, table_list, table_by_row
+
+
 def determine_rows(beats, start_idx, config):
     """
     Заход 3 Фазы 1: Итоговый истинный РАЗ.
-    Гибридный подход:
-      1. Сравниваем суммы энергии (RMS 4-битовых тактов) для первых 8 восьмёрок.
-      2. Если разница >= ENERGY_DECISIVE_THRESHOLD → доверяем энергии.
-      3. Если разница < порога (почти квадрат) → переходим к madmom_score пиков.
-    Во всех случаях: если ряд 5 больше ряда 1 — применяем обрезку до первых 4
-    значений и перепроверяем. Своп только если доминирование сохранилось.
+    Сравниваем суммы энергии (RMS) 4-битовых тактов для первых 8 восьмёрок.
+    Если ряд 5 доминирует — обрезаем до первых 4 восьмёрок и перепроверяем.
+    Своп применяется только если доминирование ряда 5 сохранилось после обрезки.
     Возвращает: (row1_offset, row_swapped)
-
-    Логика выбора метода:
-    - Энергия: надёжна когда разница рядов чёткая (>= 5%). Прямо отражает громкость.
-    - Madmom: надёжен когда у треков почти равная энергия, но madmom имеет
-      более чёткий нейросетевой сигнал. Fallback для почти-квадратных треков.
     """
-    ENERGY_DECISIVE_THRESHOLD = 0.05  # 5%: если разница >= — доверяем энергии
-
     n_quarters = config['initial_quarters_count']  # 8
 
-    # Собираем энергию тактов и madmom_score пиков для каждой восьмёрки
     row1_energy = []
     row5_energy = []
-    row1_madmom = []
-    row5_madmom = []
 
     for q in range(n_quarters):
         r1_start = start_idx + q * 8
@@ -299,67 +342,39 @@ def determine_rows(beats, start_idx, config):
 
         if r1_start + 3 < len(beats):
             row1_energy.append(sum(beats[j]['energy'] for j in range(r1_start, r1_start + 4)))
-            row1_madmom.append(beats[r1_start]['madmom_score'])
         elif r1_start < len(beats):
             row1_energy.append(beats[r1_start]['energy'])
-            row1_madmom.append(beats[r1_start]['madmom_score'])
 
         if r5_start + 3 < len(beats):
             row5_energy.append(sum(beats[j]['energy'] for j in range(r5_start, r5_start + 4)))
-            row5_madmom.append(beats[r5_start]['madmom_score'])
         elif r5_start < len(beats):
             row5_energy.append(beats[r5_start]['energy'])
-            row5_madmom.append(beats[r5_start]['madmom_score'])
 
     if not row1_energy or not row5_energy:
         return 0, False
 
-    sum_r1_e = sum(row1_energy)
-    sum_r5_e = sum(row5_energy)
-    total_e = max(sum_r1_e, sum_r5_e, 0.001)
-    diff_e = abs(sum_r1_e - sum_r5_e) / total_e
+    sum_r1 = sum(row1_energy)
+    sum_r5 = sum(row5_energy)
+    log(f"[Phase 1] Pass 3 (energy) — Row 1: {sum_r1:.4f}, Row 5: {sum_r5:.4f}")
 
-    log(f"[Phase 1] Pass 3 (energy) — Row 1: {sum_r1_e:.4f}, Row 5: {sum_r5_e:.4f}, diff={diff_e*100:.1f}%")
+    if sum_r1 >= sum_r5:
+        log("[Phase 1] Row 1 dominates — true РАЗ = row 1")
+        return 0, False
 
-    def check_swap_with_trim(vals_r1, vals_r5, method_name):
-        """Проверяет доминирование с обрезкой до первых 4. Возвращает True если нужен своп."""
-        sum1 = sum(vals_r1)
-        sum5 = sum(vals_r5)
-        log(f"[Phase 1] {method_name}: Row 1={sum1:.4f}, Row 5={sum5:.4f}")
-        if sum1 >= sum5:
-            log(f"[Phase 1] {method_name}: Row 1 dominates — true РАЗ = row 1")
-            return False
-        # R5 > R1 → обрезаем до первых 4
-        trim = 4
-        r1t = vals_r1[:trim]
-        r5t = vals_r5[:trim]
-        if not r1t or not r5t:
-            log(f"[Phase 1] {method_name}: not enough data for trim — no swap")
-            return False
-        sum1t = sum(r1t)
-        sum5t = sum(r5t)
-        log(f"[Phase 1] {method_name} after trim (first 4): Row 1={sum1t:.4f}, Row 5={sum5t:.4f}")
-        if sum1t >= sum5t:
-            log(f"[Phase 1] {method_name} after trim: Row 1 dominates — true РАЗ = row 1")
-            return False
-        log(f"[Phase 1] {method_name} after trim: Row 5 still dominates — swap")
-        return True
+    # R5 > R1 → обрезаем до первых 4 восьмёрок и перепроверяем
+    trim = 4
+    r1t = row1_energy[:trim]
+    r5t = row5_energy[:trim]
+    sum_r1t = sum(r1t)
+    sum_r5t = sum(r5t)
+    log(f"[Phase 1] energy after trim (first {trim}): Row 1={sum_r1t:.4f}, Row 5={sum_r5t:.4f}")
 
-    if diff_e >= ENERGY_DECISIVE_THRESHOLD:
-        # Энергия решительна — доверяем ей
-        log(f"[Phase 1] Energy diff {diff_e*100:.1f}% >= {ENERGY_DECISIVE_THRESHOLD*100:.0f}% — using energy")
-        swap = check_swap_with_trim(row1_energy, row5_energy, "energy")
-    else:
-        # Почти квадрат — переходим к madmom
-        log(f"[Phase 1] Energy diff {diff_e*100:.1f}% < {ENERGY_DECISIVE_THRESHOLD*100:.0f}% — fallback to madmom peaks")
-        if not row1_madmom or not row5_madmom:
-            return 0, False
-        swap = check_swap_with_trim(row1_madmom, row5_madmom, "madmom")
+    if sum_r1t >= sum_r5t:
+        log("[Phase 1] After trim: Row 1 dominates — true РАЗ = row 1")
+        return 0, False
 
-    if swap:
-        log("[Phase 1] Row 5 dominates — true РАЗ = row 5, swap (song starts from row 5)")
-        return 4, True
-    return 0, False
+    log("[Phase 1] Row 5 still dominates after trim — swap (song starts from row 5)")
+    return 4, True
 
 
 # ==========================================
@@ -369,7 +384,7 @@ def determine_rows(beats, start_idx, config):
 def analyze_square(beats, start_idx, row1_offset):
     """
     Делим песню на РАВНЫЕ части по битам (в каждой части поровну РАЗ и ПЯТЬ).
-    Хвост при делении отбрасываем с конца. Сравниваем по energy и mel_energy.
+    Хвост при делении отбрасываем с конца. Сравниваем по energy и perceptual_energy.
     Зелёный: row1 > row5, красный: иначе. Вердикт has_bridges если есть красный (по energy).
     """
     active_beats = beats[start_idx:]
@@ -385,25 +400,25 @@ def analyze_square(beats, start_idx, row1_offset):
     used = active_beats[:n_used]
 
     def compare_part(beat_slice):
-        """Сравнивает Row 1 vs Row 5 по energy и mel_energy. Возвращает суммы, статусы и временной промежуток."""
+        """Сравнивает Row 1 vs Row 5 по energy и perceptual_energy. Возвращает суммы, статусы и временной промежуток."""
         r1_e, r5_e = 0.0, 0.0
-        r1_mel, r5_mel = 0.0, 0.0
+        r1_perc, r5_perc = 0.0, 0.0
         for idx, b in enumerate(beat_slice):
             pos_in_8 = (idx + row1_offset) % 8
             if pos_in_8 < 4:
                 r1_e += b['energy']
-                r1_mel += b.get('mel_energy', 0.0)
+                r1_perc += b.get('perceptual_energy', 0.0)
             else:
                 r5_e += b['energy']
-                r5_mel += b.get('mel_energy', 0.0)
+                r5_perc += b.get('perceptual_energy', 0.0)
         status_e = 'green' if r1_e > r5_e else 'red'
-        status_mel = 'green' if r1_mel > r5_mel else 'red'
+        status_perc = 'green' if r1_perc > r5_perc else 'red'
         time_start = round(beat_slice[0]['time'], 2)
         time_end = round(beat_slice[-1]['time'], 2)
         return {
             'row1_energy': round(r1_e, 4), 'row5_energy': round(r5_e, 4), 'status_energy': status_e,
-            'row1_mel': round(r1_mel, 4), 'row5_mel': round(r5_mel, 4), 'status_mel': status_mel,
-            'status': status_e,  # вердикт по energy; mel — наблюдательный
+            'row1_perc': round(r1_perc, 4), 'row5_perc': round(r5_perc, 4), 'status_perc': status_perc,
+            'status': status_e,  # вердикт по energy; perceptual — наблюдательный
             'time_start': time_start,
             'time_end': time_end,
         }
@@ -450,7 +465,7 @@ def analyze_square(beats, start_idx, row1_offset):
         log(f"  row_dominance_pct ((R1-R5)/R5*100): {row_dominance_pct}%")
     for name, p in parts.items():
         log(f"  {name}: energy R1={p['row1_energy']} R5={p['row5_energy']} → {p['status_energy']} | "
-            f"mel R1={p['row1_mel']:.2f} R5={p['row5_mel']:.2f} → {p['status_mel']}")
+            f"perc R1={p['row1_perc']:.2f} R5={p['row5_perc']:.2f} → {p['status_perc']}")
 
     out = {'parts': parts, 'verdict': verdict}
     if row_dominance_pct is not None:
@@ -621,6 +636,55 @@ def compute_indicators_from_tacts(strong_rows_tact_list, start_idx, beats, confi
     return indicators, indicator_tact_table
 
 
+def compute_perc_bridge_candidates(strong_rows_tact_list, start_idx, beats, config):
+    """
+    Кандидаты на мостик по perceptual_energy (A-weighting, dB).
+    Алгоритм: позиция является кандидатом, если её perceptual_energy —
+    локальный минимум в окне ±window (тише всего в окрестности).
+    Обрабатывает только такты рядов 1 и 5 (как compute_indicators_from_tacts).
+    НЕ влияет на сетку — только наблюдательный список.
+    """
+    window = config['indicator_window']  # 4
+    song_tacts = [t for t in strong_rows_tact_list if t['beat'] >= start_idx]
+    if len(song_tacts) < 2 * window + 1:
+        return []
+
+    n_beats = len(beats)
+    perc_energies = []
+    for t in song_tacts:
+        bi = t['beat']
+        pe = beats[bi].get('perceptual_energy', 0.0) if bi < n_beats else 0.0
+        perc_energies.append(pe)
+
+    # Если perceptual_energy не вычислена (все нули), пропускаем
+    if all(pe == 0.0 for pe in perc_energies):
+        log("[Perc] perceptual_energy not computed (all zeros), skipping candidates")
+        return []
+
+    candidates = []
+    for i in range(window, len(song_tacts) - window):
+        current = perc_energies[i]
+        window_vals = [perc_energies[j] for j in range(i - window, i + window + 1)]
+        min_in_window = min(window_vals)
+        # Локальный минимум по dB (тише = кандидат на мостик)
+        if abs(current - min_in_window) < 1e-9:
+            beat = song_tacts[i]['beat']
+            time_sec = song_tacts[i]['time_sec']
+            pos_in_8 = (beat - start_idx) % 8
+            position = '1-4' if pos_in_8 < 4 else '5-8'
+            candidates.append({
+                'beat': beat,
+                'time_sec': round(float(time_sec), 3),
+                'position': position,
+                'perc_energy': round(float(current), 2),
+            })
+
+    log(f"[Perc] Bridge candidates (perceptual_energy): {len(candidates)}")
+    for c in candidates:
+        log(f"  beat={c['beat']}, time={c['time_sec']}s, pos={c['position']}, perc={c['perc_energy']}dB")
+    return candidates
+
+
 # ==========================================
 # ФАЗА 3: Анализ МОСТИК
 # ==========================================
@@ -747,6 +811,102 @@ def _swap_quarters_after(quarters, bridge_qi):
             quarters[i]['position'] = '1-4'
 
 
+def analyze_perc_bridges(indicators, beats, config):
+    """
+    Перцептивная валидация мостиков по perceptual_energy.
+
+    Тот же алгоритм что analyze_bridges, но:
+    - Использует побитовые суммы perceptual_energy вместо energy_sum четвертей.
+    - Применяет отдельный порог perc_bridge_threshold (по умолчанию 5%).
+    - Учитывает накопленные свопы (логическая позиция 5-8 → брейк).
+    - Не трогает сетку, только возвращает список подтверждённых мостиков.
+
+    Подтверждение: физический R5 > физический R1 по perceptual_energy
+    (dB: менее отрицательный = громче) с разницей >= threshold.
+    """
+    threshold = config.get('perc_bridge_threshold', 0.05)
+    SQUARE_BEATS = 32       # 4 восьмёрки
+    SMALL_SQUARE_BEATS = 16  # + 2 восьмёрки при малой разнице
+
+    n_beats = len(beats)
+
+    # Проверяем, вычислена ли perceptual_energy вообще
+    has_perc = any(beats[i].get('perceptual_energy', 0.0) != 0.0 for i in range(min(20, n_beats)))
+    if not has_perc:
+        log("[Perc] perceptual_energy not computed, skipping analyze_perc_bridges")
+        return []
+
+    def _perc_lookahead(beat_start, n):
+        """Физические суммы perceptual R1 (0-3 mod 8) и R5 (4-7 mod 8) за n битов."""
+        r1, r5 = 0.0, 0.0
+        for off in range(n):
+            bi = beat_start + off
+            if bi >= n_beats:
+                break
+            pe = beats[bi].get('perceptual_energy', 0.0)
+            if off % 8 < 4:
+                r1 += pe
+            else:
+                r5 += pe
+        return r1, r5
+
+    confirmed = []
+    last_bridge_beat = -999
+
+    for ind in indicators:
+        beat_start = ind['beat']
+        pos_physical = ind['position']
+
+        # Логическая позиция с учётом накопленных свопов
+        n_swaps = len(confirmed)
+        pos_logical = pos_physical if n_swaps % 2 == 0 else (
+            '5-8' if pos_physical == '1-4' else '1-4'
+        )
+
+        # Брейк
+        if pos_logical == '5-8':
+            log(f"  [Perc] beat={beat_start}: break (logical 5-8)")
+            continue
+
+        # Слишком близко к предыдущему подтверждённому
+        if last_bridge_beat >= 0 and (beat_start - last_bridge_beat) < SMALL_SQUARE_BEATS:
+            log(f"  [Perc] beat={beat_start}: skip (same МК as beat {last_bridge_beat})")
+            continue
+
+        # Look-ahead: один квадрат
+        r1, r5 = _perc_lookahead(beat_start, SQUARE_BEATS)
+        if r1 == 0:
+            continue
+
+        diff = (r5 - r1) / abs(r1)
+
+        # Маленькая разница → добавляем малый квадрат
+        if diff < threshold:
+            r1_ext, r5_ext = _perc_lookahead(beat_start + SQUARE_BEATS, SMALL_SQUARE_BEATS)
+            r1 += r1_ext
+            r5 += r5_ext
+            if r1 != 0:
+                diff = (r5 - r1) / abs(r1)
+
+        diff_pct = round(diff * 100, 2)
+        log(f"  [Perc] beat={beat_start} ({ind['time_sec']}s): R1={r1:.1f} R5={r5:.1f} diff={diff_pct}%")
+
+        if r5 > r1 and diff >= threshold:
+            confirmed.append({
+                'beat': beat_start,
+                'time_sec': ind['time_sec'],
+                'position': pos_physical,
+                'diff_pct': diff_pct,
+            })
+            last_bridge_beat = beat_start
+            log(f"  [Perc] beat={beat_start}: CONFIRMED ({diff_pct}%)")
+        else:
+            log(f"  [Perc] beat={beat_start}: rejected ({diff_pct}% < {threshold*100:.0f}%)")
+
+    log(f"[Perc] Total perc confirmed bridges: {len(confirmed)}")
+    return confirmed
+
+
 # ==========================================
 # АНАЛИЗ ПОПСА
 # ==========================================
@@ -790,7 +950,7 @@ def generate_layout(quarters, bridges, start_idx, beats, row1_offset=0):
     current_row_start = 5 if row1_offset == 4 else 1
     segment_start_beat = quarters[0]['beat_start_global']
 
-    for i, q in enumerate(quarters):
+    for _, q in enumerate(quarters):
         if q['beat_start_global'] in bridge_beats:
             # Закрываем текущий сегмент
             if layout or segment_start_beat is not None:
@@ -876,49 +1036,55 @@ def analyze_v2(audio_path):
 
     # --- Вычисление побитовых данных ---
     log("Precomputing mel spectrogram...")
-    mel_spec, mel_hop = precompute_mel_spectrogram(y, sr)
-    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec, mel_hop)
+    mel_spec, mel_hop, mel_freqs = precompute_mel_spectrogram(y, sr)
+    beats = compute_beat_data(all_beats, activations, rnn_fps, y, sr, mel_spec, mel_hop, mel_freqs)
+
+    # --- local_bpm: локальный темп по интервалам между битами ---
+    for i in range(len(beats)):
+        if i < len(beats) - 1:
+            interval = beats[i + 1]['time'] - beats[i]['time']
+            beats[i]['local_bpm'] = round(60.0 / interval, 1) if interval > 0 else float(bpm)
+        else:
+            beats[i]['local_bpm'] = beats[max(0, i - 1)].get('local_bpm', float(bpm))
 
     # === ФАЗА 0: Классификация ===
     peaks, peak1_pos, peak2_pos = classify_peaks(activations, all_beats, rnn_fps)
     log(f"[Phase 0] Peak positions in 8-beat cycle: {peak1_pos}, {peak2_pos}")
 
-    # === ФАЗА 1: Поиск начала и определение рядов (только по тактам сильных рядов) ===
-    start_idx, strong_rows_tact_list, strong_rows_tact_by_row = find_song_start(
-        beats, config, peak1_pos, peak2_pos
+    # === ФАЗА 1: РАЗ по perceptual_energy ===
+    start_idx, strong_rows_tact_list, strong_rows_tact_by_row = find_song_start_perc(
+        beats, peak1_pos, peak2_pos, config
     )
-    # Лог таблицы тактов сильных рядов (первые 20 записей)
-    log("[Phase 1] Strong rows tact table (first 20):")
-    for r in strong_rows_tact_list[:20]:
-        log(f"  row_pos={r['row_position']} beat={r['beat']} time={r['time_sec']}s tact_sum={r['tact_sum']} tact_avg={r['tact_avg']}")
-    if len(strong_rows_tact_list) > 20:
-        log(f"  ... and {len(strong_rows_tact_list) - 20} more")
+    row1_offset = 0
+    row_swapped = False
 
-    row1_offset, row_swapped = determine_rows(beats, start_idx, config)
-
-    # === Нормализация стартовой позиции ===
-    # Если row_swapped=True, истинный РАЗ находится на 4 бита ПОЗЖЕ текущего start_idx.
-    # Сдвигаем start_idx к истинному РАЗ, затем откатываем назад кратно 8 битам,
-    # чтобы танцор не стоял долго в ожидании первого РАЗ.
-    if row_swapped and start_idx + 4 < len(beats):
-        start_idx += 4
-        row1_offset = 0
-        row_swapped = False
-        log(f"[Phase 1] Normalize: start shifted +4 to true РАЗ → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
-
-    # Откатываем к началу трека кратно 8 битам (сетка строится с самого начала)
+    # Натягиваем сетку на начало трека кратно 8 битам (без остатка)
     shift_back = (start_idx // 8) * 8
     if shift_back > 0:
         start_idx -= shift_back
         log(f"[Phase 1] Shift back {shift_back} beats → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
-
-    # Переопределяем ряды с новой стартовой позиции
-    row1_offset, row_swapped = determine_rows(beats, start_idx, config)
-    log(f"[Phase 1] Final: start_idx={start_idx} ({beats[start_idx]['time']:.2f}s), row_swapped={row_swapped}")
+    log(f"[Phase 1] Final РАЗ: beat {start_idx} ({beats[start_idx]['time']:.2f}s)")
 
     # === Попса ===
     if peaks == 4:
-        layout = analyze_popsa(beats, start_idx)
+        # Старт от первого пика: peak1_pos — позиция (0-7) сильнейшего такта.
+        # Первый бит с этой позицией имеет индекс = peak1_pos (по модулю 8).
+        popsa_start_idx = peak1_pos
+        layout = analyze_popsa(beats, popsa_start_idx)
+
+        # Проверка выравнивания: начало каждого 4-битового чанка должно попадать
+        # на одну из двух сильных позиций (peak1_pos и peak1_pos+4).
+        peak_pos_set = {peak1_pos % 8, (peak1_pos + 4) % 8}
+        log(f"[Popsa] Grid from beat {popsa_start_idx} ({beats[popsa_start_idx]['time']:.2f}s), "
+            f"strong positions in cycle: {sorted(peak_pos_set)}")
+        for seg in layout[:6]:
+            fb = seg['from_beat']
+            pos_in_8 = fb % 8
+            on_peak = pos_in_8 in peak_pos_set
+            ms = beats[fb]['madmom_score']
+            log(f"  row1_start={seg['row1_start']} beat={fb} pos={pos_in_8} "
+                f"madmom={ms:.3f} {'OK' if on_peak else '!! NOT ON PEAK'}")
+
         # Счёт битов с 1 в выходном JSON
         return {
             'success': True,
@@ -927,40 +1093,35 @@ def analyze_v2(audio_path):
             'peaks_per_octave': 4,
             'bpm': bpm,
             'duration': round(duration, 2),
-            'song_start_beat': start_idx + 1,
-            'song_start_time': round(beats[start_idx]['time'], 2),
+            'song_start_beat': popsa_start_idx + 1,
+            'song_start_time': round(beats[popsa_start_idx]['time'], 2),
             'layout': [{'from_beat': s['from_beat'] + 1, 'to_beat': s['to_beat'] + 1,
                        'time_start': s['time_start'], 'time_end': s['time_end'],
                        'row1_start': s['row1_start']} for s in layout],
             'indicators': [],
             'bridges': [],
+            'perc_bridge_candidates': [],
+            'perc_confirmed_bridges': [],
             'square_analysis': {'parts': {}, 'verdict': 'popsa'},
             'beat_base': 1,
-        'per_beat_data': [{'id': b['id'] + 1, 'time': round(b['time'], 3),
+            'per_beat_data': [{'id': b['id'] + 1, 'time': round(b['time'], 3),
                                'energy': round(b['energy'], 4),
-                               'mel_energy': round(b.get('mel_energy', 0.0), 4),
-                               'madmom_score': round(b['madmom_score'], 4)}
+                               'perceptual_energy': round(b.get('perceptual_energy', 0.0), 4),
+                               'madmom_score': round(b['madmom_score'], 4),
+                               'local_bpm': round(b.get('local_bpm', 0.0), 1)}
                               for b in beats],
         }
 
     # === ФАЗА 2: Анализ КВАДРАТ ===
     square_result = analyze_square(beats, start_idx, row1_offset)
 
-    # === ФАЗА 3: Индикаторы (по тактам рядов 1 и 5) и мостики ===
+    # === ФАЗА 3: поиск мостиков — отключён, двигаемся шагами ===
     quarters = compute_quarters(beats, start_idx, row1_offset)
-    indicators, indicator_tact_table = compute_indicators_from_tacts(
-        strong_rows_tact_list, start_idx, beats, config
-    )
-
-    bridges = []
+    indicator_tact_table = []
     indicator_decisions = []
-
-    if square_result['verdict'] == 'has_bridges':
-        bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
-    else:
-        # Квадрат подтверждён, индикаторы не обрабатываем
-        indicator_decisions = [{**ind, 'action': 'not_processed', 'reason': 'Квадрат подтверждён'}
-                               for ind in indicators]
+    bridges = []
+    perc_bridge_candidates = []
+    perc_confirmed_bridges = []
 
     # === Layout ===
     layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
@@ -982,6 +1143,10 @@ def analyze_v2(audio_path):
     def beat1(x):
         return x + 1
 
+    perc_values = [b.get('perceptual_energy', 0.0) for b in beats]
+    perc_mean = float(np.mean(perc_values)) if perc_values else 0.0
+    perc_mean_minus_30 = perc_mean * (1.0 - 0.30)
+
     result = {
         'success': True,
         'version': 'v2',
@@ -994,6 +1159,8 @@ def analyze_v2(audio_path):
         'row1_sum': round(initial_r1, 4),
         'row5_sum': round(initial_r5, 4),
         'row_swapped': row_swapped,
+        'perceptual_energy_mean': round(perc_mean, 4),
+        'perceptual_energy_mean_minus_30': round(perc_mean_minus_30, 4),
         'strong_rows_tact_table': [{**r, 'beat': beat1(r['beat'])} for r in strong_rows_tact_list],
         'strong_rows_tact_by_row': {
             str(k): [{**x, 'beat': beat1(x['beat'])} for x in v]
@@ -1008,6 +1175,12 @@ def analyze_v2(audio_path):
         ],
         'indicators': [{**ind, 'beat': beat1(ind['beat'])} for ind in indicator_decisions],
         'bridges': [{**b, 'beat': beat1(b['beat'])} for b in bridges],
+        'perc_bridge_candidates': [
+            {**c, 'beat': beat1(c['beat'])} for c in perc_bridge_candidates
+        ],
+        'perc_confirmed_bridges': [
+            {**c, 'beat': beat1(c['beat'])} for c in perc_confirmed_bridges
+        ],
         'layout': [{'from_beat': beat1(s['from_beat']), 'to_beat': beat1(s['to_beat']),
                    'time_start': s['time_start'], 'time_end': s['time_end'],
                    'row1_start': s['row1_start']} for s in layout],
@@ -1021,8 +1194,9 @@ def analyze_v2(audio_path):
         'beat_base': 1,
         'per_beat_data': [{'id': beat1(b['id']), 'time': round(b['time'], 3),
                            'energy': round(b['energy'], 4),
-                           'mel_energy': round(b.get('mel_energy', 0.0), 4),
-                           'madmom_score': round(b['madmom_score'], 4)}
+                           'perceptual_energy': round(b.get('perceptual_energy', 0.0), 4),
+                           'madmom_score': round(b['madmom_score'], 4),
+                           'local_bpm': round(b.get('local_bpm', 0.0), 1)}
                           for b in beats],
     }
 
