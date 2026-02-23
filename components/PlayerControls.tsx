@@ -20,16 +20,20 @@ export default function PlayerControls({
     isPlaying,
     currentTime,
     duration,
+    playUntilSeconds,
     musicVolume,
     voiceVolume,
     setCurrentTime,
     setMusicVolume,
     setVoiceVolume,
+    playNext,
   } = usePlayerStore();
 
   const [isDragging, setIsDragging] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
-  const isInteractingRef = useRef(false); // Interaction lock to prevent race conditions
+  const isInteractingRef = useRef(false);
+  const limitTriggeredRef = useRef(false);
+  const limitTriggeredForTrackIdRef = useRef<number | null>(null);
 
   // Smart Update Loop - Only updates when NOT interacting
   useEffect(() => {
@@ -48,8 +52,30 @@ export default function PlayerControls({
       // This ensures the engine never overwrites the UI during user interactions
       if (!isDragging && !isInteractingRef.current && state.isPlaying) {
         const time = audioEngine.getCurrentTime();
-        // Update store directly to drive UI
         state.setCurrentTime(time);
+
+        const limit = state.playUntilSeconds;
+        if (limit != null && limit > 0) {
+          if (time < limit) {
+            limitTriggeredRef.current = false;
+            limitTriggeredForTrackIdRef.current = null;
+          } else if (!limitTriggeredRef.current) {
+            limitTriggeredRef.current = true;
+            limitTriggeredForTrackIdRef.current =
+              state.currentTrack?.id ?? null;
+            state.playNext();
+          }
+        }
+      }
+
+      // Сброс флага лимита при смене трека (на случай, если playNext не вызвался)
+      const currentTrackId = state.currentTrack?.id ?? null;
+      if (
+        limitTriggeredForTrackIdRef.current !== null &&
+        currentTrackId !== limitTriggeredForTrackIdRef.current
+      ) {
+        limitTriggeredRef.current = false;
+        limitTriggeredForTrackIdRef.current = null;
       }
 
       rafId = requestAnimationFrame(updateLoop);
@@ -70,7 +96,11 @@ export default function PlayerControls({
     const x = e.clientX - rect.left;
     const width = rect.width;
     const percentage = Math.max(0, Math.min(1, x / width));
-    const newTime = percentage * duration;
+    const endTime =
+      playUntilSeconds != null && playUntilSeconds > 0
+        ? Math.min(duration, playUntilSeconds)
+        : duration;
+    const newTime = Math.min(percentage * endTime, endTime);
 
     // STEP 3: Optimistically update store (instant visual feedback)
     setCurrentTime(newTime);
@@ -91,15 +121,20 @@ export default function PlayerControls({
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Simple render: Use currentTime directly from store
-  // No local state conflicts - single source of truth
-  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
+  // Effective end time: limit if "play until" is set, else full duration
+  const effectiveDuration =
+    playUntilSeconds != null && playUntilSeconds > 0
+      ? Math.min(duration, playUntilSeconds)
+      : duration;
+
+  // Simple render: Use currentTime directly from store; cap progress by effective duration
+  const progressPercentage =
+    effectiveDuration > 0
+      ? Math.min(100, (currentTime / effectiveDuration) * 100)
+      : 0;
 
   return (
-    <div 
-      className="space-y-4 sm:space-y-6"
-      data-component="player-controls"
-    >
+    <div className="space-y-4 sm:space-y-6" data-component="player-controls">
       {/* Play/Pause/Stop Buttons */}
       <div className="flex justify-center items-center gap-3 sm:gap-4">
         <button
@@ -157,7 +192,7 @@ export default function PlayerControls({
         </div>
         <div className="flex justify-between text-sm text-gray-400">
           <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
+          <span>{formatTime(effectiveDuration)}</span>
         </div>
       </div>
 

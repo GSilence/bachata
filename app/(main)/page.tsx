@@ -149,10 +149,8 @@ export default function PlaybackPage() {
         if (Array.isArray(data)) {
           setTracks(data);
 
-          // Получаем текущий трек из store для проверки
           const { currentTrack: currentTrackState } = usePlayerStore.getState();
 
-          // Если список треков пустой, очищаем currentTrack
           if (data.length === 0) {
             if (currentTrackState) {
               console.log("Clearing currentTrack: no tracks available");
@@ -161,40 +159,30 @@ export default function PlaybackPage() {
             return;
           }
 
-          // Проверяем, существует ли текущий трек в новом списке
-          if (
-            currentTrackState &&
-            !data.find((t) => t.id === currentTrackState.id)
-          ) {
+          const currentTrackInList = currentTrackState
+            ? data.some((t) => t.id === currentTrackState.id)
+            : false;
+
+          if (currentTrackState && !currentTrackInList) {
             console.log("Current track not found in list, clearing it");
             setCurrentTrack(null);
           }
 
-          // Всегда пытаемся восстановить трек из localStorage или выбрать первый
-          // Используем restoreTrackFromStorage для безопасного восстановления
-          // Эта функция автоматически очистит corrupted localStorage
+          // Восстанавливаем или выбираем трек только если текущего нет — не перезаписываем выбор при обновлении списка
+          const { currentTrack: afterClear } = usePlayerStore.getState();
+          if (afterClear != null) {
+            return;
+          }
+
           const restoredTrack = restoreTrackFromStorage(data);
-
-          // Определяем, какой трек выбрать
           const trackToLoad: Track | null = restoredTrack || data[0];
-
-          // Получаем актуальный currentTrack после возможной очистки
-          const { currentTrack: updatedCurrentTrack } =
-            usePlayerStore.getState();
-
-          // Загружаем трек, если он отличается от текущего
-          if (
-            trackToLoad &&
-            (!updatedCurrentTrack || updatedCurrentTrack.id !== trackToLoad.id)
-          ) {
+          if (trackToLoad) {
             console.log("Loading initial track:", trackToLoad.title);
-            // Используем loadTrack, который автоматически загрузит трек в AudioEngine
             loadTrack(trackToLoad);
           }
         } else {
           console.warn("API returned non-array data:", data);
           setTracks([]);
-          // Очищаем currentTrack при ошибке
           const { currentTrack: currentTrackState } = usePlayerStore.getState();
           if (currentTrackState) {
             setCurrentTrack(null);

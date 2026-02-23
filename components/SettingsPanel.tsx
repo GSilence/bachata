@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePlayerStore } from "@/store/playerStore";
 import type { PlayMode, VoiceFilter, VoiceLanguage } from "@/types";
 
@@ -17,12 +17,24 @@ export default function SettingsPanel({
     playMode,
     voiceFilter,
     voiceLanguage,
+    playUntilSeconds,
     setPlayMode,
     setVoiceFilter,
     setVoiceLanguage,
+    setPlayUntilSeconds,
   } = usePlayerStore();
   const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
   const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false);
+  const [playUntilInput, setPlayUntilInput] = useState("");
+
+  // Синхронизируем поле "воспроизводить до" с store (при загрузке из persist)
+  useEffect(() => {
+    if (playUntilSeconds == null) {
+      setPlayUntilInput("");
+    } else {
+      setPlayUntilInput(String(Math.round(playUntilSeconds)));
+    }
+  }, [playUntilSeconds]);
 
   const playModes: { value: PlayMode; label: string }[] = [
     { value: "sequential", label: "Sequential (По порядку)" },
@@ -87,6 +99,51 @@ export default function SettingsPanel({
                 <span className="text-sm text-gray-300">{mode.label}</span>
               </label>
             ))}
+          </div>
+
+          {/* Воспроизводить до (ограничение по времени) */}
+          <div className="pt-3 border-t border-gray-700/70 mt-3">
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Воспроизводить до
+            </label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                placeholder="сек"
+                value={playUntilInput}
+                onChange={(e) => setPlayUntilInput(e.target.value)}
+                onBlur={() => {
+                  const trimmed = playUntilInput.trim();
+                  if (!trimmed) {
+                    setPlayUntilSeconds(null);
+                    return;
+                  }
+                  const sec = parseInt(trimmed, 10);
+                  if (Number.isFinite(sec) && sec > 0) {
+                    setPlayUntilSeconds(sec);
+                    setPlayUntilInput(String(sec));
+                  } else {
+                    setPlayUntilSeconds(null);
+                    setPlayUntilInput("");
+                  }
+                }}
+                className="w-24 px-2 py-1.5 rounded bg-gray-700 text-gray-200 text-sm border border-gray-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                aria-label="Секунды"
+              />
+              <span className="text-sm text-gray-500">сек</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPlayUntilSeconds(null);
+                  setPlayUntilInput("");
+                }}
+                className="px-2 py-1.5 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors"
+              >
+                Сбросить
+              </button>
+            </div>
           </div>
         </div>
       )}

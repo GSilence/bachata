@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePlayerStore } from "@/store/playerStore";
-import type { Track } from "@/types";
+import type { Track, PlaylistSortBy } from "@/types";
 
 interface PlaylistProps {
   onTrackSelect: (track: Track) => void;
@@ -16,6 +16,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     searchQuery,
     bridgeFilterWith,
     bridgeFilterWithout,
+    playlistSortBy,
     squareSortDirection,
     squareDominanceMin,
     squareDominanceMax,
@@ -23,6 +24,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     setSearchQuery,
     setBridgeFilterWith,
     setBridgeFilterWithout,
+    setPlaylistSortBy,
     setSquareSortDirection,
     setSquareDominanceRange,
   } = usePlayerStore();
@@ -63,13 +65,39 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     return true;
   });
 
+  const collator = new Intl.Collator(undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+  const sortByMain = (list: Track[]): Track[] =>
+    [...list].sort((a, b) => {
+      switch (playlistSortBy) {
+        case "title":
+          return collator.compare(a.title, b.title) || a.id - b.id;
+        case "duration": {
+          const da = a.gridMap?.duration ?? 0;
+          const db = b.gridMap?.duration ?? 0;
+          return da !== db ? da - db : a.id - b.id;
+        }
+        case "date": {
+          const ta = new Date(a.createdAt).getTime();
+          const tb = new Date(b.createdAt).getTime();
+          return tb - ta || a.id - b.id;
+        }
+        default:
+          return a.id - b.id;
+      }
+    });
+
+  let sortedTracks = sortByMain(filteredTracks);
+
   if (squareSortDirection !== "none") {
     const hasBridges = (t: Track) => (t.gridMap?.bridges?.length ?? 0) > 0;
     const getDominance = (t: Track) =>
       (t.gridMap as { rowDominancePercent?: number })?.rowDominancePercent ??
       -Infinity;
-    const squareTracks = filteredTracks.filter((t) => !hasBridges(t));
-    const bridgeTracks = filteredTracks.filter((t) => hasBridges(t));
+    const squareTracks = sortedTracks.filter((t) => !hasBridges(t));
+    const bridgeTracks = sortedTracks.filter((t) => hasBridges(t));
     const sortedSquare =
       squareSortDirection === "desc"
         ? [...squareTracks].sort((a, b) => {
@@ -80,7 +108,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
             const d = getDominance(a) - getDominance(b);
             return d !== 0 ? d : a.id - b.id;
           });
-    filteredTracks = [...sortedSquare, ...bridgeTracks];
+    sortedTracks = [...sortedSquare, ...bridgeTracks];
   }
 
   // Проверяем, есть ли прокрутка
@@ -107,7 +135,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         resizeObserver.disconnect();
       };
     }
-  }, [filteredTracks]);
+  }, [sortedTracks]);
 
   const scrollToBottom = () => {
     if (scrollContainerRef.current) {
@@ -159,6 +187,31 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600 text-white placeholder-gray-400"
       />
 
+      {/* Основная сортировка */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-gray-400">Сортировка:</span>
+        {(
+          [
+            { value: "title" as const, label: "По названию" },
+            { value: "duration" as const, label: "По длительности" },
+            { value: "date" as const, label: "По дате загрузки" },
+          ] satisfies { value: PlaylistSortBy; label: string }[]
+        ).map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setPlaylistSortBy(value)}
+            className={`px-3 py-1.5 text-sm rounded transition-colors ${
+              playlistSortBy === value
+                ? "bg-purple-600 text-white"
+                : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Фильтр по мостикам */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-gray-400">Показать:</span>
@@ -185,37 +238,37 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       {/* Фильтр по % доминирования РАЗ над ПЯТЬ и сортировка только для песен без мостиков */}
       <div className="space-y-2 rounded-lg bg-gray-800/50 p-3 border border-gray-700">
         <div className="text-xs text-gray-400 uppercase tracking-wide">
-          % доминирования РАЗ над ПЯТЬ
+          % доминирования РАЗ над ПЯТЬ (отриц. = ПЯТЬ больше)
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm text-gray-400">от</span>
           <input
             type="range"
-            min={0}
+            min={-100}
             max={100}
             value={squareDominanceMin}
             onChange={(e) => {
-              const v = parseFloat(e.target.value) || 0;
+              const v = parseFloat(e.target.value) ?? -100;
               setSquareDominanceRange(v, Math.max(v, squareDominanceMax));
             }}
             className="w-24 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-purple-600"
           />
-          <span className="text-sm text-gray-300 tabular-nums w-8">
+          <span className="text-sm text-gray-300 tabular-nums w-10">
             {squareDominanceMin}%
           </span>
           <span className="text-sm text-gray-400">до</span>
           <input
             type="range"
-            min={0}
+            min={-100}
             max={100}
             value={squareDominanceMax}
             onChange={(e) => {
-              const v = parseFloat(e.target.value) || 100;
+              const v = parseFloat(e.target.value) ?? 100;
               setSquareDominanceRange(Math.min(v, squareDominanceMin), v);
             }}
             className="w-24 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-purple-600"
           />
-          <span className="text-sm text-gray-300 tabular-nums w-8">
+          <span className="text-sm text-gray-300 tabular-nums w-10">
             {squareDominanceMax}%
           </span>
         </div>
@@ -316,7 +369,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         ) : filteredTracks.length === 0 ? (
           <p className="text-gray-400 text-center py-4">Треки не найдены</p>
         ) : (
-          filteredTracks.map((track) => {
+          sortedTracks.map((track) => {
             const isActive = currentTrack?.id === track.id;
             return (
               <button

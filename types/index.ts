@@ -2,6 +2,8 @@ export type PlayMode = "sequential" | "random" | "loop";
 export type VoiceFilter = "mute" | "on1" | "on1times3" | "on1and5" | "full";
 export type VoiceLanguage = "en" | "pt";
 export type PlaylistFilter = "free" | "my" | "all";
+/** Основная сортировка списка треков в плейлисте */
+export type PlaylistSortBy = "title" | "duration" | "date";
 
 export interface GridSection {
   type: "verse" | "bridge";
@@ -106,10 +108,15 @@ export interface PlayerState {
   bridgeFilterWithout: boolean;
   /** Сортировка по % доминирования РАЗ над ПЯТЬ: none = без сортировки, asc/desc = только песни без мостиков; с мостиками внизу */
   squareSortDirection: "none" | "asc" | "desc";
+  /** Основная сортировка плейлиста: по названию, длительности, дате загрузки, исполнителю */
+  playlistSortBy: PlaylistSortBy;
   /** Фильтр по % доминирования: от (двойной ползунок) */
   squareDominanceMin: number;
   /** Фильтр по % доминирования: до (двойной ползунок) */
   squareDominanceMax: number;
+
+  /** Ограничить воспроизведение трека до указанного времени (секунды). null = без ограничения */
+  playUntilSeconds: number | null;
 
   // Переоценка расклада (блокирует страницу, не сохраняется)
   isReanalyzing: boolean;
@@ -138,7 +145,9 @@ export interface PlayerState {
   setBridgeFilterWith: (value: boolean) => void;
   setBridgeFilterWithout: (value: boolean) => void;
   setSquareSortDirection: (dir: "none" | "asc" | "desc") => void;
+  setPlaylistSortBy: (by: PlaylistSortBy) => void;
   setSquareDominanceRange: (min: number, max: number) => void;
+  setPlayUntilSeconds: (seconds: number | null) => void;
   setAudioEngine: (engine: any | null) => void;
 
   // AudioEngine methods (синхронизируют Zustand и Howler)
