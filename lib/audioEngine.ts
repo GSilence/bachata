@@ -77,6 +77,10 @@ export class AudioEngine {
   // NEW: Явный флаг состояния, чтобы избежать гонки (race condition) с Howler
   private _isPlaying: boolean = false;
 
+  // Лимит воспроизведения (секунды). Проверяется в update() через setInterval,
+  // поэтому работает при заблокированном экране и скрытой вкладке.
+  private _playUntilSeconds: number | null = null;
+
   // Beat tracking
   private beatGrid: Beat[] = [];
   private currentBeatIndex: number = 0;
@@ -846,6 +850,10 @@ export class AudioEngine {
     });
   }
 
+  setPlayUntilSeconds(seconds: number | null) {
+    this._playUntilSeconds = seconds;
+  }
+
   setVoiceFilter(filter: "mute" | "on1" | "on1times3" | "on1and5" | "full") {
     this.voiceFilter = filter;
   }
@@ -914,6 +922,30 @@ export class AudioEngine {
     // Проверка isPlaying нужна только чтобы не двигать логику, если мы на паузе (но update по идее остановлен там).
 
     const currentTime = this.getCurrentTime();
+
+    // Проверка лимита воспроизведения — выполняется через setInterval, работает
+    // при заблокированном экране и скрытой вкладке (в отличие от requestAnimationFrame).
+    if (
+      this._playUntilSeconds != null &&
+      this._playUntilSeconds > 0 &&
+      this._isPlaying &&
+      !this.trackEndFired &&
+      currentTime >= this._playUntilSeconds
+    ) {
+      this.trackEndFired = true;
+      this._isPlaying = false;
+      // Пауза (не стоп — не сбрасываем позицию, playNext сам загрузит следующий трек)
+      if (this.isStemsMode && this.currentTrack?.isProcessed) {
+        const stemKeys: Array<keyof typeof this.stemsTracks> = ["vocals", "drums", "bass", "other"];
+        stemKeys.forEach((k) => this.stemsTracks[k]?.pause());
+      } else if (this.musicTrack) {
+        this.musicTrack.pause();
+      }
+      this.stopAllScheduledVoices();
+      this.stopUpdate();
+      if (this.onTrackEnd) this.onTrackEnd();
+      return;
+    }
 
     // 1. Уведомляем UI (для прогресс-бара)
     if (this.onTimeUpdate) {
