@@ -34,6 +34,49 @@ export default function PlayerControls({
   const isInteractingRef = useRef(false);
   const limitTriggeredRef = useRef(false);
   const limitTriggeredForTrackIdRef = useRef<number | null>(null);
+  const limitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // setTimeout-based limit enforcement — works even when RAF is frozen
+  // (tab hidden, screen locked on mobile). RAF is still kept as primary UX update loop.
+  useEffect(() => {
+    if (limitTimeoutRef.current !== null) {
+      clearTimeout(limitTimeoutRef.current);
+      limitTimeoutRef.current = null;
+    }
+
+    if (!isPlaying || playUntilSeconds == null || playUntilSeconds <= 0) return;
+
+    const now = audioEngine.getCurrentTime();
+    const remainingMs = (playUntilSeconds - now) * 1000;
+    if (remainingMs <= 0) return;
+
+    limitTimeoutRef.current = setTimeout(() => {
+      limitTimeoutRef.current = null;
+      const state = usePlayerStore.getState();
+      if (state.isPlaying) state.playNext();
+    }, remainingMs);
+
+    return () => {
+      if (limitTimeoutRef.current !== null) {
+        clearTimeout(limitTimeoutRef.current);
+        limitTimeoutRef.current = null;
+      }
+    };
+  }, [isPlaying, playUntilSeconds, currentTrack]);
+
+  // visibilitychange — re-check limit when screen unlocks / tab regains focus
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) return;
+      const state = usePlayerStore.getState();
+      if (!state.isPlaying) return;
+      const limit = state.playUntilSeconds;
+      if (limit == null || limit <= 0) return;
+      if (audioEngine.getCurrentTime() >= limit) state.playNext();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
   // Smart Update Loop - Only updates when NOT interacting
   useEffect(() => {

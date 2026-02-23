@@ -4,6 +4,10 @@ import React from "react";
 import dynamic from "next/dynamic";
 
 const PerBeatChart = dynamic(() => import("./PerBeatChart"), { ssr: false });
+const TactComparisonChart = dynamic(
+  () => import("./TactComparisonChart"),
+  { ssr: false },
+);
 
 interface Indicator {
   quarter_index: number;
@@ -54,6 +58,7 @@ interface V2Result {
   row1_sum: number;
   row5_sum: number;
   row_swapped: boolean;
+  perceptual_energy_mean?: number;
   strong_rows_tact_table?: {
     row_position: number;
     beat: number;
@@ -590,6 +595,21 @@ export default function V2AnalysisDisplay({
           </button>
         </div>
       )}
+
+      {/* График perceptual energy тактов обоих рядов */}
+      {data.track_type === "bachata" &&
+        data.strong_rows_tact_table &&
+        data.strong_rows_tact_table.length > 0 &&
+        data.row_analysis_verdict?.winning_rows &&
+        data.row_analysis_verdict.winning_rows.length >= 2 && (
+          <TactComparisonChart
+            tactTable={data.strong_rows_tact_table}
+            winningRows={data.row_analysis_verdict.winning_rows}
+            songStartBeat={data.song_start_beat}
+            percMean={data.perceptual_energy_mean}
+            height={180}
+          />
+        )}
 
       {/* Таблица тактов сильных рядов (суммы энергий по тактам) */}
       {data.track_type === "bachata" &&

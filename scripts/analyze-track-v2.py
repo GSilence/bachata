@@ -327,58 +327,66 @@ def find_song_start_perc(beats, peak1_pos, peak2_pos, config):
     return 0, table_list, table_by_row
 
 
-def determine_rows(beats, start_idx, config):
-    """
-    Заход 3 Фазы 1: Итоговый истинный РАЗ.
-    Сравниваем суммы энергии (RMS) 4-битовых тактов для первых 8 восьмёрок.
-    Если ряд 5 доминирует — обрезаем до первых 4 восьмёрок и перепроверяем.
-    Своп применяется только если доминирование ряда 5 сохранилось после обрезки.
-    Возвращает: (row1_offset, row_swapped)
-    """
-    n_quarters = config['initial_quarters_count']  # 8
-
-    row1_energy = []
-    row5_energy = []
-
-    for q in range(n_quarters):
-        r1_start = start_idx + q * 8
-        r5_start = start_idx + q * 8 + 4
-
-        if r1_start + 3 < len(beats):
-            row1_energy.append(sum(beats[j]['energy'] for j in range(r1_start, r1_start + 4)))
-        elif r1_start < len(beats):
-            row1_energy.append(beats[r1_start]['energy'])
-
-        if r5_start + 3 < len(beats):
-            row5_energy.append(sum(beats[j]['energy'] for j in range(r5_start, r5_start + 4)))
-        elif r5_start < len(beats):
-            row5_energy.append(beats[r5_start]['energy'])
-
-    if not row1_energy or not row5_energy:
-        return 0, False
-
-    sum_r1 = sum(row1_energy)
-    sum_r5 = sum(row5_energy)
-    log(f"[Phase 1] Pass 3 (energy) — Row 1: {sum_r1:.4f}, Row 5: {sum_r5:.4f}")
-
-    if sum_r1 >= sum_r5:
-        log("[Phase 1] Row 1 dominates — true РАЗ = row 1")
-        return 0, False
-
-    # R5 > R1 → обрезаем до первых 4 восьмёрок и перепроверяем
-    trim = 4
-    r1t = row1_energy[:trim]
-    r5t = row5_energy[:trim]
-    sum_r1t = sum(r1t)
-    sum_r5t = sum(r5t)
-    log(f"[Phase 1] energy after trim (first {trim}): Row 1={sum_r1t:.4f}, Row 5={sum_r5t:.4f}")
-
-    if sum_r1t >= sum_r5t:
-        log("[Phase 1] After trim: Row 1 dominates — true РАЗ = row 1")
-        return 0, False
-
-    log("[Phase 1] Row 5 still dominates after trim — swap (song starts from row 5)")
-    return 4, True
+# УСТАРЕЛО (deprecated artifact) — НЕ ВЫЗЫВАЕТСЯ.
+# Старый алгоритм Захода 3 Фазы 1: сравнивал суммы RMS-энергии первых 8 восьмёрок,
+# чтобы определить, какой ряд является РАЗ (peak1_pos или peak2_pos).
+# Заменён механизмом find_song_start_perc(): первый такт любого ряда, у которого
+# хотя бы один из первых трёх битов превышает mean_perc, объявляется РАЗ.
+# row1_offset=0 и row_swapped=False — корректные начальные значения, т.к.
+# найденный find_song_start_perc тактом и есть стартовый бит РАЗ по определению.
+#
+# def determine_rows(beats, start_idx, config):
+#     """
+#     Заход 3 Фазы 1: Итоговый истинный РАЗ.
+#     Сравниваем суммы энергии (RMS) 4-битовых тактов для первых 8 восьмёрок.
+#     Если ряд 5 доминирует — обрезаем до первых 4 восьмёрок и перепроверяем.
+#     Своп применяется только если доминирование ряда 5 сохранилось после обрезки.
+#     Возвращает: (row1_offset, row_swapped)
+#     """
+#     n_quarters = config['initial_quarters_count']  # 8
+#
+#     row1_energy = []
+#     row5_energy = []
+#
+#     for q in range(n_quarters):
+#         r1_start = start_idx + q * 8
+#         r5_start = start_idx + q * 8 + 4
+#
+#         if r1_start + 3 < len(beats):
+#             row1_energy.append(sum(beats[j]['energy'] for j in range(r1_start, r1_start + 4)))
+#         elif r1_start < len(beats):
+#             row1_energy.append(beats[r1_start]['energy'])
+#
+#         if r5_start + 3 < len(beats):
+#             row5_energy.append(sum(beats[j]['energy'] for j in range(r5_start, r5_start + 4)))
+#         elif r5_start < len(beats):
+#             row5_energy.append(beats[r5_start]['energy'])
+#
+#     if not row1_energy or not row5_energy:
+#         return 0, False
+#
+#     sum_r1 = sum(row1_energy)
+#     sum_r5 = sum(row5_energy)
+#     log(f"[Phase 1] Pass 3 (energy) — Row 1: {sum_r1:.4f}, Row 5: {sum_r5:.4f}")
+#
+#     if sum_r1 >= sum_r5:
+#         log("[Phase 1] Row 1 dominates — true РАЗ = row 1")
+#         return 0, False
+#
+#     # R5 > R1 → обрезаем до первых 4 восьмёрок и перепроверяем
+#     trim = 4
+#     r1t = row1_energy[:trim]
+#     r5t = row5_energy[:trim]
+#     sum_r1t = sum(r1t)
+#     sum_r5t = sum(r5t)
+#     log(f"[Phase 1] energy after trim (first {trim}): Row 1={sum_r1t:.4f}, Row 5={sum_r5t:.4f}")
+#
+#     if sum_r1t >= sum_r5t:
+#         log("[Phase 1] After trim: Row 1 dominates — true РАЗ = row 1")
+#         return 0, False
+#
+#     log("[Phase 1] Row 5 still dominates after trim — swap (song starts from row 5)")
+#     return 4, True
 
 
 # ==========================================
