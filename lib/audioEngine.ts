@@ -80,6 +80,11 @@ export class AudioEngine {
   // Лимит воспроизведения (секунды). Проверяется в update() через setInterval,
   // поэтому работает при заблокированном экране и скрытой вкладке.
   private _playUntilSeconds: number | null = null;
+  // Флаг: лимит достигнут — handleTrackEnd() должен переключить, минуя atRealEnd-проверку.
+  private _limitReached: boolean = false;
+  // Последняя известная позиция из update(). Нужна как fallback в handleTrackEnd(),
+  // т.к. Howler сбрасывает currentTime→0 ДО вызова onend-callback на Windows/Chrome.
+  private _lastKnownTime: number = 0;
 
   // Beat tracking
   private beatGrid: Beat[] = [];
@@ -264,6 +269,8 @@ export class AudioEngine {
 
     this.currentTrack = track;
     this.trackEndFired = false;
+    this._limitReached = false;
+    this._lastKnownTime = 0;
     this.currentBeatIndex = 0;
     this._isPlaying = false; // Reset playing state
 
@@ -412,11 +419,17 @@ export class AudioEngine {
   private handleTrackEnd() {
     this._isPlaying = false;
     this.stopUpdate(); // Останавливаем цикл
-    // Вызываем onTrackEnd только если реально у конца трека (защита от ложных "end" при свёрнутой вкладке / буфере)
+    // Вызываем onTrackEnd если:
+    // - реально у конца трека (защита от ложных "end" при свёрнутой вкладке / буфере)
+    // - ИЛИ лимит был явно достигнут (_limitReached=true из update())
     const duration = this.getDuration();
     const time = this.getCurrentTime();
-    const atRealEnd = duration > 0 && time >= Math.max(0, duration - 1);
+    // Howler сбрасывает seek()→0 ДО onend-callback (Windows/Chrome),
+    // поэтому используем _lastKnownTime как fallback если time=0.
+    const timeToCheck = time > 0 ? time : this._lastKnownTime;
+    const atRealEnd = (duration > 0 && timeToCheck >= Math.max(0, duration - 1)) || this._limitReached;
     if (this.onTrackEnd && !this.trackEndFired && atRealEnd) {
+      this._limitReached = false;
       this.trackEndFired = true;
       this.onTrackEnd();
     }
@@ -446,9 +459,11 @@ export class AudioEngine {
       }
     }
 
-    // Намеренно НЕ вызываем Howler.unload() глобально — он уничтожает iOS media session,
-    // из-за чего второй и последующие фоновые переключения треков падают молча.
-    // Каждый Howl уже был unload() выше — этого достаточно для очистки памяти.
+    try {
+      Howler.unload();
+    } catch (e) {
+      console.warn("Error calling Howler.unload():", e);
+    }
 
     this.currentTrack = null;
     this.trackEndFired = false;
@@ -921,6 +936,11 @@ export class AudioEngine {
 
     const currentTime = this.getCurrentTime();
 
+    // Сохраняем последнюю реальную позицию: Howler сбрасывает seek()→0 ДО вызова
+    // onend-callback, поэтому в handleTrackEnd() currentTime уже = 0 и atRealEnd-проверка
+    // ложно падает. Fallback на _lastKnownTime решает это.
+    if (currentTime > 0) this._lastKnownTime = currentTime;
+
     // Проверка лимита воспроизведения — выполняется через setInterval, работает
     // при заблокированном экране и скрытой вкладке (в отличие от requestAnimationFrame).
     if (
@@ -930,15 +950,13 @@ export class AudioEngine {
       !this.trackEndFired &&
       currentTime >= this._playUntilSeconds
     ) {
-      this.trackEndFired = true;
-      this._isPlaying = false;
-      // НЕ вызываем pause/stop здесь — пусть музыка продолжает играть ещё ~100ms
-      // пока playNext → loadTrack её не остановит самостоятельно.
-      // Это критично для iOS: пауза в фоне немедленно убивает media session,
-      // после чего новый трек не может стартовать без жеста пользователя.
-      this.stopAllScheduledVoices();
-      this.stopUpdate();
-      if (this.onTrackEnd) this.onTrackEnd();
+      // Ставим флаг и передаём управление handleTrackEnd() — там вся логика переключения.
+      // _limitReached=true позволяет handleTrackEnd() пропустить atRealEnd-проверку.
+      // Намеренно НЕ вызываем pause() — audio продолжает играть ~100ms пока
+      // playNext → loadTrack не остановит его. На iOS пауза в фоне убивает
+      // media session и блокирует старт следующего трека без жеста пользователя.
+      this._limitReached = true;
+      this.handleTrackEnd();
       return;
     }
 
