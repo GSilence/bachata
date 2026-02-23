@@ -419,16 +419,10 @@ export class AudioEngine {
   private handleTrackEnd() {
     this._isPlaying = false;
     this.stopUpdate(); // Останавливаем цикл
-    // Вызываем onTrackEnd если:
-    // - реально у конца трека (защита от ложных "end" при свёрнутой вкладке / буфере)
-    // - ИЛИ лимит был явно достигнут (_limitReached=true из update())
-    const duration = this.getDuration();
-    const time = this.getCurrentTime();
-    // Howler сбрасывает seek()→0 ДО onend-callback (Windows/Chrome),
-    // поэтому используем _lastKnownTime как fallback если time=0.
-    const timeToCheck = time > 0 ? time : this._lastKnownTime;
-    const atRealEnd = (duration > 0 && timeToCheck >= Math.max(0, duration - 1)) || this._limitReached;
-    if (this.onTrackEnd && !this.trackEndFired && atRealEnd) {
+    // Защита от двойного срабатывания — только trackEndFired (как в оригинале).
+    // atRealEnd-проверка убрана: на Android в фоне setInterval throttled до ~1s,
+    // поэтому _lastKnownTime может отставать от конца трека и проверка ложно давала false.
+    if (this.onTrackEnd && !this.trackEndFired) {
       this._limitReached = false;
       this.trackEndFired = true;
       this.onTrackEnd();

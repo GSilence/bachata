@@ -113,17 +113,20 @@ export default function PlaybackPage() {
   useEffect(() => {
     if (!currentTrack) {
       setMediaSessionPlaybackState("none");
+      // Нет трека — отзываем аудиофокус и останавливаем Silent Anchor
       audioEngine.stopSilentAnchor();
       return;
     }
-    // Обновляем метаданные только при смене трека или длительности, НЕ на каждое обновление времени
     setMediaSessionMetadata(currentTrack, currentTime, duration);
     setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
     if (isPlaying) {
       audioEngine.startSilentAnchor();
-    } else {
-      audioEngine.stopSilentAnchor();
     }
+    // ВАЖНО: Silent Anchor НЕ останавливаем при isPlaying=false пока трек загружен.
+    // При auto-переходе (playNext) isPlaying кратковременно false (~100ms).
+    // Если остановить Silent Anchor в этот момент, Android отзывает аудиофокус,
+    // и следующий musicTrack.play() блокируется автоплей-политикой.
+    // Якорь останавливается только когда currentTrack=null (выше).
   }, [currentTrack, isPlaying, duration]); // Убрали currentTime из зависимостей
 
   // Загрузка треков при монтировании
