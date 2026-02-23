@@ -55,16 +55,21 @@ export default function PlayerControls({
         state.setCurrentTime(time);
 
         const limit = state.playUntilSeconds;
-        if (limit != null && limit > 0) {
-          if (time < limit) {
-            limitTriggeredRef.current = false;
-            limitTriggeredForTrackIdRef.current = null;
-          } else if (!limitTriggeredRef.current) {
-            limitTriggeredRef.current = true;
-            limitTriggeredForTrackIdRef.current =
-              state.currentTrack?.id ?? null;
-            state.playNext();
-          }
+        const dur = state.duration;
+        // Переключаем по лимиту только если длительность известна и лимит в пределах трека (защита от сброса/глюков)
+        if (
+          limit != null &&
+          limit > 0 &&
+          dur >= limit &&
+          time >= limit &&
+          !limitTriggeredRef.current
+        ) {
+          limitTriggeredRef.current = true;
+          limitTriggeredForTrackIdRef.current = state.currentTrack?.id ?? null;
+          state.playNext();
+        } else if (limit == null || limit <= 0 || time < limit) {
+          limitTriggeredRef.current = false;
+          limitTriggeredForTrackIdRef.current = null;
         }
       }
 

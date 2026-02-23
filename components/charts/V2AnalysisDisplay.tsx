@@ -61,6 +61,24 @@ interface V2Result {
     tact_sum: number;
     tact_avg: number;
   }[];
+  /** По 8 тактам ряда после пропуска 4 (tact_sum из таблицы) — предвычислено в скрипте */
+  tact_sum_8_after_skip4?: {
+    row_position: number;
+    beat: number;
+    tact_sum: number;
+  }[];
+  /** Статистика: биты (не последние в такте) выше среднего и выше среднего+N% */
+  beats_above_avg_stats?: {
+    perceptual_mean: number;
+    total_beats_row1: number;
+    total_beats_row5: number;
+    beats_above_avg_row1: number;
+    beats_above_avg_row5: number;
+    beats_above_avg_plus_pct_row1: number;
+    beats_above_avg_plus_pct_row5: number;
+    threshold_avg_plus_pct: number;
+    beats_above_avg_plus_pct_config: number;
+  };
   row_analysis?: Record<
     string,
     {
@@ -503,6 +521,51 @@ export default function V2AnalysisDisplay({
                       </p>
                     );
                   })()}
+                  {data.tact_sum_8_after_skip4 &&
+                    data.tact_sum_8_after_skip4.length > 0 && (
+                      <p className="text-gray-400 mt-1 font-mono text-xs">
+                        tact_sum (8 тактов): [
+                        {data.tact_sum_8_after_skip4
+                          .map((t) => t.tact_sum.toFixed(2))
+                          .join(", ")}
+                        ]
+                      </p>
+                    )}
+                  {data.beats_above_avg_stats && (
+                    <>
+                      <p className="text-gray-400 mt-1 text-xs">
+                        Биты выше среднего (1,2,3 и 5,6,7 в такте): РАЗ{" "}
+                        {data.beats_above_avg_stats.beats_above_avg_row1}/
+                        {data.beats_above_avg_stats.total_beats_row1}, ПЯТЬ{" "}
+                        {data.beats_above_avg_stats.beats_above_avg_row5}/
+                        {data.beats_above_avg_stats.total_beats_row5} (среднее
+                        perc ={" "}
+                        {data.beats_above_avg_stats.perceptual_mean.toFixed(2)})
+                      </p>
+                      <p className="text-gray-400 mt-0.5 text-xs">
+                        Биты выше среднего +{" "}
+                        {
+                          data.beats_above_avg_stats
+                            .beats_above_avg_plus_pct_config
+                        }
+                        %: РАЗ{" "}
+                        {
+                          data.beats_above_avg_stats
+                            .beats_above_avg_plus_pct_row1
+                        }
+                        , ПЯТЬ{" "}
+                        {
+                          data.beats_above_avg_stats
+                            .beats_above_avg_plus_pct_row5
+                        }{" "}
+                        (порог ={" "}
+                        {data.beats_above_avg_stats.threshold_avg_plus_pct.toFixed(
+                          2,
+                        )}
+                        )
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>

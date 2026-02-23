@@ -88,6 +88,7 @@ export async function GET(request: Request) {
         baseBpm: true,
         baseOffset: true,
         filename: true,
+        pathOriginal: true,
         isProcessed: true,
         createdAt: true,
         gridMap: true,
@@ -108,6 +109,35 @@ export async function GET(request: Request) {
       }
       return str;
     };
+
+    // Манифест: id, title, artist, pathOriginal, report_filename — для сопоставления треков и отчётов при переносе с сервера
+    if (format === "manifest") {
+      const reportFilename = (pathOriginal: string | null) => {
+        if (!pathOriginal) return "";
+        const base = pathOriginal
+          .replace(/^.*[\\/]/, "")
+          .replace(/\.[^.]+$/, "");
+        return base ? `${base}_v2_analysis.json` : "";
+      };
+      const header = "id,title,artist,pathOriginal,report_filename";
+      const rows = tracks.map((t) =>
+        [
+          t.id,
+          escapeCSV(t.title),
+          escapeCSV(t.artist ?? ""),
+          escapeCSV(t.pathOriginal ?? ""),
+          escapeCSV(reportFilename(t.pathOriginal)),
+        ].join(","),
+      );
+      const csv = [header, ...rows].join("\n");
+      const bom = "\uFEFF";
+      return new NextResponse(bom + csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="tracks_manifest_${new Date().toISOString().split("T")[0]}.csv"`,
+        },
+      });
+    }
 
     // Префикс ' заставляет Excel показывать значение как текст (без преобразования в дату)
     const numForExcel = (v: string | number | null | undefined): string => {

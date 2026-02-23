@@ -408,7 +408,11 @@ export class AudioEngine {
   private handleTrackEnd() {
     this._isPlaying = false;
     this.stopUpdate(); // Останавливаем цикл
-    if (this.onTrackEnd && !this.trackEndFired) {
+    // Вызываем onTrackEnd только если реально у конца трека (защита от ложных "end" при свёрнутой вкладке / буфере)
+    const duration = this.getDuration();
+    const time = this.getCurrentTime();
+    const atRealEnd = duration > 0 && time >= Math.max(0, duration - 1);
+    if (this.onTrackEnd && !this.trackEndFired && atRealEnd) {
       this.trackEndFired = true;
       this.onTrackEnd();
     }
@@ -498,7 +502,8 @@ export class AudioEngine {
     } else {
       // Нет "немедленного" бита — всё равно синхронизируем UI с текущей позицией
       const beatInfo = this.getCurrentBeatInfo();
-      if (beatInfo && this.onBeatUpdate) this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
+      if (beatInfo && this.onBeatUpdate)
+        this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
     }
 
     // С какого бита планировать счёт вперёд (Web Audio)
@@ -737,7 +742,8 @@ export class AudioEngine {
     } else {
       // Нет немедленного бита — синхронизируем UI со смотанной позицией
       const beatInfo = this.getCurrentBeatInfo();
-      if (beatInfo && this.onBeatUpdate) this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
+      if (beatInfo && this.onBeatUpdate)
+        this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
     }
 
     // Notify UI immediately (smooth scrubbing)

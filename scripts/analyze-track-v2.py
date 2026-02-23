@@ -61,6 +61,7 @@ def load_config():
         'perc_bridge_threshold': 0.05,  # 5% — порог look-ahead для перцептивных мостиков
         'perc_start_threshold': 0.20,   # 20% — порог: средняя по песне ниже среднего такта на N% → такт считаем РАЗ
         'perceptual_window_sec': 0.05,   # окно для perceptual_energy (с). 0.08 = 80ms, 0.20 = 200ms (удобнее для уха). Откат: поставить 0.08
+        'beats_above_avg_plus_pct': 20,  # % над средним для порога «биты выше среднего + N%» (только статистика)
     }
     try:
         if os.path.exists(config_path):
@@ -536,6 +537,68 @@ def compute_row_analysis(beats, start_idx, peak1_pos, peak2_pos):
         'reason': 'v2: two peak rows (1 and 5)',
     }
     return row_analysis, verdict
+
+
+# ==========================================
+# СТАТИСТИКА: такты после пропуска 4, биты выше среднего (только числа, без выводов)
+# ==========================================
+
+def stats_tact_sum_8_after_skip4(strong_rows_tact_list, start_idx):
+    """
+    По 8 тактам ряда после пропуска 4 (tact_sum из таблицы).
+    Берём такты из strong_rows_tact_list с beat >= start_idx, пропускаем первые 4, следующие 8 — их tact_sum.
+    Возвращает список из 8 элементов [{row_position, beat, tact_sum}, ...].
+    """
+    filtered = [r for r in strong_rows_tact_list if r['beat'] >= start_idx]
+    if len(filtered) < 12:
+        return []
+    selected = filtered[4:12]
+    return [
+        {'row_position': r['row_position'], 'beat': r['beat'], 'tact_sum': r['tact_sum']}
+        for r in selected
+    ]
+
+
+def stats_beats_above_avg(beats, start_idx, row1_offset, config):
+    """
+    Проходим по всем тактам РАЗ и ПЯТЬ; считаем только биты не последние в такте (1,2,3 для РАЗ и 5,6,7 для ПЯТЬ).
+    Собираем perceptual_energy этих битов, считаем среднее. Выдаём:
+    - число битов в ряду РАЗ выше среднего;
+    - число битов в ряду ПЯТЬ выше среднего;
+    - то же для порога среднее + N% (N из config['beats_above_avg_plus_pct']).
+    """
+    pct_extra = config.get('beats_above_avg_plus_pct', 20)
+    row1_perc = []
+    row5_perc = []
+    n = len(beats)
+    for i in range(start_idx, n):
+        rel = i - start_idx
+        pos_in_8 = (rel + row1_offset) % 8
+        # РАЗ: позиции 0,1,2 в цикле (не 3 — последний в баре). ПЯТЬ: 4,5,6 (не 7).
+        if pos_in_8 in (0, 1, 2):
+            row1_perc.append(beats[i].get('perceptual_energy', 0.0))
+        elif pos_in_8 in (4, 5, 6):
+            row5_perc.append(beats[i].get('perceptual_energy', 0.0))
+    if not row1_perc and not row5_perc:
+        return None
+    all_perc = row1_perc + row5_perc
+    mean_perc = float(np.mean(all_perc))
+    threshold_plus_pct = mean_perc * (1.0 + pct_extra / 100.0)
+    count_r1_above_avg = sum(1 for v in row1_perc if v > mean_perc)
+    count_r5_above_avg = sum(1 for v in row5_perc if v > mean_perc)
+    count_r1_above_plus = sum(1 for v in row1_perc if v > threshold_plus_pct)
+    count_r5_above_plus = sum(1 for v in row5_perc if v > threshold_plus_pct)
+    return {
+        'perceptual_mean': round(mean_perc, 4),
+        'total_beats_row1': len(row1_perc),
+        'total_beats_row5': len(row5_perc),
+        'beats_above_avg_row1': count_r1_above_avg,
+        'beats_above_avg_row5': count_r5_above_avg,
+        'beats_above_avg_plus_pct_row1': count_r1_above_plus,
+        'beats_above_avg_plus_pct_row5': count_r5_above_plus,
+        'threshold_avg_plus_pct': round(threshold_plus_pct, 4),
+        'beats_above_avg_plus_pct_config': pct_extra,
+    }
 
 
 # ==========================================
@@ -1144,6 +1207,18 @@ def analyze_v2(audio_path):
         beats, start_idx, peak1_pos, peak2_pos
     )
 
+    # === Статистика: 8 тактов после пропуска 4 (tact_sum), биты выше среднего ===
+    tact_sum_8 = stats_tact_sum_8_after_skip4(strong_rows_tact_list, start_idx)
+    beats_above_avg_stats = stats_beats_above_avg(beats, start_idx, row1_offset, config)
+    if tact_sum_8:
+        log(f"[Stats] По 8 тактам ряда после пропуска 4 (tact_sum): {[r['tact_sum'] for r in tact_sum_8]}")
+    if beats_above_avg_stats:
+        log(f"[Stats] Биты выше среднего: R1={beats_above_avg_stats['beats_above_avg_row1']}/{beats_above_avg_stats['total_beats_row1']}, "
+             f"R5={beats_above_avg_stats['beats_above_avg_row5']}/{beats_above_avg_stats['total_beats_row5']}")
+        log(f"[Stats] Биты выше среднего+{beats_above_avg_stats['beats_above_avg_plus_pct_config']}%: "
+             f"R1={beats_above_avg_stats['beats_above_avg_plus_pct_row1']}, R5={beats_above_avg_stats['beats_above_avg_plus_pct_row5']} "
+             f"(порог={beats_above_avg_stats['threshold_avg_plus_pct']})")
+
     # Счёт битов с 1 в выходном JSON (внутри скрипта везде 0-based)
     def beat1(x):
         return x + 1
@@ -1173,6 +1248,8 @@ def analyze_v2(audio_path):
         },
         'row_analysis': row_analysis,
         'row_analysis_verdict': {**row_analysis_verdict, 'start_beat_id': beat1(start_idx)},
+        'tact_sum_8_after_skip4': [{'row_position': r['row_position'], 'beat': beat1(r['beat']), 'tact_sum': r['tact_sum']} for r in tact_sum_8],
+        'beats_above_avg_stats': beats_above_avg_stats,
         'square_analysis': square_result,
         'indicator_tact_table': [
             {**t, 'beat': beat1(t['beat']), 'probability_pct': t['probability_pct']}

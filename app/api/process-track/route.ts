@@ -331,7 +331,13 @@ export async function POST(request: NextRequest) {
       const reportsDir = join(process.cwd(), "public", "uploads", "reports");
       if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
       const reportPath = join(reportsDir, `${audioBasename}_v2_analysis.json`);
-      const toSave = { success: true, trackId: track.id, ...v2ReportResult };
+      const toSave = {
+        success: true,
+        trackId: track.id,
+        track_title: track.title,
+        track_artist: track.artist ?? null,
+        ...v2ReportResult,
+      };
       writeFileSync(reportPath, JSON.stringify(toSave, null, 2));
       console.log("[process-track] V2: gridMap updated and report saved");
 

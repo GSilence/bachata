@@ -61,7 +61,15 @@ export async function GET(
 
     const data = JSON.parse(readFileSync(resultPath, "utf-8"));
 
-    // Вычисляем % превосходства из Row Analysis (РАЗ/ПЯТЬ по рядам 1–4 и 5–8): (R1−R5)/R5×100
+    // Подставляем название и исполнителя из БД, если в отчёте их нет (старые отчёты)
+    const payload: Record<string, unknown> = {
+      ...data,
+      ...(data.track_title == null && { track_title: track.title }),
+      ...(data.track_artist == null &&
+        track.artist != null && { track_artist: track.artist }),
+    };
+
+    // Вычисляем % превосходства из Row Analysis
     let rowDominancePercent: number | undefined;
     const rowAnalysis = data.row_analysis as
       | Record<string, { madmom_sum?: number }>
@@ -97,7 +105,7 @@ export async function GET(
 
     return NextResponse.json({
       found: true,
-      ...data,
+      ...payload,
       ...(rowDominancePercent != null && { rowDominancePercent }),
     });
   } catch (error: unknown) {
@@ -191,7 +199,13 @@ export async function POST(
       "reports",
       `${audioBasename}_v2_analysis.json`,
     );
-    const toSave = { success: true, trackId, ...result };
+    const toSave = {
+      success: true,
+      trackId,
+      track_title: track.title,
+      track_artist: track.artist ?? null,
+      ...result,
+    };
     writeFileSync(resultPath, JSON.stringify(toSave, null, 2));
     console.log("[V2 Analysis] Results saved: " + resultPath);
 
