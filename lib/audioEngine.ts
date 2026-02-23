@@ -446,11 +446,9 @@ export class AudioEngine {
       }
     }
 
-    try {
-      Howler.unload();
-    } catch (e) {
-      console.warn("Error calling Howler.unload():", e);
-    }
+    // Намеренно НЕ вызываем Howler.unload() глобально — он уничтожает iOS media session,
+    // из-за чего второй и последующие фоновые переключения треков падают молча.
+    // Каждый Howl уже был unload() выше — этого достаточно для очистки памяти.
 
     this.currentTrack = null;
     this.trackEndFired = false;
@@ -934,13 +932,10 @@ export class AudioEngine {
     ) {
       this.trackEndFired = true;
       this._isPlaying = false;
-      // Пауза (не стоп — не сбрасываем позицию, playNext сам загрузит следующий трек)
-      if (this.isStemsMode && this.currentTrack?.isProcessed) {
-        const stemKeys: Array<keyof typeof this.stemsTracks> = ["vocals", "drums", "bass", "other"];
-        stemKeys.forEach((k) => this.stemsTracks[k]?.pause());
-      } else if (this.musicTrack) {
-        this.musicTrack.pause();
-      }
+      // НЕ вызываем pause/stop здесь — пусть музыка продолжает играть ещё ~100ms
+      // пока playNext → loadTrack её не остановит самостоятельно.
+      // Это критично для iOS: пауза в фоне немедленно убивает media session,
+      // после чего новый трек не может стартовать без жеста пользователя.
       this.stopAllScheduledVoices();
       this.stopUpdate();
       if (this.onTrackEnd) this.onTrackEnd();
