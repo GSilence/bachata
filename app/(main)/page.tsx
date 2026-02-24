@@ -46,6 +46,8 @@ export default function PlaybackPage() {
     "inline" | "fullscreen"
   >("inline");
 
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
   // Проверяем, что мы на клиенте
   useEffect(() => {
     setIsClient(true);
@@ -113,21 +115,51 @@ export default function PlaybackPage() {
   useEffect(() => {
     if (!currentTrack) {
       setMediaSessionPlaybackState("none");
-      // Нет трека — отзываем аудиофокус и останавливаем Silent Anchor
       audioEngine.stopSilentAnchor();
       return;
     }
     setMediaSessionMetadata(currentTrack, currentTime, duration);
     setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
-    if (isPlaying) {
+    // Якорь только при воспроизведении или паузе (позиция > 0). В режиме Stop (0:00) не держим.
+    const needAnchor = isPlaying || currentTime > 0;
+    if (needAnchor) {
       audioEngine.startSilentAnchor();
+    } else {
+      audioEngine.stopSilentAnchor();
     }
-    // ВАЖНО: Silent Anchor НЕ останавливаем при isPlaying=false пока трек загружен.
-    // При auto-переходе (playNext) isPlaying кратковременно false (~100ms).
-    // Если остановить Silent Anchor в этот момент, Android отзывает аудиофокус,
-    // и следующий musicTrack.play() блокируется автоплей-политикой.
-    // Якорь останавливается только когда currentTrack=null (выше).
-  }, [currentTrack, isPlaying, duration]); // Убрали currentTime из зависимостей
+  }, [currentTrack, isPlaying, currentTime, duration]);
+
+  // Wake Lock: держим экран/процесс активным при воспроизведении (важно для фона на мобильных)
+  useEffect(() => {
+    if (!isClient || typeof window === "undefined") return;
+    const nav = navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
+    };
+    if (!nav.wakeLock) return;
+
+    if (isPlaying) {
+      nav.wakeLock
+        .request("screen")
+        .then((sentinel) => {
+          wakeLockRef.current = sentinel;
+          sentinel.addEventListener("release", () => {
+            wakeLockRef.current = null;
+          });
+        })
+        .catch(() => {});
+    } else {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    }
+    return () => {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [isClient, isPlaying]);
 
   // Загрузка треков при монтировании
   useEffect(() => {

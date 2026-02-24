@@ -64,6 +64,7 @@ export class AudioEngine {
 
   // Callbacks
   private onTrackEnd: (() => void) | null = null;
+  private onTrackLoaded: (() => void) | null = null;
   // NEW: Callback для обновления прогресс-бара UI синхронно с движком
   private onTimeUpdate: ((currentTime: number) => void) | null = null;
   // Callback для обновления текущего бита в UI
@@ -308,10 +309,21 @@ export class AudioEngine {
       onend: () => {
         this.handleTrackEnd();
       },
+      onload: () => {
+        this.fireTrackLoaded();
+      },
       onloaderror: (id, error) => {
         console.error("Howl load error:", error);
       },
     });
+  }
+
+  private fireTrackLoaded() {
+    if (this.onTrackLoaded) {
+      const cb = this.onTrackLoaded;
+      this.onTrackLoaded = null;
+      cb();
+    }
   }
 
   private loadStems(track: Track) {
@@ -375,9 +387,10 @@ export class AudioEngine {
         volume: (this.musicVolume / 100) * (volume / 100) * (enabled ? 1 : 0),
         onload: () => {
           loadedStemsCount++;
-          // После загрузки всех стемов обновляем beatGrid
+          // После загрузки всех стемов обновляем beatGrid и уведомляем подписчиков
           if (loadedStemsCount === totalStems) {
             updateBeatGridAfterLoad();
+            this.fireTrackLoaded();
           }
         },
         onloaderror: (id, error) => {
@@ -885,6 +898,18 @@ export class AudioEngine {
   }
 
   /**
+   * Одноразовый callback: вызывается, когда текущий трек загружен (Howl onload).
+   * Для автоперехода на следующий трек без фиксированной задержки (важно для фона на мобильных).
+   */
+  setOnTrackLoaded(callback: (() => void) | null) {
+    this.onTrackLoaded = callback;
+    if (callback && this.isTrackLoaded()) {
+      this.onTrackLoaded = null;
+      callback();
+    }
+  }
+
+  /**
    * Устанавливает callback для получения текущего времени.
    * Позволяет UI синхронизироваться с AudioEngine без лишних интервалов.
    */
@@ -1214,6 +1239,8 @@ export class AudioEngine {
 
   /**
    * Останавливает Silent Anchor.
+   * Вызывать только когда трека нет (currentTrack=null), иначе в фоне Android
+   * отзывает аудиофокус при переключении треков. Остановка при destroy() — ок.
    */
   stopSilentAnchor() {
     if (!this.isSilentAnchorRunning) return;
@@ -1248,6 +1275,7 @@ export class AudioEngine {
     this.stopSilentAnchor(); // Остановить Silent Anchor при уничтожении
     this.unloadTrack();
     this.onTrackEnd = null;
+    this.onTrackLoaded = null;
     this.onTimeUpdate = null;
     this.onBeatUpdate = null;
   }

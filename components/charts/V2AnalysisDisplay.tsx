@@ -251,44 +251,6 @@ export default function V2AnalysisDisplay({
         </span>
       </div>
 
-      {/* Перцептивные мостики и кандидаты (наблюдательные, не влияют на сетку) */}
-      {data.perc_confirmed_bridges?.length ||
-      data.perc_bridge_candidates?.length ? (
-        <div className="space-y-1">
-          {data.perc_confirmed_bridges &&
-            data.perc_confirmed_bridges.length > 0 && (
-              <div className="text-xs">
-                <span className="text-gray-500">
-                  Перцептивные мостики ({data.perc_confirmed_bridges.length}):
-                </span>{" "}
-                {data.perc_confirmed_bridges.map((c, i) => (
-                  <span key={i} className="mr-2">
-                    <span className="text-orange-400 font-medium">
-                      {c.time_sec.toFixed(1)}s
-                    </span>
-                    <span className="text-gray-600 ml-0.5">+{c.diff_pct}%</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          {data.perc_bridge_candidates &&
-            data.perc_bridge_candidates.length > 0 && (
-              <div className="text-xs text-gray-600">
-                <span>Кандидаты (локал. мин.):</span>{" "}
-                {data.perc_bridge_candidates.map((c, i) => (
-                  <span key={i} className="mr-1.5">
-                    <span className="text-gray-500">
-                      {c.time_sec.toFixed(1)}s
-                    </span>
-                    <span className="text-gray-700 ml-0.5">
-                      ({c.perc_energy}dB)
-                    </span>
-                  </span>
-                ))}
-              </div>
-            )}
-        </div>
-      ) : null}
 
       {/* Raw Analysis (8 рядов, Beats / Sum / Avg / Max + Perc sum/avg) */}
       {data.track_type === "bachata" &&

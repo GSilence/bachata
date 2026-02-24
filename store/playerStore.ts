@@ -444,18 +444,15 @@ export const usePlayerStore = create<PlayerState>()(
           if (nextTrack) {
             const { setCurrentTrack, play } = get();
             setCurrentTrack(nextTrack);
-            // Auto-play if we were playing before
             if (wasPlaying) {
-              // Small delay to ensure track is loaded
-              setTimeout(() => {
-                const { currentTrack: verifyTrack } = get();
-                if (
-                  verifyTrack?.id === nextTrack.id &&
-                  audioEngine.isTrackLoaded()
-                ) {
+              // Запуск по загрузке трека — без задержки, чтобы не терять аудиофокус на мобильных
+              audioEngine.setOnTrackLoaded(() => {
+                const g = get();
+                if (g.currentTrack?.id === nextTrack.id) {
                   play();
                 }
-              }, 100);
+                audioEngine.setOnTrackLoaded(null);
+              });
             }
           } else {
             console.warn("playNext: No next track found");
@@ -590,15 +587,13 @@ export const usePlayerStore = create<PlayerState>()(
             const { setCurrentTrack, play } = get();
             setCurrentTrack(prevTrack);
             if (wasPlaying) {
-              setTimeout(() => {
-                const { currentTrack: verifyTrack } = get();
-                if (
-                  verifyTrack?.id === prevTrack!.id &&
-                  audioEngine.isTrackLoaded()
-                ) {
+              audioEngine.setOnTrackLoaded(() => {
+                const g = get();
+                if (g.currentTrack?.id === prevTrack.id) {
                   play();
                 }
-              }, 100);
+                audioEngine.setOnTrackLoaded(null);
+              });
             }
           }
         } finally {

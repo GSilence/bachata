@@ -1191,16 +1191,30 @@ def analyze_v2(audio_path):
     # === ФАЗА 2: Анализ КВАДРАТ ===
     square_result = analyze_square(beats, start_idx, row1_offset)
 
-    # === ФАЗА 3: поиск мостиков — отключён, двигаемся шагами ===
+    # === ФАЗА 3: Индикаторы и мостики ===
     quarters = compute_quarters(beats, start_idx, row1_offset)
-    indicator_tact_table = []
-    indicator_decisions = []
-    bridges = []
-    perc_bridge_candidates = []
-    perc_confirmed_bridges = []
+    indicators, indicator_tact_table = compute_indicators_from_tacts(
+        strong_rows_tact_list, start_idx, beats, config
+    )
 
-    # === Layout ===
-    layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
+    bridges = []
+    indicator_decisions = []
+
+    if square_result['verdict'] == 'has_bridges':
+        bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
+    else:
+        indicator_decisions = [
+            {**ind, 'action': 'not_processed', 'reason': 'Квадрат подтверждён'}
+            for ind in indicators
+        ]
+
+    perc_bridge_candidates = compute_perc_bridge_candidates(
+        strong_rows_tact_list, start_idx, beats, config
+    )
+    perc_confirmed_bridges = analyze_perc_bridges(indicators, beats, config)
+
+    # === Layout — строится по перцептивным мостикам (A-weighted) ===
+    layout = generate_layout(quarters, perc_confirmed_bridges, start_idx, beats, row1_offset)
 
     # === Суммы первых 2 квадратов для отчёта ===
     initial_r1, initial_r5 = 0.0, 0.0
@@ -1264,12 +1278,14 @@ def analyze_v2(audio_path):
             for t in indicator_tact_table
         ],
         'indicators': [{**ind, 'beat': beat1(ind['beat'])} for ind in indicator_decisions],
-        'bridges': [{**b, 'beat': beat1(b['beat'])} for b in bridges],
+        # bridges = перцептивные мостики (A-weighted) — они же определяют layout
+        'bridges': [
+            {**c, 'beat': beat1(c['beat'])} for c in perc_confirmed_bridges
+        ],
+        # energy_bridges = мостики по RMS-энергии (для статистики и отладки)
+        'energy_bridges': [{**b, 'beat': beat1(b['beat'])} for b in bridges],
         'perc_bridge_candidates': [
             {**c, 'beat': beat1(c['beat'])} for c in perc_bridge_candidates
-        ],
-        'perc_confirmed_bridges': [
-            {**c, 'beat': beat1(c['beat'])} for c in perc_confirmed_bridges
         ],
         'layout': [{'from_beat': beat1(s['from_beat']), 'to_beat': beat1(s['to_beat']),
                    'time_start': s['time_start'], 'time_end': s['time_end'],

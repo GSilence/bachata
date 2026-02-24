@@ -64,6 +64,8 @@ export async function POST(request: NextRequest) {
     const updatedGridMap: GridMap = {
       ...gridMapData,
       bridges: [...bridges].sort((a, b) => a - b),
+      // Сбрасываем v2Layout чтобы beatGrid использовал ручные bridges, а не авто-раскладку
+      v2Layout: [],
     };
 
     const updated = await prisma.track.update({
