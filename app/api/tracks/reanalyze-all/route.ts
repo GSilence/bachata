@@ -101,11 +101,12 @@ export async function POST(request: NextRequest) {
 
         const finalBpm = result.bpm ?? 120;
         const finalOffset = result.song_start_time ?? 0;
-        const layout = Array.isArray(result.layout) ? result.layout : [];
-        const bridgesRaw = Array.isArray(result.bridges) ? result.bridges : [];
-        const v2BridgesTimes = bridgesRaw.map(
-          (b: { time_sec?: number }) => b.time_sec ?? 0,
-        );
+        const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
+        const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
+        // Визуальные маркеры мостиков = начала сегментов перцептивной (активной) раскладки
+        const v2BridgesTimes = (v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms)
+          .slice(1)
+          .map((s: { time_start?: number }) => s.time_start ?? 0);
         const squareAnalysis = result.square_analysis as
           | { verdict?: string; row_dominance_pct?: number }
           | undefined;
@@ -121,7 +122,9 @@ export async function POST(request: NextRequest) {
           bpm: finalBpm,
           offset: finalOffset,
           duration: result.duration ?? existingGridMap.duration,
-          v2Layout: layout,
+          v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
+          v2LayoutRms,                  // RMS сетка
+          v2LayoutPerc,                 // перцептивная сетка
           bridges:
             v2BridgesTimes.length > 0
               ? v2BridgesTimes

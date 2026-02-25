@@ -292,39 +292,42 @@ export async function POST(request: NextRequest) {
 
     // Для v2: делаем 1 в 1 то же, что кнопка «Запустить анализ v2» — обновляем gridMap и сохраняем отчёт
     if (useV2 && v2ReportResult) {
-      const result = v2ReportResult as {
-        layout?: unknown[];
-        bridges?: { time_sec?: number }[];
-        bpm?: number;
-        duration?: number;
-      };
+      const result = v2ReportResult as Record<string, unknown>;
       const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
-      const v2Layout = Array.isArray(result.layout) ? result.layout : [];
-      const v2BridgesTimes = Array.isArray(result.bridges)
-        ? result.bridges.map((b) => b.time_sec ?? 0)
-        : [];
-      const squareAnalysis = (
-        result as {
-          square_analysis?: { verdict?: string; row_dominance_pct?: number };
-        }
-      ).square_analysis;
+      const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
+      const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
+      // Визуальные маркеры мостиков = начала сегментов перцептивной (активной) раскладки
+      const v2BridgesTimes = (v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms)
+        .slice(1)
+        .map((s: unknown) => (s as { time_start?: number }).time_start ?? 0);
+      const squareAnalysis = result.square_analysis as
+        | { verdict?: string; row_dominance_pct?: number }
+        | undefined;
       const rowDominancePercent =
         typeof squareAnalysis?.row_dominance_pct === "number"
           ? squareAnalysis.row_dominance_pct
           : undefined;
       const mergedGridMap = {
         ...existingGridMap,
-        bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
-        offset: track.offset ?? existingGridMap.offset,
-        duration: result.duration ?? existingGridMap.duration,
-        v2Layout,
+        bpm: (result.bpm as number) ?? track.bpm ?? existingGridMap.bpm,
+        offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
+        duration: (result.duration as number) ?? existingGridMap.duration,
+        v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
+        v2LayoutRms,                  // RMS сетка
+        v2LayoutPerc,                 // перцептивная сетка
         bridges:
           v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
         ...(rowDominancePercent != null && { rowDominancePercent }),
       };
       await prisma.track.update({
         where: { id: track.id },
-        data: { gridMap: mergedGridMap as object },
+        data: {
+          gridMap: mergedGridMap as object,
+          // Синхронизируем track.offset с новым song_start_time из v2-анализа
+          ...(result.song_start_time != null && {
+            offset: result.song_start_time as number,
+          }),
+        },
       });
 
       const audioBasename = fileName.replace(/\.[^.]+$/, "");
