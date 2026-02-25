@@ -1215,52 +1215,82 @@ def analyze_v2(audio_path):
                               for b in beats],
         }
 
-    # === ФАЗА 2: Анализ КВАДРАТ ===
-    square_result = analyze_square(beats, start_idx, row1_offset)
-
-    # === Ранние выходы от анализа мостиков ===
-    skip_bridges = square_result['verdict'] == 'square_confirmed'
-    skip_reason = 'all_green' if skip_bridges else None
-    if skip_bridges:
-        log(f"[Phase 3] skip_bridges=True, reason={skip_reason}")
-
-    # === ФАЗА 3: Индикаторы и мостики ===
-    quarters = compute_quarters(beats, start_idx, row1_offset)
-
-    # --- Индикаторы (общие для обоих путей, RMS) ---
-    indicators, indicator_tact_table = compute_indicators_from_tacts(
-        strong_rows_tact_list, start_idx, beats, config, energy_field='energy'
+    # === Row Analysis — первым делом, нужен для ранней проверки мадмом ===
+    row_analysis, row_analysis_verdict = compute_row_analysis(
+        beats, start_idx, peak1_pos, peak2_pos
     )
+    # РАЗ-ряд и ПЯТЬ-ряд по madmom
+    _row_one = row_analysis_verdict['row_one']           # номер ряда РАЗ (1-8)
+    _peak_rows = row_analysis_verdict['winning_rows']    # [peak1_row, peak2_row]
+    _row_five = _peak_rows[1] if _row_one == _peak_rows[0] else _peak_rows[0]
+    _m1 = row_analysis.get(f'row_{_row_one}', {}).get('madmom_sum', 0.0)
+    _m5 = row_analysis.get(f'row_{_row_five}', {}).get('madmom_sum', 0.0)
+    madmom_diff_pct = round((_m1 - _m5) / abs(_m5) * 100, 2) if _m5 != 0 else 0.0
+    log(f"[Phase 2] Мадмом РАЗ={_m1:.3f}, ПЯТЬ={_m5:.3f}, diff={madmom_diff_pct:.2f}%")
 
-    # --- RMS ветка: проверка индикаторов по RMS-энергии ---
-    bridges = []
-    indicator_decisions = []
-    if skip_bridges:
-        indicator_decisions = [
-            {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
-            for ind in indicators
-        ]
-    elif square_result['verdict'] == 'has_bridges':
-        bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
-    else:
-        indicator_decisions = [
-            {**ind, 'action': 'not_processed', 'reason': 'Квадрат подтверждён'}
-            for ind in indicators
-        ]
-
-    # --- Perceptual ветка: проверка тех же индикаторов по perceptual_energy ---
-    if skip_bridges:
+    if madmom_diff_pct >= 5.0:
+        # Мадмом явно указывает на квадрат — пропускаем анализ квадрата, кварталы и индикаторы
+        skip_bridges = True
+        skip_reason = f'madmom_dominance {madmom_diff_pct:.1f}%'
+        log(f"[Phase 2] Мадмом ≥5% → skip_bridges=True ({skip_reason}), пропускаем analyze_square/quarters/indicators")
+        square_result = {'verdict': 'skipped', 'reason': skip_reason}
+        quarters = []
+        indicators = []
+        indicator_tact_table = []
+        indicator_decisions = []
+        bridges = []
         perc_bridge_candidates = []
         perc_confirmed_bridges = []
-        perc_indicator_decisions = [
-            {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
-            for ind in indicators
-        ]
+        perc_indicator_decisions = []
     else:
-        perc_bridge_candidates = compute_perc_bridge_candidates(
-            strong_rows_tact_list, start_idx, beats, config
+        # === ФАЗА 2: Анализ КВАДРАТ ===
+        square_result = analyze_square(beats, start_idx, row1_offset)
+
+        # === Ранние выходы от анализа мостиков ===
+        if square_result['verdict'] == 'square_confirmed':
+            skip_bridges, skip_reason = True, 'all_green'
+        else:
+            skip_bridges, skip_reason = False, None
+        if skip_bridges:
+            log(f"[Phase 3] skip_bridges=True, reason={skip_reason}")
+
+        # === ФАЗА 3: Индикаторы и мостики ===
+        quarters = compute_quarters(beats, start_idx, row1_offset)
+
+        # --- Индикаторы (общие для обоих путей, RMS) ---
+        indicators, indicator_tact_table = compute_indicators_from_tacts(
+            strong_rows_tact_list, start_idx, beats, config, energy_field='energy'
         )
-        perc_confirmed_bridges, perc_indicator_decisions = analyze_perc_bridges(indicators, beats, config)
+
+        # --- RMS ветка: проверка индикаторов по RMS-энергии ---
+        bridges = []
+        indicator_decisions = []
+        if skip_bridges:
+            indicator_decisions = [
+                {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
+                for ind in indicators
+            ]
+        elif square_result['verdict'] == 'has_bridges':
+            bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
+        else:
+            indicator_decisions = [
+                {**ind, 'action': 'not_processed', 'reason': 'Квадрат подтверждён'}
+                for ind in indicators
+            ]
+
+        # --- Perceptual ветка: проверка тех же индикаторов по perceptual_energy ---
+        if skip_bridges:
+            perc_bridge_candidates = []
+            perc_confirmed_bridges = []
+            perc_indicator_decisions = [
+                {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
+                for ind in indicators
+            ]
+        else:
+            perc_bridge_candidates = compute_perc_bridge_candidates(
+                strong_rows_tact_list, start_idx, beats, config
+            )
+            perc_confirmed_bridges, perc_indicator_decisions = analyze_perc_bridges(indicators, beats, config)
 
     # === Layout — строится по RMS мостикам (рабочая сетка) ===
     layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
@@ -1274,11 +1304,6 @@ def analyze_v2(audio_path):
             initial_r1 += q['energy_sum']
         else:
             initial_r5 += q['energy_sum']
-
-    # === Row Analysis (как в корреляции: 8 рядов, Beats/Sum/Avg/Max) ===
-    row_analysis, row_analysis_verdict = compute_row_analysis(
-        beats, start_idx, peak1_pos, peak2_pos
-    )
 
     # === Статистика: 8 тактов после пропуска 4 (tact_sum), биты выше среднего ===
     tact_sum_8 = stats_tact_sum_8_after_skip4(strong_rows_tact_list, start_idx)
@@ -1326,6 +1351,7 @@ def analyze_v2(audio_path):
         'square_analysis': square_result,
         'skip_bridges': skip_bridges,
         'skip_bridges_reason': skip_reason,
+        'madmom_diff_pct': madmom_diff_pct,
         'indicator_tact_table': [
             {**t, 'beat': beat1(t['beat']), 'probability_pct': t['probability_pct']}
             for t in indicator_tact_table

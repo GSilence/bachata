@@ -136,6 +136,7 @@ interface V2Result {
   }[];
   skip_bridges?: boolean;
   skip_bridges_reason?: string;
+  madmom_diff_pct?: number;
   /** Сегменты раскладки (не выводим в UI, но приходят с API) */
   layout?: {
     from_beat: number;
@@ -447,6 +448,11 @@ export default function V2AnalysisDisplay({
                           <span className={cls(madmomDiff)}>
                             {fmt(madmomDiff)}
                           </span>
+                          {madmomDiff >= 5 && (
+                            <span className="ml-2 px-1 py-0.5 rounded text-xs bg-green-800 text-green-200">
+                              ≥5% → без мостиков
+                            </span>
+                          )}
                         </p>
                         <p>
                           Перцептуал (avg/бит): РАЗ={r1PercAvg.toFixed(2)} dB,
@@ -587,7 +593,9 @@ export default function V2AnalysisDisplay({
                   мостики пропущены:{" "}
                   {data.skip_bridges_reason === "all_green"
                     ? "все квадраты зелёные"
-                    : data.skip_bridges_reason}
+                    : data.skip_bridges_reason?.startsWith("madmom_dominance")
+                      ? `мадмом РАЗ>${data.madmom_diff_pct?.toFixed(1)}%`
+                      : data.skip_bridges_reason}
                 </span>
               )}
             </summary>
