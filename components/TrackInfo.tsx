@@ -266,6 +266,31 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
+  const applyLayout = async (type: "rms" | "perc") => {
+    if (!currentTrack) return;
+    setIsSavingBridge(true);
+    try {
+      const res = await fetch("/api/rhythm/apply-layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_id: currentTrack.id, type }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка применения сетки");
+      if (data.track) {
+        updateCurrentTrack(data.track);
+        audioEngine.reloadBeatGrid(data.track);
+        const newBridges = (data.track.gridMap?.bridges as number[]) ?? [];
+        setBridges(newBridges);
+      }
+    } catch (e) {
+      console.error("Apply layout failed:", e);
+      alert(`Ошибка: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setIsSavingBridge(false);
+    }
+  };
+
   const handleAddBridgeHere = () => {
     if (!currentTrack || isSavingBridge) return;
     const info = audioEngine.getCurrentBeatInfo();
@@ -603,26 +628,36 @@ export default function TrackInfo({}: TrackInfoProps) {
                 >
                   {isSavingBridge ? "Сохранение..." : "+ Бридж здесь"}
                 </button>
-                {v2Result &&
-                  !v2Result.error &&
-                  v2Result.bridges?.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const times: number[] = v2Result.bridges.map(
-                          (b: any) => b.time_sec,
-                        );
-                        saveBridges(times);
-                      }}
-                      disabled={isSavingBridge || isReanalyzing}
-                      title="Применить мостики из v2 анализа"
-                      className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {isSavingBridge
-                        ? "Сохранение..."
-                        : `← из v2 (${v2Result.bridges.length})`}
-                    </button>
-                  )}
+                {v2Result && !v2Result.error && (
+                  <>
+                    {v2Result.bridges?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => applyLayout("rms")}
+                        disabled={isSavingBridge || isReanalyzing}
+                        title="Применить RMS сетку из v2 анализа"
+                        className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isSavingBridge
+                          ? "Сохранение..."
+                          : `← RMS (${v2Result.bridges.length})`}
+                      </button>
+                    )}
+                    {v2Result.perc_confirmed_bridges?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => applyLayout("perc")}
+                        disabled={isSavingBridge || isReanalyzing}
+                        title="Применить перцептивную сетку из v2 анализа"
+                        className="text-xs px-3 py-1.5 rounded bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isSavingBridge
+                          ? "Сохранение..."
+                          : `← Перц. (${v2Result.perc_confirmed_bridges.length})`}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* Линейка битов (live) — тик только здесь, без перерисовки анализа */}

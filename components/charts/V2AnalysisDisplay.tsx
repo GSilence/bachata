@@ -109,7 +109,7 @@ interface V2Result {
     /** Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100 (только при square_confirmed) */
     row_dominance_pct?: number;
   };
-  /** Таблица позиций рядов 1 и 5: энергия пикового бита, вероятность минимума в окне ±4 (100% = подозрение на мостик) */
+  /** Таблица позиций рядов 1 и 5 (RMS): вероятность минимума в окне ±4 */
   indicator_tact_table?: {
     tact_index: number;
     beat: number;
@@ -119,6 +119,8 @@ interface V2Result {
     position: string;
   }[];
   indicators: Indicator[];
+  /** Решения по индикаторам (perceptual ветка) — те же индикаторы, проверка через perceptual_energy */
+  indicators_perc?: Indicator[];
   bridges: Bridge[];
   perc_bridge_candidates?: {
     beat: number;
@@ -628,10 +630,10 @@ export default function V2AnalysisDisplay({
                 : "все зелёные"}
             </summary>
             <div className="mt-2 space-y-4">
-              {/* Mel Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}
+              {/* Perceptual Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}
               <div>
                 <div className="text-xs font-medium text-gray-400 mb-1.5">
-                  Mel Energy
+                  Perceptual Energy
                 </div>
                 <div className="space-y-2">
                   {[
@@ -701,10 +703,10 @@ export default function V2AnalysisDisplay({
                 </div>
               </div>
 
-              {/* Энергия: 4 строки (1/1, 1/2, 1/3, 1/5) */}
+              {/* RMS Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}
               <div>
                 <div className="text-xs font-medium text-gray-400 mb-1.5">
-                  Энергия
+                  RMS Energy
                 </div>
                 <div className="space-y-2">
                   {[
@@ -884,6 +886,65 @@ export default function V2AnalysisDisplay({
             </table>
           </div>
         </details>
+      )}
+
+      {/* Индикаторы Perceptual — решения по тем же индикаторам через perceptual_energy */}
+      {data.indicators_perc && data.indicators_perc.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-xs font-semibold text-purple-300 hover:text-purple-100">
+            Индикаторы Perceptual ({data.indicators_perc.length})
+          </summary>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-500 border-b border-gray-700">
+                  <th className="text-left py-1 px-1">Beat</th>
+                  <th className="text-left py-1 px-1">Время</th>
+                  <th className="text-left py-1 px-1">Ряд</th>
+                  <th className="text-left py-1 px-1">Решение</th>
+                  <th className="text-left py-1 px-1">R1/R5 (dB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.indicators_perc.map((ind, i) => (
+                  <tr key={i} className="border-b border-gray-800">
+                    <td className="py-1 px-1 font-mono">{ind.beat}</td>
+                    <td className="py-1 px-1">{formatTime(ind.time_sec)}</td>
+                    <td className="py-1 px-1">{ind.position}</td>
+                    <td className={`py-1 px-1 ${ACTION_COLORS[ind.action] || ""}`}>
+                      {ACTION_LABELS[ind.action] || ind.action}
+                      {ind.diff_pct !== undefined && (
+                        <span className="text-gray-500 ml-1">({ind.diff_pct}%)</span>
+                      )}
+                    </td>
+                    <td className="py-1 px-1 text-gray-500">
+                      {ind.row1_sum !== undefined && ind.row5_sum !== undefined && (
+                        <>{ind.row1_sum.toFixed(1)} / {ind.row5_sum.toFixed(1)}</>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      {/* Perceptual bridges — только для сравнения/дебага */}
+      {data.perc_confirmed_bridges && data.perc_confirmed_bridges.length > 0 && (
+        <div className="text-xs text-gray-400">
+          <span className="font-semibold text-gray-300">
+            Перцептивные мостики ({data.perc_confirmed_bridges.length}):
+          </span>{" "}
+          {data.perc_confirmed_bridges.map((b, i) => (
+            <span key={i} className="mr-2 font-mono text-purple-400">
+              {formatTime(b.time_sec)}
+              {b.diff_pct != null && (
+                <span className="text-gray-500"> ({b.diff_pct}%)</span>
+              )}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );

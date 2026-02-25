@@ -119,11 +119,13 @@ export function generateBeatGridFromDownbeats(
   if (v2Layout && v2Layout.length > 0) {
     for (const beat of skeletonBeats) {
       const T = beat.time;
-      let segIndex = v2Layout.findIndex(
-        (s) => T >= s.time_start - 0.05 && T <= s.time_end + 0.05,
-      );
-      if (segIndex < 0) {
-        segIndex = T < v2Layout[0].time_start ? 0 : v2Layout.length - 1;
+      // Бит принадлежит последнему сегменту, чей time_start <= T + eps
+      // (не используем time_end — скелет равномерный, madmom-биты нет, возникает зазор)
+      let segIndex = 0;
+      for (let i = 1; i < v2Layout.length; i++) {
+        if (T + 0.05 >= v2Layout[i].time_start) {
+          segIndex = i;
+        }
       }
       const segment = v2Layout[segIndex];
       const timeStart = segment.time_start;

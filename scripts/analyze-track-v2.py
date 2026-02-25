@@ -642,28 +642,40 @@ def compute_quarters(beats, start_idx, row1_offset):
     return quarters
 
 
-def compute_indicators_from_tacts(strong_rows_tact_list, start_idx, beats, config):
+def compute_indicators_from_tacts(strong_rows_tact_list, start_idx, beats, config,
+                                   energy_field='energy'):
     """
-    Индикаторы по рядам 1 и 5 (в порядке трека). Используем энергию пикового бита, не сумму такта.
-    Каждая позиция в списке — один такт (начало такта = бит ряда 1 или 5); значение = energy[beat].
+    Индикаторы по рядам 1 и 5 (в порядке трека).
+    energy_field='energy'            — RMS-энергия пикового бита (всегда >= 0, guard: <= 0)
+    energy_field='perceptual_energy' — A-weighted dB (отрицательные значения, guard: == 0.0)
     Для каждой позиции (начиная с 5-й: окно ±4 = 9 позиций):
-      probability = MIN(энергии битов в окне i-4 .. i+4) / энергия бита i.
+      probability = MIN(энергий в окне i-4 .. i+4) / энергия бита i.
+    Для dB: оба числа отрицательны, деление корректно (MIN==current → probability=1.0).
     Аналог Excel: =МИН(E2:E10)/E6. 100% — подозрение на мостик (индикатор).
     Возвращает: (indicators, indicator_tact_table).
     """
+    is_perc = (energy_field == 'perceptual_energy')
+    label = 'Perc' if is_perc else 'RMS'
     window = config['indicator_window']  # 4
     song_tacts = [t for t in strong_rows_tact_list if t['beat'] >= start_idx]
     if len(song_tacts) < 2 * window + 1:
-        log(f"[Phase 3] Not enough song positions for window ±{window} (have {len(song_tacts)})")
+        log(f"[Phase 3/{label}] Not enough song positions for window ±{window} (have {len(song_tacts)})")
         return [], []
 
-    # Энергия пикового бита для каждой позиции (бит начала такта ряда 1/5)
     n_beats = len(beats)
     beat_energies = []
     for t in song_tacts:
         bi = t['beat']
-        e = beats[bi]['energy'] if bi < n_beats else 0.0
+        if is_perc:
+            e = beats[bi].get('perceptual_energy', 0.0) if bi < n_beats else 0.0
+        else:
+            e = beats[bi]['energy'] if bi < n_beats else 0.0
         beat_energies.append(e)
+
+    # Для perceptual проверяем, что значения вообще вычислены
+    if is_perc and all(e == 0.0 for e in beat_energies):
+        log(f"[Phase 3/Perc] perceptual_energy not computed (all zeros), skipping")
+        return [], []
 
     indicators = []
     indicator_tact_table = []
@@ -672,8 +684,12 @@ def compute_indicators_from_tacts(strong_rows_tact_list, start_idx, beats, confi
         window_energies = [beat_energies[j] for j in range(i - window, i + window + 1)]
         min_in_window = min(window_energies)
         current = beat_energies[i]
-        if current <= 0:
-            continue
+        if is_perc:
+            if current == 0.0:
+                continue  # sentinel — не вычислено
+        else:
+            if current <= 0:
+                continue
         probability = min_in_window / current
         pct = round(probability * 100, 2)
 
@@ -703,7 +719,7 @@ def compute_indicators_from_tacts(strong_rows_tact_list, start_idx, beats, confi
                 'position': position,
             })
 
-    log(f"[Phase 3] Positions (row1/5): {len(song_tacts)}, with full window: {len(indicator_tact_table)}, indicators (100%): {len(indicators)}")
+    log(f"[Phase 3/{label}] Positions: {len(song_tacts)}, with window: {len(indicator_tact_table)}, indicators (100%): {len(indicators)}")
     for ind in indicators:
         log(f"  Pos {ind['tact_index']}: beat={ind['beat']}, time={ind['time_sec']}s, pos={ind['position']}")
 
@@ -796,11 +812,11 @@ def analyze_bridges(indicators, quarters, config):
             log(f"  Indicator Q{qi}: BREAK (row 5-8 in current layout, physical was {pos_physical})")
             continue
 
-        # Тот же Малый квадрат, что и последний мост (2 моста в одном МК быть не может)
-        if last_bridge_quarter >= 0 and (qi // QUARTERS_PER_SMALL_SQUARE) == (last_bridge_quarter // QUARTERS_PER_SMALL_SQUARE):
+        # Следующий мостик не раньше, чем через 1 квадрат (8 четвертей = 32 бита) после предыдущего
+        if last_bridge_quarter >= 0 and (qi - last_bridge_quarter) < QUARTERS_PER_SQUARE:
             decisions.append({**ind, 'action': 'ignored_same_square',
-                              'reason': 'В этом малом квадрате уже был мостик'})
-            log(f"  Indicator Q{qi}: IGNORED (same small square as bridge at Q{last_bridge_quarter})")
+                              'reason': f'Слишком близко к предыдущему мостику (Q{last_bridge_quarter}), нужен отступ 1 квадрат'})
+            log(f"  Indicator Q{qi}: IGNORED (too close to bridge at Q{last_bridge_quarter}, need {QUARTERS_PER_SQUARE} quarters gap)")
             continue
 
         # Сначала только Квадрат (4 восьмёрки = 8 четвертей) после индикатора
@@ -908,7 +924,7 @@ def analyze_perc_bridges(indicators, beats, config):
     has_perc = any(beats[i].get('perceptual_energy', 0.0) != 0.0 for i in range(min(20, n_beats)))
     if not has_perc:
         log("[Perc] perceptual_energy not computed, skipping analyze_perc_bridges")
-        return []
+        return [], []
 
     def _perc_lookahead(beat_start, n):
         """Физические суммы perceptual R1 (0-3 mod 8) и R5 (4-7 mod 8) за n битов."""
@@ -925,6 +941,7 @@ def analyze_perc_bridges(indicators, beats, config):
         return r1, r5
 
     confirmed = []
+    decisions = []
     last_bridge_beat = -999
 
     for ind in indicators:
@@ -939,17 +956,21 @@ def analyze_perc_bridges(indicators, beats, config):
 
         # Брейк
         if pos_logical == '5-8':
+            decisions.append({**ind, 'action': 'ignored_break', 'reason': 'На ряде 5-8 в текущей раскладке (брейк)'})
             log(f"  [Perc] beat={beat_start}: break (logical 5-8)")
             continue
 
-        # Слишком близко к предыдущему подтверждённому
-        if last_bridge_beat >= 0 and (beat_start - last_bridge_beat) < SMALL_SQUARE_BEATS:
-            log(f"  [Perc] beat={beat_start}: skip (same МК as beat {last_bridge_beat})")
+        # Следующий мостик не раньше, чем через 1 квадрат (32 бита) после предыдущего
+        if last_bridge_beat >= 0 and (beat_start - last_bridge_beat) < SQUARE_BEATS:
+            decisions.append({**ind, 'action': 'ignored_same_square',
+                              'reason': f'Слишком близко к предыдущему мостику (бит {last_bridge_beat})'})
+            log(f"  [Perc] beat={beat_start}: skip (too close to bridge at beat {last_bridge_beat}, need {SQUARE_BEATS} beats gap)")
             continue
 
         # Look-ahead: один квадрат
         r1, r5 = _perc_lookahead(beat_start, SQUARE_BEATS)
         if r1 == 0:
+            decisions.append({**ind, 'action': 'ignored_no_data', 'reason': 'Нет perceptual данных'})
             continue
 
         diff = (r5 - r1) / abs(r1)
@@ -972,13 +993,19 @@ def analyze_perc_bridges(indicators, beats, config):
                 'position': pos_physical,
                 'diff_pct': diff_pct,
             })
+            decisions.append({**ind, 'action': 'bridge_confirmed',
+                              'reason': f'R5 > R1 ({diff_pct}%)',
+                              'r1': round(r1, 2), 'r5': round(r5, 2), 'diff_pct': diff_pct})
             last_bridge_beat = beat_start
             log(f"  [Perc] beat={beat_start}: CONFIRMED ({diff_pct}%)")
         else:
+            decisions.append({**ind, 'action': 'ignored_no_change',
+                              'reason': f'R5 <= R1 или diff < {threshold*100:.0f}% ({diff_pct}%)',
+                              'r1': round(r1, 2), 'r5': round(r5, 2), 'diff_pct': diff_pct})
             log(f"  [Perc] beat={beat_start}: rejected ({diff_pct}% < {threshold*100:.0f}%)")
 
     log(f"[Perc] Total perc confirmed bridges: {len(confirmed)}")
-    return confirmed
+    return confirmed, decisions
 
 
 # ==========================================
@@ -1193,13 +1220,15 @@ def analyze_v2(audio_path):
 
     # === ФАЗА 3: Индикаторы и мостики ===
     quarters = compute_quarters(beats, start_idx, row1_offset)
+
+    # --- Индикаторы (общие для обоих путей, RMS) ---
     indicators, indicator_tact_table = compute_indicators_from_tacts(
-        strong_rows_tact_list, start_idx, beats, config
+        strong_rows_tact_list, start_idx, beats, config, energy_field='energy'
     )
 
+    # --- RMS ветка: проверка индикаторов по RMS-энергии ---
     bridges = []
     indicator_decisions = []
-
     if square_result['verdict'] == 'has_bridges':
         bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
     else:
@@ -1208,13 +1237,16 @@ def analyze_v2(audio_path):
             for ind in indicators
         ]
 
+    # --- Perceptual ветка: проверка тех же индикаторов по perceptual_energy ---
     perc_bridge_candidates = compute_perc_bridge_candidates(
         strong_rows_tact_list, start_idx, beats, config
     )
-    perc_confirmed_bridges = analyze_perc_bridges(indicators, beats, config)
+    perc_confirmed_bridges, perc_indicator_decisions = analyze_perc_bridges(indicators, beats, config)
 
-    # === Layout — строится по перцептивным мостикам (A-weighted) ===
-    layout = generate_layout(quarters, perc_confirmed_bridges, start_idx, beats, row1_offset)
+    # === Layout — строится по RMS мостикам (рабочая сетка) ===
+    layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
+    # === Layout perceptual — строится по перцептивным мостикам (для сравнения) ===
+    layout_perc = generate_layout(quarters, perc_confirmed_bridges, start_idx, beats, row1_offset)
 
     # === Суммы первых 2 квадратов для отчёта ===
     initial_r1, initial_r5 = 0.0, 0.0
@@ -1277,19 +1309,25 @@ def analyze_v2(audio_path):
             {**t, 'beat': beat1(t['beat']), 'probability_pct': t['probability_pct']}
             for t in indicator_tact_table
         ],
+        # RMS ветка: решения по индикаторам
         'indicators': [{**ind, 'beat': beat1(ind['beat'])} for ind in indicator_decisions],
-        # bridges = перцептивные мостики (A-weighted) — они же определяют layout
-        'bridges': [
+        # Perceptual ветка: решения по тем же индикаторам, но через perceptual_energy
+        'indicators_perc': [{**ind, 'beat': beat1(ind['beat'])} for ind in perc_indicator_decisions],
+        # bridges = RMS мостики — определяют layout и сохраняются в gridMap
+        'bridges': [{**b, 'beat': beat1(b['beat'])} for b in bridges],
+        # perc_confirmed_bridges = перцептивные мостики (A-weighted) — только для сравнения
+        'perc_confirmed_bridges': [
             {**c, 'beat': beat1(c['beat'])} for c in perc_confirmed_bridges
         ],
-        # energy_bridges = мостики по RMS-энергии (для статистики и отладки)
-        'energy_bridges': [{**b, 'beat': beat1(b['beat'])} for b in bridges],
         'perc_bridge_candidates': [
             {**c, 'beat': beat1(c['beat'])} for c in perc_bridge_candidates
         ],
         'layout': [{'from_beat': beat1(s['from_beat']), 'to_beat': beat1(s['to_beat']),
                    'time_start': s['time_start'], 'time_end': s['time_end'],
                    'row1_start': s['row1_start']} for s in layout],
+        'layout_perc': [{'from_beat': beat1(s['from_beat']), 'to_beat': beat1(s['to_beat']),
+                        'time_start': s['time_start'], 'time_end': s['time_end'],
+                        'row1_start': s['row1_start']} for s in layout_perc],
         'quarters': [{
             'index': q['index'],
             'beat': beat1(q['beat_start_global']),

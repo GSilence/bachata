@@ -211,7 +211,8 @@ export async function POST(
 
     // Применяем раскладку v2 к треку в БД — счёт при воспроизведении будет учитывать мостики
     const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
-    const v2Layout = Array.isArray(result.layout) ? result.layout : [];
+    const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
+    const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
     const v2BridgesTimes = Array.isArray(result.bridges)
       ? (result.bridges as { time_sec?: number }[]).map((b) => b.time_sec ?? 0)
       : [];
@@ -228,7 +229,9 @@ export async function POST(
       bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
       offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
       duration: result.duration ?? existingGridMap.duration,
-      v2Layout,
+      v2Layout: v2LayoutRms,       // активная сетка = RMS по умолчанию
+      v2LayoutRms,                  // RMS сетка (постоянно)
+      v2LayoutPerc,                 // перцептивная сетка (постоянно)
       bridges:
         v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
       ...(rowDominancePercent != null && { rowDominancePercent }),
@@ -245,8 +248,10 @@ export async function POST(
     });
     console.log(
       "[V2 Analysis] Track gridMap updated with v2Layout (" +
-        v2Layout.length +
-        " segments)",
+        v2LayoutRms.length +
+        " RMS segments, " +
+        v2LayoutPerc.length +
+        " perc segments)",
     );
 
     return NextResponse.json(toSave);
