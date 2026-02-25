@@ -28,6 +28,11 @@ export default function SettingsPage() {
     errors: number;
     total: number;
   } | null>(null);
+  const [reanalyzeProgress, setReanalyzeProgress] = useState<{
+    current: number;
+    total: number;
+    currentTitle: string;
+  } | null>(null);
 
   // Auth check
   useEffect(() => {
@@ -86,33 +91,44 @@ export default function SettingsPage() {
       return;
     }
 
+    // Используем уже загруженные треки или перезагружаем
+    let allTracks = tracks;
+    if (allTracks.length === 0) {
+      const r = await fetch("/api/tracks", { cache: "no-store" });
+      if (!r.ok) { alert("Не удалось загрузить список треков"); return; }
+      allTracks = await r.json();
+    }
+
     setIsReanalyzing(true);
     setReanalyzeResult(null);
+    setReanalyzeProgress({ current: 0, total: allTracks.length, currentTitle: "" });
 
-    try {
-      const response = await fetch("/api/tracks/reanalyze-all", {
-        method: "POST",
-      });
+    let success = 0;
+    let errors = 0;
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Ошибка при реанализе");
+    // Анализируем по одному треку — каждый запрос короткий, не словит 504
+    for (let i = 0; i < allTracks.length; i++) {
+      const track = allTracks[i];
+      setReanalyzeProgress({ current: i + 1, total: allTracks.length, currentTitle: track.title });
+      try {
+        const r = await fetch(`/api/tracks/${track.id}/analyze-v2`, { method: "POST" });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          console.error(`[ReanalyzeAll] Error for ${track.title}:`, d.error);
+          errors++;
+        } else {
+          success++;
+        }
+      } catch (e: any) {
+        console.error(`[ReanalyzeAll] Network error for ${track.title}:`, e.message);
+        errors++;
       }
-
-      const data = await response.json();
-      setReanalyzeResult({
-        success: data.success,
-        errors: data.errors,
-        total: data.total,
-      });
-
-      // Обновляем статистику
-      fetchStats();
-    } catch (error: any) {
-      alert(`Ошибка: ${error.message}`);
-    } finally {
-      setIsReanalyzing(false);
     }
+
+    setReanalyzeResult({ success, errors, total: allTracks.length });
+    setReanalyzeProgress(null);
+    setIsReanalyzing(false);
+    fetchStats();
   };
 
   const handleExport = async (format: "csv" | "json" | "manifest") => {
@@ -457,7 +473,17 @@ export default function SettingsPage() {
               </>
             )}
           </button>
-          {reanalyzeResult && (
+          {reanalyzeProgress && (
+            <span className="text-sm text-gray-300">
+              {reanalyzeProgress.current} / {reanalyzeProgress.total}
+              {reanalyzeProgress.currentTitle && (
+                <span className="text-gray-500 ml-2 max-w-xs truncate inline-block align-bottom">
+                  — {reanalyzeProgress.currentTitle}
+                </span>
+              )}
+            </span>
+          )}
+          {reanalyzeResult && !reanalyzeProgress && (
             <span className="text-sm">
               <span className="text-green-400">{reanalyzeResult.success}</span>
               <span className="text-gray-500"> / {reanalyzeResult.total}</span>
