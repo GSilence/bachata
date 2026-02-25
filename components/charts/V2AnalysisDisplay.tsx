@@ -492,39 +492,42 @@ export default function V2AnalysisDisplay({
           </details>
         )}
 
-      {/* Графики побитовых данных (сразу после Raw Analysis) */}
-      {data.per_beat_data && data.per_beat_data.length > 0 && (
-        <div className="space-y-1">
-          <PerBeatChart
-            beats={data.per_beat_data}
-            height={220}
-            songStartBeat={data.song_start_beat}
-            songStartTime={data.song_start_time}
-          />
-          <button
-            onClick={() => downloadBeatsCSV(data.per_beat_data!, trackTitle)}
-            className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
-            title="Beat, Time_sec, Energy, Mel_Energy, Perceptual_Energy, Madmom — UTF-8 с BOM"
-          >
-            ↓ CSV побитов
-          </button>
-        </div>
+      {/* Графики — под катом */}
+      {(data.per_beat_data?.length ?? 0) > 0 && (
+        <details>
+          <summary className="cursor-pointer text-xs font-semibold text-gray-300 hover:text-white">
+            Графики
+          </summary>
+          <div className="mt-2 space-y-2">
+            <PerBeatChart
+              beats={data.per_beat_data!}
+              height={220}
+              songStartBeat={data.song_start_beat}
+              songStartTime={data.song_start_time}
+            />
+            <button
+              onClick={() => downloadBeatsCSV(data.per_beat_data!, trackTitle)}
+              className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
+              title="Beat, Time_sec, Energy, Mel_Energy, Perceptual_Energy, Madmom — UTF-8 с BOM"
+            >
+              ↓ CSV побитов
+            </button>
+            {data.track_type === "bachata" &&
+              data.strong_rows_tact_table &&
+              data.strong_rows_tact_table.length > 0 &&
+              data.row_analysis_verdict?.winning_rows &&
+              data.row_analysis_verdict.winning_rows.length >= 2 && (
+                <TactComparisonChart
+                  tactTable={data.strong_rows_tact_table}
+                  winningRows={data.row_analysis_verdict.winning_rows}
+                  songStartBeat={data.song_start_beat}
+                  percMean={data.perceptual_energy_mean}
+                  height={180}
+                />
+              )}
+          </div>
+        </details>
       )}
-
-      {/* График perceptual energy тактов обоих рядов */}
-      {data.track_type === "bachata" &&
-        data.strong_rows_tact_table &&
-        data.strong_rows_tact_table.length > 0 &&
-        data.row_analysis_verdict?.winning_rows &&
-        data.row_analysis_verdict.winning_rows.length >= 2 && (
-          <TactComparisonChart
-            tactTable={data.strong_rows_tact_table}
-            winningRows={data.row_analysis_verdict.winning_rows}
-            songStartBeat={data.song_start_beat}
-            percMean={data.perceptual_energy_mean}
-            height={180}
-          />
-        )}
 
       {/* Таблица тактов сильных рядов (суммы энергий по тактам) */}
       {data.track_type === "bachata" &&
