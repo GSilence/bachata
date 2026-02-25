@@ -14,7 +14,6 @@ import {
   setMediaSessionMetadata,
   setMediaSessionPlaybackState,
 } from "@/lib/media-session";
-import { restoreTrackFromStorage } from "@/store/playerStore";
 import type { Track } from "@/types";
 
 export default function PlaybackPage() {
@@ -209,7 +208,10 @@ export default function PlaybackPage() {
             return;
           }
 
-          const restoredTrack = restoreTrackFromStorage(data);
+          const { savedTrackId } = usePlayerStore.getState();
+          const restoredTrack = savedTrackId
+            ? (data.find((t) => t.id === savedTrackId) ?? null)
+            : null;
           const trackToLoad: Track | null = restoredTrack || data[0];
           if (trackToLoad) {
             console.log("Loading initial track:", trackToLoad.title);

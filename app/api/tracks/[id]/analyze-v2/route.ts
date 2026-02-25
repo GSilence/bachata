@@ -213,9 +213,10 @@ export async function POST(
     const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
     const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
     const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
-    const v2BridgesTimes = Array.isArray(result.bridges)
-      ? (result.bridges as { time_sec?: number }[]).map((b) => b.time_sec ?? 0)
-      : [];
+    // Визуальные маркеры мостиков = начала сегментов перцептивной (активной) раскладки
+    const v2BridgesTimes = (v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms)
+      .slice(1)
+      .map((s: { time_start?: number }) => s.time_start ?? 0);
     const squareAnalysis = result.square_analysis as
       | { verdict?: string; row_dominance_pct?: number }
       | undefined;
@@ -229,7 +230,7 @@ export async function POST(
       bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
       offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
       duration: result.duration ?? existingGridMap.duration,
-      v2Layout: v2LayoutRms,       // активная сетка = RMS по умолчанию
+      v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
       v2LayoutRms,                  // RMS сетка (постоянно)
       v2LayoutPerc,                 // перцептивная сетка (постоянно)
       bridges:
@@ -247,11 +248,11 @@ export async function POST(
       },
     });
     console.log(
-      "[V2 Analysis] Track gridMap updated with v2Layout (" +
-        v2LayoutRms.length +
-        " RMS segments, " +
+      "[V2 Analysis] Track gridMap updated with v2Layout (perc=" +
         v2LayoutPerc.length +
-        " perc segments)",
+        " segments, rms=" +
+        v2LayoutRms.length +
+        " segments, active=perc)",
     );
 
     return NextResponse.json(toSave);

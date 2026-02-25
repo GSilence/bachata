@@ -97,6 +97,7 @@ export const usePlayerStore = create<PlayerState>()(
       squareDominanceMax: 100,
       playUntilSeconds: null,
       isReanalyzing: false,
+      savedTrackId: null,
 
       // AudioEngine reference (kept for compatibility, but we import directly now)
       audioEngine: null,
@@ -118,6 +119,7 @@ export const usePlayerStore = create<PlayerState>()(
         // This ensures the UI renders "0:00 / 0:00" instead of using the previous track's timeline
         set({
           currentTrack: track,
+          savedTrackId: track.id,
           isPlaying: false, // Don't auto-play, let play() be called explicitly
           currentTime: 0,
           duration: 0, // Will be updated when track loads
@@ -604,7 +606,7 @@ export const usePlayerStore = create<PlayerState>()(
     {
       name: "player-storage",
       partialize: (state) => ({
-        savedTrackId: state.currentTrack?.id ?? null,
+        savedTrackId: state.savedTrackId,
         playlistFilter: state.playlistFilter,
         searchQuery: state.searchQuery,
         bridgeFilterWith: state.bridgeFilterWith,

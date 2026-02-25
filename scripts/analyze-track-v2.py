@@ -1218,6 +1218,12 @@ def analyze_v2(audio_path):
     # === ФАЗА 2: Анализ КВАДРАТ ===
     square_result = analyze_square(beats, start_idx, row1_offset)
 
+    # === Ранние выходы от анализа мостиков ===
+    skip_bridges = square_result['verdict'] == 'square_confirmed'
+    skip_reason = 'all_green' if skip_bridges else None
+    if skip_bridges:
+        log(f"[Phase 3] skip_bridges=True, reason={skip_reason}")
+
     # === ФАЗА 3: Индикаторы и мостики ===
     quarters = compute_quarters(beats, start_idx, row1_offset)
 
@@ -1229,7 +1235,12 @@ def analyze_v2(audio_path):
     # --- RMS ветка: проверка индикаторов по RMS-энергии ---
     bridges = []
     indicator_decisions = []
-    if square_result['verdict'] == 'has_bridges':
+    if skip_bridges:
+        indicator_decisions = [
+            {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
+            for ind in indicators
+        ]
+    elif square_result['verdict'] == 'has_bridges':
         bridges, indicator_decisions = analyze_bridges(indicators, quarters, config)
     else:
         indicator_decisions = [
@@ -1238,10 +1249,18 @@ def analyze_v2(audio_path):
         ]
 
     # --- Perceptual ветка: проверка тех же индикаторов по perceptual_energy ---
-    perc_bridge_candidates = compute_perc_bridge_candidates(
-        strong_rows_tact_list, start_idx, beats, config
-    )
-    perc_confirmed_bridges, perc_indicator_decisions = analyze_perc_bridges(indicators, beats, config)
+    if skip_bridges:
+        perc_bridge_candidates = []
+        perc_confirmed_bridges = []
+        perc_indicator_decisions = [
+            {**ind, 'action': 'not_processed', 'reason': f'Пропущено: {skip_reason}'}
+            for ind in indicators
+        ]
+    else:
+        perc_bridge_candidates = compute_perc_bridge_candidates(
+            strong_rows_tact_list, start_idx, beats, config
+        )
+        perc_confirmed_bridges, perc_indicator_decisions = analyze_perc_bridges(indicators, beats, config)
 
     # === Layout — строится по RMS мостикам (рабочая сетка) ===
     layout = generate_layout(quarters, bridges, start_idx, beats, row1_offset)
@@ -1305,6 +1324,8 @@ def analyze_v2(audio_path):
         'tact_sum_8_after_skip4': [{'row_position': r['row_position'], 'beat': beat1(r['beat']), 'tact_sum': r['tact_sum']} for r in tact_sum_8],
         'beats_above_avg_stats': beats_above_avg_stats,
         'square_analysis': square_result,
+        'skip_bridges': skip_bridges,
+        'skip_bridges_reason': skip_reason,
         'indicator_tact_table': [
             {**t, 'beat': beat1(t['beat']), 'probability_pct': t['probability_pct']}
             for t in indicator_tact_table

@@ -125,6 +125,9 @@ export interface PlayerState {
   // Переоценка расклада (блокирует страницу, не сохраняется)
   isReanalyzing: boolean;
 
+  /** ID последнего выбранного трека — сохраняется в localStorage для восстановления после перезагрузки */
+  savedTrackId: number | null;
+
   // AudioEngine reference (не сохраняется в localStorage)
   audioEngine: any | null;
 

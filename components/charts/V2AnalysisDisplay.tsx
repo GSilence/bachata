@@ -134,6 +134,8 @@ interface V2Result {
     position: string;
     diff_pct: number;
   }[];
+  skip_bridges?: boolean;
+  skip_bridges_reason?: string;
   /** Сегменты раскладки (не выводим в UI, но приходят с API) */
   layout?: {
     from_beat: number;
@@ -244,13 +246,18 @@ export default function V2AnalysisDisplay({
             Ряды свопнуты
           </span>
         )}
-        <span
-          className={`px-2 py-1 rounded text-xs ${
-            data.bridges.length > 0 ? "bg-yellow-700" : "bg-green-800"
-          }`}
-        >
-          Мостиков: {data.bridges.length}
-        </span>
+        {(() => {
+          const n = data.perc_confirmed_bridges?.length ?? data.bridges.length;
+          return (
+            <span
+              className={`px-2 py-1 rounded text-xs ${
+                n > 0 ? "bg-yellow-700" : "bg-green-800"
+              }`}
+            >
+              Мостиков: {n}
+            </span>
+          );
+        })()}
       </div>
 
 
@@ -368,11 +375,8 @@ export default function V2AnalysisDisplay({
                 </tbody>
               </table>
               {data.row_analysis_verdict && (
-                <div className="text-xs text-gray-500 mt-2 space-y-1">
+                <div className="text-xs text-gray-400 mt-2 space-y-1">
                   {(() => {
-                    // Та же логика, что и ниже: пропуск 4 тактов, следующие 8 тактов (tact_sum из таблицы)
-                    const SKIP_TACTS_PER_ROW = 4;
-                    const TAKE_TACTS_PER_ROW = 8;
                     const winningRows =
                       data.row_analysis_verdict?.winning_rows ??
                       (data.row_analysis_verdict?.winning_row != null
@@ -380,161 +384,108 @@ export default function V2AnalysisDisplay({
                         : []);
                     if (winningRows.length < 2) return null;
                     const [r1, r2] = winningRows;
-                    const pos1 = r1 - 1;
-                    const pos2 = r2 - 1;
-                    const table = data.strong_rows_tact_table ?? [];
-                    const row1Tacts = table
-                      .filter((t) => t.row_position === pos1)
-                      .sort((a, b) => a.beat - b.beat);
-                    const row2Tacts = table
-                      .filter((t) => t.row_position === pos2)
-                      .sort((a, b) => a.beat - b.beat);
-                    if (
-                      row1Tacts.length <
-                        SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW ||
-                      row2Tacts.length < SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW
-                    ) {
-                      return (
-                        <p className="text-gray-500 mt-1">
-                          По Perc sum: нет данных (таблица тактов пуста или мало
-                          записей)
-                        </p>
-                      );
-                    }
-                    const row1Slice = row1Tacts.slice(
-                      SKIP_TACTS_PER_ROW,
-                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
-                    );
-                    const row2Slice = row2Tacts.slice(
-                      SKIP_TACTS_PER_ROW,
-                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
-                    );
-                    const sum1 = row1Slice.reduce(
-                      (s, t) => s + (t.tact_sum ?? 0),
+
+                    // 1. Мадмом %
+                    const r1Madmom =
+                      data.row_analysis?.[`row_${r1}`]?.madmom_sum ?? 0;
+                    const r2Madmom =
+                      data.row_analysis?.[`row_${r2}`]?.madmom_sum ?? 0;
+                    const madmomDiff =
+                      r2Madmom !== 0
+                        ? ((r1Madmom - r2Madmom) / Math.abs(r2Madmom)) * 100
+                        : 0;
+
+                    // 2. Перцептуал по битам %
+                    const r1Beats =
+                      data.per_beat_data?.filter(
+                        (b) => (b.id - 1) % 8 === r1 - 1,
+                      ) ?? [];
+                    const r2Beats =
+                      data.per_beat_data?.filter(
+                        (b) => (b.id - 1) % 8 === r2 - 1,
+                      ) ?? [];
+                    const r1PercSum = r1Beats.reduce(
+                      (s, b) => s + (b.perceptual_energy ?? 0),
                       0,
                     );
-                    const sum2 = row2Slice.reduce(
-                      (s, t) => s + (t.tact_sum ?? 0),
+                    const r2PercSum = r2Beats.reduce(
+                      (s, b) => s + (b.perceptual_energy ?? 0),
                       0,
                     );
-                    const winnerRow = sum1 >= sum2 ? r1 : r2;
-                    const winnerSlice = sum1 >= sum2 ? row1Slice : row2Slice;
-                    const firstTact = winnerSlice[0];
-                    const startBeatId = firstTact?.beat ?? winnerRow;
-                    const startTime = firstTact?.time_sec ?? 0;
-                    return (
-                      <p className="text-gray-400 mt-1">
-                        По Perc sum: ряд {winnerRow} победил, старт с бита #
-                        {startBeatId} ({Number(startTime).toFixed(2)}s)
-                      </p>
-                    );
-                  })()}
-                  {(() => {
-                    // Как в таблице «Такты сильных рядов»: откидываем первые 4 ТАКТА в каждом ряду, суммируем tact_sum следующих 8 тактов
-                    const SKIP_TACTS_PER_ROW = 4;
-                    const TAKE_TACTS_PER_ROW = 8;
-                    const winningRows =
-                      data.row_analysis_verdict?.winning_rows ??
-                      (data.row_analysis_verdict?.winning_row != null
-                        ? [data.row_analysis_verdict.winning_row]
-                        : []);
-                    if (winningRows.length < 2) return null;
-                    const [r1, r2] = winningRows;
-                    // row_position в таблице 0–7, ряд 1 → 0, ряд 5 → 4
-                    const pos1 = r1 - 1;
-                    const pos2 = r2 - 1;
+                    // Средние на бит (не суммы) — сравнимы независимо от кол-ва битов
+                    const r1PercAvg = r1Beats.length > 0 ? r1PercSum / r1Beats.length : 0;
+                    const r2PercAvg = r2Beats.length > 0 ? r2PercSum / r2Beats.length : 0;
+                    // dB diff: положительный = РАЗ громче, отрицательный = ПЯТЬ громче
+                    const percDiff = r1PercAvg - r2PercAvg;
 
+                    // 3. Такт-суммы перцептуал % (весь трек)
                     const table = data.strong_rows_tact_table ?? [];
-                    const row1Tacts = table
-                      .filter((t) => t.row_position === pos1)
-                      .sort((a, b) => a.beat - b.beat);
-                    const row2Tacts = table
-                      .filter((t) => t.row_position === pos2)
-                      .sort((a, b) => a.beat - b.beat);
-
-                    if (
-                      row1Tacts.length <
-                        SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW ||
-                      row2Tacts.length < SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW
-                    ) {
-                      return (
-                        <p className="text-gray-500 mt-1">
-                          По тактам: нет данных (таблица тактов пуста или мало
-                          записей)
-                        </p>
-                      );
+                    const r1Tacts = table.filter((t) => t.row_position === r1 - 1);
+                    const r2Tacts = table.filter((t) => t.row_position === r2 - 1);
+                    let tactSum1: number | null = null;
+                    let tactSum2: number | null = null;
+                    let tactDiff: number | null = null;
+                    if (r1Tacts.length > 0 && r2Tacts.length > 0) {
+                      tactSum1 = r1Tacts.reduce((s, t) => s + (t.tact_sum ?? 0), 0);
+                      tactSum2 = r2Tacts.reduce((s, t) => s + (t.tact_sum ?? 0), 0);
+                      tactDiff =
+                        tactSum2 !== 0
+                          ? ((tactSum1 - tactSum2) / Math.abs(tactSum2)) * 100
+                          : 0;
                     }
 
-                    const row1Slice = row1Tacts.slice(
-                      SKIP_TACTS_PER_ROW,
-                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
-                    );
-                    const row2Slice = row2Tacts.slice(
-                      SKIP_TACTS_PER_ROW,
-                      SKIP_TACTS_PER_ROW + TAKE_TACTS_PER_ROW,
-                    );
-                    const sum1 = row1Slice.reduce(
-                      (s, t) => s + (t.tact_sum ?? 0),
-                      0,
-                    );
-                    const sum2 = row2Slice.reduce(
-                      (s, t) => s + (t.tact_sum ?? 0),
-                      0,
-                    );
-                    const winnerByTacts = sum1 >= sum2 ? r1 : r2;
+                    const fmt = (n: number) =>
+                      `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+                    const cls = (n: number) =>
+                      n >= 0 ? "text-green-400" : "text-red-400";
+
                     return (
-                      <p className="text-gray-400 mt-1">
-                        По 8 тактам ряда после пропуска 4 (tact_sum из таблицы):
-                        ряд {winnerByTacts} победил (Row {r1}: {sum1.toFixed(1)}{" "}
-                        | Row {r2}: {sum2.toFixed(1)})
-                      </p>
+                      <>
+                        <p>
+                          Мадмом: РАЗ={r1Madmom.toFixed(3)}, ПЯТЬ=
+                          {r2Madmom.toFixed(3)} →{" "}
+                          <span className={cls(madmomDiff)}>
+                            {fmt(madmomDiff)}
+                          </span>
+                        </p>
+                        <p>
+                          Перцептуал (avg/бит): РАЗ={r1PercAvg.toFixed(2)} dB,
+                          ПЯТЬ={r2PercAvg.toFixed(2)} dB →{" "}
+                          <span className={cls(percDiff)}>
+                            {percDiff >= 0 ? "+" : ""}{percDiff.toFixed(2)} dB
+                          </span>
+                        </p>
+                        {tactSum1 !== null &&
+                          tactSum2 !== null &&
+                          tactDiff !== null && (
+                            <>
+                              <p>
+                                Перцептуал по тактам: РАЗ={tactSum1.toFixed(1)},
+                                ПЯТЬ={tactSum2.toFixed(1)} →{" "}
+                                <span className={cls(tactDiff)}>
+                                  {fmt(tactDiff)}
+                                </span>
+                              </p>
+                              {(() => {
+                                const avgR1 = tactSum1 / r1Tacts.length;
+                                const avgR2 = tactSum2 / r2Tacts.length;
+                                const dbDiff = avgR1 - avgR2;
+                                return (
+                                  <p>
+                                    Разница громкости: avg РАЗ={avgR1.toFixed(2)} dB,
+                                    avg ПЯТЬ={avgR2.toFixed(2)} dB →{" "}
+                                    <span className={cls(dbDiff)}>
+                                      {dbDiff >= 0 ? "+" : ""}
+                                      {dbDiff.toFixed(2)} dB
+                                    </span>
+                                  </p>
+                                );
+                              })()}
+                            </>
+                          )}
+                      </>
                     );
                   })()}
-                  {data.tact_sum_8_after_skip4 &&
-                    data.tact_sum_8_after_skip4.length > 0 && (
-                      <p className="text-gray-400 mt-1 font-mono text-xs">
-                        tact_sum (8 тактов): [
-                        {data.tact_sum_8_after_skip4
-                          .map((t) => t.tact_sum.toFixed(2))
-                          .join(", ")}
-                        ]
-                      </p>
-                    )}
-                  {data.beats_above_avg_stats && (
-                    <>
-                      <p className="text-gray-400 mt-1 text-xs">
-                        Биты выше среднего (1,2,3 и 5,6,7 в такте): РАЗ{" "}
-                        {data.beats_above_avg_stats.beats_above_avg_row1}/
-                        {data.beats_above_avg_stats.total_beats_row1}, ПЯТЬ{" "}
-                        {data.beats_above_avg_stats.beats_above_avg_row5}/
-                        {data.beats_above_avg_stats.total_beats_row5} (среднее
-                        perc ={" "}
-                        {data.beats_above_avg_stats.perceptual_mean.toFixed(2)})
-                      </p>
-                      <p className="text-gray-400 mt-0.5 text-xs">
-                        Биты выше среднего +{" "}
-                        {
-                          data.beats_above_avg_stats
-                            .beats_above_avg_plus_pct_config
-                        }
-                        %: РАЗ{" "}
-                        {
-                          data.beats_above_avg_stats
-                            .beats_above_avg_plus_pct_row1
-                        }
-                        , ПЯТЬ{" "}
-                        {
-                          data.beats_above_avg_stats
-                            .beats_above_avg_plus_pct_row5
-                        }{" "}
-                        (порог ={" "}
-                        {data.beats_above_avg_stats.threshold_avg_plus_pct.toFixed(
-                          2,
-                        )}
-                        )
-                      </p>
-                    </>
-                  )}
                 </div>
               )}
             </div>
@@ -628,6 +579,14 @@ export default function V2AnalysisDisplay({
               {data.square_analysis.verdict === "has_bridges"
                 ? "есть красные"
                 : "все зелёные"}
+              {data.skip_bridges && (
+                <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-green-800 text-green-200">
+                  мостики пропущены:{" "}
+                  {data.skip_bridges_reason === "all_green"
+                    ? "все квадраты зелёные"
+                    : data.skip_bridges_reason}
+                </span>
+              )}
             </summary>
             <div className="mt-2 space-y-4">
               {/* Perceptual Energy: 4 строки (1/1, 1/2, 1/3, 1/5) */}

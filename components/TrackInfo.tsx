@@ -438,6 +438,17 @@ export default function TrackInfo({}: TrackInfoProps) {
                         typeof squareAnalysis?.row_dominance_pct === "number"
                           ? squareAnalysis.row_dominance_pct
                           : undefined;
+                      const v2LayoutRms = Array.isArray(data.layout)
+                        ? data.layout
+                        : [];
+                      const v2LayoutPerc = Array.isArray(data.layout_perc)
+                        ? data.layout_perc
+                        : [];
+                      const activeLayout =
+                        v2LayoutPerc.length > 0 ? v2LayoutPerc : v2LayoutRms;
+                      const percBridgeTimes = activeLayout
+                        .slice(1)
+                        .map((s: { time_start?: number }) => s.time_start ?? 0);
                       const mergedGridMap: GridMap = {
                         bpm: (data.bpm ?? currentTrack.bpm) as number,
                         offset: (data.song_start_time ??
@@ -445,15 +456,16 @@ export default function TrackInfo({}: TrackInfoProps) {
                           base.offset ??
                           0) as number,
                         grid: (base.grid as GridMap["grid"]) ?? [],
-                        bridges: Array.isArray(data.bridges)
-                          ? data.bridges.map(
-                              (b: { time_sec?: number }) => b.time_sec ?? 0,
-                            )
-                          : (base.bridges as number[] | undefined),
+                        bridges:
+                          percBridgeTimes.length > 0
+                            ? percBridgeTimes
+                            : (base.bridges as number[] | undefined),
                         duration: (data.duration ?? base.duration) as
                           | number
                           | undefined,
-                        v2Layout: data.layout as GridMap["v2Layout"],
+                        v2Layout: activeLayout as GridMap["v2Layout"],
+                        v2LayoutRms: v2LayoutRms as GridMap["v2LayoutRms"],
+                        v2LayoutPerc: v2LayoutPerc as GridMap["v2LayoutPerc"],
                         ...(rowDominancePercent != null && {
                           rowDominancePercent,
                         }),
@@ -512,12 +524,6 @@ export default function TrackInfo({}: TrackInfoProps) {
                 <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
                   Анализ v2 —{" "}
                   {v2Result.track_type === "popsa" ? "Попса" : "Бачата"}
-                  {v2Result.bridges?.length > 0 && (
-                    <span className="text-yellow-400 ml-1">
-                      ({v2Result.bridges.length} мостик
-                      {v2Result.bridges.length > 1 ? "а" : ""})
-                    </span>
-                  )}
                 </summary>
                 <div className="mt-2">
                   <V2AnalysisDisplay
@@ -630,30 +636,30 @@ export default function TrackInfo({}: TrackInfoProps) {
                 </button>
                 {v2Result && !v2Result.error && (
                   <>
+                    {v2Result.perc_confirmed_bridges?.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => applyLayout("perc")}
+                        disabled={isSavingBridge || isReanalyzing}
+                        title="Применить перцептивную сетку из v2 анализа (по умолчанию)"
+                        className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isSavingBridge
+                          ? "Сохранение..."
+                          : `← Перц. (${v2Result.perc_confirmed_bridges.length})`}
+                      </button>
+                    )}
                     {v2Result.bridges?.length > 0 && (
                       <button
                         type="button"
                         onClick={() => applyLayout("rms")}
                         disabled={isSavingBridge || isReanalyzing}
                         title="Применить RMS сетку из v2 анализа"
-                        className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {isSavingBridge
                           ? "Сохранение..."
                           : `← RMS (${v2Result.bridges.length})`}
-                      </button>
-                    )}
-                    {v2Result.perc_confirmed_bridges?.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => applyLayout("perc")}
-                        disabled={isSavingBridge || isReanalyzing}
-                        title="Применить перцептивную сетку из v2 анализа"
-                        className="text-xs px-3 py-1.5 rounded bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isSavingBridge
-                          ? "Сохранение..."
-                          : `← Перц. (${v2Result.perc_confirmed_bridges.length})`}
                       </button>
                     )}
                   </>
