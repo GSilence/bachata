@@ -1228,11 +1228,11 @@ def analyze_v2(audio_path):
     madmom_diff_pct = round((_m1 - _m5) / abs(_m5) * 100, 2) if _m5 != 0 else 0.0
     log(f"[Phase 2] Мадмом РАЗ={_m1:.3f}, ПЯТЬ={_m5:.3f}, diff={madmom_diff_pct:.2f}%")
 
-    if madmom_diff_pct >= 5.0:
-        # Мадмом явно указывает на квадрат — пропускаем анализ квадрата, кварталы и индикаторы
+    if abs(madmom_diff_pct) >= 5.0:
+        # Один из рядов явно доминирует ≥5% (по модулю) — квадратная песня, мостики не ищем
         skip_bridges = True
         skip_reason = f'madmom_dominance {madmom_diff_pct:.1f}%'
-        log(f"[Phase 2] Мадмом ≥5% → skip_bridges=True ({skip_reason}), пропускаем analyze_square/quarters/indicators")
+        log(f"[Phase 2] Мадмом |diff|≥5% → skip_bridges=True ({skip_reason}), пропускаем analyze_square/quarters/indicators")
         square_result = {'verdict': 'skipped', 'reason': skip_reason}
         quarters = []
         indicators = []

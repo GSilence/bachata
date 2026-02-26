@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { join } from "path";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { exec } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
-
-const execAsync = promisify(exec);
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -174,21 +171,10 @@ export async function POST(
       );
     }
 
-    const command = `"${pythonPath}" "${scriptPath}" "${filePath}"`;
-    console.log(`[V2 Analysis] Running: ${command}`);
+    console.log(`[V2 Analysis] Running: "${pythonPath}" "${scriptPath}" "${filePath}"`);
 
-    const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 300000,
-    });
-
-    if (stderr) {
-      console.log(`[V2 Analysis] stderr: ${stderr}`);
-    }
-
-    const result = JSON.parse(stdout.trim());
-
-    // Save results to JSON file
+    const encoder = new TextEncoder();
+    const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
     const audioBasename = pathOriginal
       .replace(/^.*[\\/]/, "")
       .replace(/\.[^.]+$/, "");
@@ -199,63 +185,138 @@ export async function POST(
       "reports",
       `${audioBasename}_v2_analysis.json`,
     );
-    const toSave = {
-      success: true,
-      trackId,
-      track_title: track.title,
-      track_artist: track.artist ?? null,
-      ...result,
-    };
-    writeFileSync(resultPath, JSON.stringify(toSave, null, 2));
-    console.log("[V2 Analysis] Results saved: " + resultPath);
 
-    // Применяем раскладку v2 к треку в БД — счёт при воспроизведении будет учитывать мостики
-    const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
-    const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
-    const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
-    // Визуальные маркеры мостиков = начала сегментов перцептивной (активной) раскладки
-    const v2BridgesTimes = (v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms)
-      .slice(1)
-      .map((s: { time_start?: number }) => s.time_start ?? 0);
-    const squareAnalysis = result.square_analysis as
-      | { verdict?: string; row_dominance_pct?: number }
-      | undefined;
-    const rowDominancePercent =
-      typeof squareAnalysis?.row_dominance_pct === "number"
-        ? squareAnalysis.row_dominance_pct
-        : undefined;
+    const stream = new ReadableStream({
+      start(controller) {
+        const send = (obj: object) => {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(obj)}\n\n`),
+          );
+        };
 
-    const mergedGridMap = {
-      ...existingGridMap,
-      bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
-      offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
-      duration: result.duration ?? existingGridMap.duration,
-      v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
-      v2LayoutRms,                  // RMS сетка (постоянно)
-      v2LayoutPerc,                 // перцептивная сетка (постоянно)
-      bridges:
-        v2BridgesTimes.length > 0 ? v2BridgesTimes : existingGridMap.bridges,
-      ...(rowDominancePercent != null && { rowDominancePercent }),
-    };
-    await prisma.track.update({
-      where: { id: trackId },
-      data: {
-        gridMap: mergedGridMap as object,
-        // Синхронизируем track.offset с новым song_start_time из v2-анализа
-        ...(result.song_start_time != null && {
-          offset: result.song_start_time,
-        }),
+        const proc = spawn(pythonPath, [scriptPath, filePath]);
+        let stdoutBuf = "";
+        let stderrBuf = "";
+
+        proc.stderr.on("data", (chunk: Buffer) => {
+          stderrBuf += chunk.toString();
+          const lines = stderrBuf.split("\n");
+          stderrBuf = lines.pop() ?? "";
+          for (const line of lines) {
+            const t = line.trim();
+            if (t) {
+              console.log(`[V2 Analysis] ${t}`);
+              send({ type: "log", message: t });
+            }
+          }
+        });
+
+        proc.stdout.on("data", (chunk: Buffer) => {
+          stdoutBuf += chunk.toString();
+        });
+
+        proc.on("close", (code) => {
+          (async () => {
+            try {
+              // Flush remaining stderr
+              if (stderrBuf.trim()) {
+                console.log(`[V2 Analysis] ${stderrBuf.trim()}`);
+                send({ type: "log", message: stderrBuf.trim() });
+              }
+              if (code !== 0) {
+                throw new Error(`Python exited with code ${code}`);
+              }
+              const result = JSON.parse(stdoutBuf.trim());
+              if (result.error) throw new Error(result.error);
+
+              const toSave = {
+                success: true,
+                trackId,
+                track_title: track.title,
+                track_artist: track.artist ?? null,
+                ...result,
+              };
+              writeFileSync(resultPath, JSON.stringify(toSave, null, 2));
+              console.log("[V2 Analysis] Results saved: " + resultPath);
+
+              const v2LayoutRms = Array.isArray(result.layout)
+                ? result.layout
+                : [];
+              const v2LayoutPerc = Array.isArray(result.layout_perc)
+                ? result.layout_perc
+                : [];
+              const v2BridgesTimes = (
+                v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms
+              )
+                .slice(1)
+                .map((s: { time_start?: number }) => s.time_start ?? 0);
+              const squareAnalysis = result.square_analysis as
+                | { verdict?: string; row_dominance_pct?: number }
+                | undefined;
+              const rowDominancePercent =
+                typeof squareAnalysis?.row_dominance_pct === "number"
+                  ? squareAnalysis.row_dominance_pct
+                  : undefined;
+
+              const mergedGridMap = {
+                ...existingGridMap,
+                bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
+                offset:
+                  result.song_start_time ??
+                  track.offset ??
+                  existingGridMap.offset,
+                duration: result.duration ?? existingGridMap.duration,
+                v2Layout: v2LayoutPerc,
+                v2LayoutRms,
+                v2LayoutPerc,
+                bridges:
+                  v2BridgesTimes.length > 0
+                    ? v2BridgesTimes
+                    : existingGridMap.bridges,
+                ...(rowDominancePercent != null && { rowDominancePercent }),
+              };
+
+              if (prisma) {
+                await prisma.track.update({
+                  where: { id: trackId },
+                  data: {
+                    gridMap: mergedGridMap as object,
+                    ...(result.song_start_time != null && {
+                      offset: result.song_start_time,
+                    }),
+                  },
+                });
+              }
+              console.log(
+                `[V2 Analysis] gridMap updated (perc=${v2LayoutPerc.length}, rms=${v2LayoutRms.length})`,
+              );
+
+              send({ type: "result", data: toSave });
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error("[V2 Analysis] Error:", msg);
+              send({ type: "error", message: msg });
+            } finally {
+              controller.close();
+            }
+          })();
+        });
+
+        proc.on("error", (err) => {
+          console.error("[V2 Analysis] Spawn error:", err);
+          send({ type: "error", message: err.message });
+          controller.close();
+        });
       },
     });
-    console.log(
-      "[V2 Analysis] Track gridMap updated with v2Layout (perc=" +
-        v2LayoutPerc.length +
-        " segments, rms=" +
-        v2LayoutRms.length +
-        " segments, active=perc)",
-    );
 
-    return NextResponse.json(toSave);
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[V2 Analysis] Error:", error);

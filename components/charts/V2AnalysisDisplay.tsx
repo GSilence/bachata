@@ -384,7 +384,11 @@ export default function V2AnalysisDisplay({
                         ? [data.row_analysis_verdict.winning_row]
                         : []);
                     if (winningRows.length < 2) return null;
-                    const [r1, r2] = winningRows;
+                    // row_one = истинный РАЗ (из find_song_start_perc), может не совпадать с winningRows[0]
+                    // winning_rows всегда [меньший_ряд, больший_ряд] — по позиции, а не по РАЗ/ПЯТЬ
+                    const rowOne = data.row_analysis_verdict?.row_one;
+                    const r1 = rowOne != null && winningRows.includes(rowOne) ? rowOne : winningRows[0];
+                    const r2 = winningRows.find((r) => r !== r1) ?? winningRows[1];
 
                     // 1. Мадмом %
                     const r1Madmom =
@@ -448,11 +452,12 @@ export default function V2AnalysisDisplay({
                           <span className={cls(madmomDiff)}>
                             {fmt(madmomDiff)}
                           </span>
-                          {madmomDiff >= 5 && (
+                          {Math.abs(madmomDiff) >= 5 && (
                             <span className="ml-2 px-1 py-0.5 rounded text-xs bg-green-800 text-green-200">
-                              ≥5% → без мостиков
+                              |≥5%| → без мостиков
                             </span>
                           )}
+
                         </p>
                         <p>
                           Перцептуал (avg/бит): РАЗ={r1PercAvg.toFixed(2)} dB,

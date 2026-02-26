@@ -13,6 +13,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx scripts/seed.ts",
     "db:check": "tsx scripts/check-db.ts",
+    "rename-tracks-by-report": "tsx scripts/rename-tracks-by-report.ts",
     "db:scan": "tsx scripts/scan-music-folder.ts",
     "db:clear": "tsx scripts/clear-tracks.ts",
     "check:demucs": "tsx scripts/check-demucs.ts",

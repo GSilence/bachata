@@ -43,6 +43,7 @@ export default function TrackInfo({}: TrackInfoProps) {
   // V2 analysis state
   const [v2Result, setV2Result] = useState<any>(null);
   const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
+  const [v2Stage, setV2Stage] = useState<string>("");
 
   // Bridge state
   const [bridges, setBridges] = useState<number[]>([]);
@@ -405,15 +406,44 @@ export default function TrackInfo({}: TrackInfoProps) {
                   if (!currentTrack || isAnalyzingV2) return;
                   setIsAnalyzingV2(true);
                   setV2Result(null);
+                  setV2Stage("");
                   try {
                     const res = await fetch(
                       `/api/tracks/${currentTrack.id}/analyze-v2`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                      },
+                      { method: "POST" },
                     );
-                    const data = await res.json();
+
+                    // SSE streaming — read stage logs until result arrives
+                    let data: any = null;
+                    if (res.headers.get("Content-Type")?.includes("text/event-stream") && res.body) {
+                      const reader = res.body.getReader();
+                      const decoder = new TextDecoder();
+                      let buf = "";
+                      outer: while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buf += decoder.decode(value, { stream: true });
+                        const parts = buf.split("\n\n");
+                        buf = parts.pop() ?? "";
+                        for (const part of parts) {
+                          const line = part.split("\n").find((l) => l.startsWith("data: "));
+                          if (!line) continue;
+                          let evt: any;
+                          try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+                          if (evt.type === "log") {
+                            setV2Stage(evt.message);
+                          } else if (evt.type === "result") {
+                            data = evt.data;
+                          } else if (evt.type === "error") {
+                            throw new Error(evt.message);
+                          }
+                        }
+                        if (data) break outer;
+                      }
+                    } else {
+                      data = await res.json();
+                    }
+                    if (!data) throw new Error("No result received from analysis");
                     setV2Result(data);
                     // Сразу применяем раскладку v2 к воспроизведению (мостики учтены в счёте)
                     if (
@@ -489,6 +519,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                     setV2Result({ error: String(e) });
                   } finally {
                     setIsAnalyzingV2(false);
+                    setV2Stage("");
                   }
                 }}
                 disabled={isAnalyzingV2}
@@ -514,6 +545,11 @@ export default function TrackInfo({}: TrackInfoProps) {
                 ) : null}
                 {isAnalyzingV2 ? "Анализ v2…" : "Анализ v2"}
               </button>
+              {isAnalyzingV2 && v2Stage && (
+                <span className="text-xs text-indigo-300 truncate max-w-[220px]" title={v2Stage}>
+                  {v2Stage}
+                </span>
+              )}
             </div>
           </div>
 

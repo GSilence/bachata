@@ -129,6 +129,8 @@ export default function SettingsPage() {
     setReanalyzeProgress(null);
     setIsReanalyzing(false);
     fetchStats();
+    // Перезагружаем страницу чтобы Zustand подхватил новые gridMap из БД
+    setTimeout(() => router.push("/"), 1500);
   };
 
   const handleExport = async (format: "csv" | "json" | "manifest") => {
