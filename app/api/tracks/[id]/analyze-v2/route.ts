@@ -269,10 +269,9 @@ export async function POST(
                 v2Layout: v2LayoutPerc,
                 v2LayoutRms,
                 v2LayoutPerc,
-                bridges:
-                  v2BridgesTimes.length > 0
-                    ? v2BridgesTimes
-                    : existingGridMap.bridges,
+                // Анализ прошёл успешно → всегда перезаписываем мостики результатом анализа
+                // [] = нет мостиков — это тоже валидный результат (skip_bridges=True)
+                bridges: v2BridgesTimes,
                 ...(rowDominancePercent != null && { rowDominancePercent }),
               };
 

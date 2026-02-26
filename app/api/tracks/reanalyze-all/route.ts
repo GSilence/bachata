@@ -125,10 +125,7 @@ export async function POST(request: NextRequest) {
           v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
           v2LayoutRms,                  // RMS сетка
           v2LayoutPerc,                 // перцептивная сетка
-          bridges:
-            v2BridgesTimes.length > 0
-              ? v2BridgesTimes
-              : (existingGridMap.bridges as number[] | undefined),
+          bridges: v2BridgesTimes,
           ...(rowDominancePercent != null && { rowDominancePercent }),
         };
 

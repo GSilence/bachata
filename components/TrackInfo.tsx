@@ -486,10 +486,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                           base.offset ??
                           0) as number,
                         grid: (base.grid as GridMap["grid"]) ?? [],
-                        bridges:
-                          percBridgeTimes.length > 0
-                            ? percBridgeTimes
-                            : (base.bridges as number[] | undefined),
+                        bridges: percBridgeTimes,
                         duration: (data.duration ?? base.duration) as
                           | number
                           | undefined,
@@ -520,6 +517,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                   } finally {
                     setIsAnalyzingV2(false);
                     setV2Stage("");
+                    router.refresh();
                   }
                 }}
                 disabled={isAnalyzingV2}
