@@ -452,7 +452,7 @@ export default function V2AnalysisDisplay({
                           <span className={cls(madmomDiff)}>
                             {fmt(madmomDiff)}
                           </span>
-                          {Math.abs(madmomDiff) >= 5 && (
+                          {Math.round(Math.abs(madmomDiff) * 10) / 10 >= 5 && (
                             <span className="ml-2 px-1 py-0.5 rounded text-xs bg-green-800 text-green-200">
                               |≥5%| → без мостиков
                             </span>

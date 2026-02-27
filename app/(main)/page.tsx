@@ -183,6 +183,22 @@ export default function PlaybackPage() {
         if (Array.isArray(data)) {
           setTracks(data);
 
+          // Background: populate rowDominancePercent for tracks that are missing it
+          fetch("/api/tracks/sync-dominance")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (!res || res.updated === 0 || cancelled) return;
+              fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((freshData) => {
+                  if (!cancelled && Array.isArray(freshData)) {
+                    setTracks(freshData);
+                  }
+                })
+                .catch(() => {});
+            })
+            .catch(() => {});
+
           const { currentTrack: currentTrackState } = usePlayerStore.getState();
 
           if (data.length === 0) {

@@ -36,6 +36,8 @@ export interface GridMap {
   v2LayoutPerc?: V2LayoutSegment[];
   /** Разница в %: на сколько РАЗ больше ПЯТЬ — (РАЗ−ПЯТЬ)/ПЯТЬ×100. 0% = поровну. */
   rowDominancePercent?: number;
+  /** true если ряды были свопнуты при v2-анализе (ПЯТЬ оказался сильнее) */
+  rowSwapped?: boolean;
 }
 
 export interface Beat {
@@ -110,10 +112,14 @@ export interface PlayerState {
   bridgeFilterWith: boolean;
   /** Показывать треки без мостиков (по умолчанию true) */
   bridgeFilterWithout: boolean;
+  /** Показывать треки со свапнутыми рядами (по умолчанию true) */
+  bridgeFilterSwapped: boolean;
   /** Сортировка по % доминирования РАЗ над ПЯТЬ: none = без сортировки, asc/desc = только песни без мостиков; с мостиками внизу */
   squareSortDirection: "none" | "asc" | "desc";
   /** Основная сортировка плейлиста: по названию, длительности, дате загрузки, исполнителю */
   playlistSortBy: PlaylistSortBy;
+  /** Направление основной сортировки: asc = по возрастанию, desc = по убыванию */
+  sortDirection: "asc" | "desc";
   /** Фильтр по % доминирования: от (двойной ползунок) */
   squareDominanceMin: number;
   /** Фильтр по % доминирования: до (двойной ползунок) */
@@ -151,8 +157,10 @@ export interface PlayerState {
   setSearchQuery: (query: string) => void;
   setBridgeFilterWith: (value: boolean) => void;
   setBridgeFilterWithout: (value: boolean) => void;
+  setBridgeFilterSwapped: (value: boolean) => void;
   setSquareSortDirection: (dir: "none" | "asc" | "desc") => void;
   setPlaylistSortBy: (by: PlaylistSortBy) => void;
+  setSortDirection: (dir: "asc" | "desc") => void;
   setSquareDominanceRange: (min: number, max: number) => void;
   setPlayUntilSeconds: (seconds: number | null) => void;
   setAudioEngine: (engine: any | null) => void;

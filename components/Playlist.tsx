@@ -16,7 +16,9 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     searchQuery,
     bridgeFilterWith,
     bridgeFilterWithout,
+    bridgeFilterSwapped,
     playlistSortBy,
+    sortDirection,
     squareSortDirection,
     squareDominanceMin,
     squareDominanceMax,
@@ -24,7 +26,9 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     setSearchQuery,
     setBridgeFilterWith,
     setBridgeFilterWithout,
+    setBridgeFilterSwapped,
     setPlaylistSortBy,
+    setSortDirection,
     setSquareSortDirection,
     setSquareDominanceRange,
   } = usePlayerStore();
@@ -39,15 +43,30 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       return false;
     }
 
-    // Итоговый результат анализа мостиков = перцептивная раскладка с >1 сегментом
+    // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
     const gm = track.gridMap as Record<string, unknown> | null;
     const percLayout = Array.isArray(gm?.v2LayoutPerc)
       ? (gm!.v2LayoutPerc as unknown[])
       : null;
     const hasBridges = percLayout != null ? percLayout.length > 1 : false;
+    const isSwapped = !!(gm?.rowSwapped);
 
-    if (hasBridges && !bridgeFilterWith) return false;
-    if (!hasBridges && !bridgeFilterWithout) return false;
+    const matchesBridgeWith = hasBridges && bridgeFilterWith;
+    const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
+    const matchesSwapped = isSwapped && bridgeFilterSwapped;
+    if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
+
+    // Фильтр по % доминирования РАЗ (только для несвапнутых треков без мостиков)
+    if (!hasBridges && !isSwapped) {
+      const pct = (track.gridMap as { rowDominancePercent?: number })
+        ?.rowDominancePercent;
+      const isNarrowed = squareDominanceMin > -100 || squareDominanceMax < 100;
+      if (isNarrowed) {
+        if (pct == null) return false;
+        if (pct < squareDominanceMin) return false;
+        if (pct > squareDominanceMax) return false;
+      }
+    }
 
     // Поиск по названию
     if (searchQuery) {
@@ -65,20 +84,22 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     sensitivity: "base",
     numeric: true,
   });
+  const dir = sortDirection === "desc" ? -1 : 1;
   const sortByMain = (list: Track[]): Track[] =>
     [...list].sort((a, b) => {
       switch (playlistSortBy) {
         case "title":
-          return collator.compare(a.title, b.title) || a.id - b.id;
+          return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
         case "duration": {
           const da = a.gridMap?.duration ?? 0;
           const db = b.gridMap?.duration ?? 0;
-          return da !== db ? da - db : a.id - b.id;
+          return (da !== db ? da - db : a.id - b.id) * dir;
         }
         case "date": {
           const ta = new Date(a.createdAt).getTime();
           const tb = new Date(b.createdAt).getTime();
-          return tb - ta || a.id - b.id;
+          // asc = oldest first, desc = newest first
+          return (ta !== tb ? ta - tb : a.id - b.id) * dir;
         }
         default:
           return a.id - b.id;
@@ -175,10 +196,18 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
           <option value="duration">По длительности</option>
           <option value="date">По дате загрузки</option>
         </select>
+        <button
+          type="button"
+          onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
+          className="px-2 py-1.5 rounded bg-gray-700 border border-gray-600 text-gray-300 hover:bg-gray-600 transition-colors text-sm select-none"
+          title={sortDirection === "asc" ? "По возрастанию" : "По убыванию"}
+        >
+          {sortDirection === "asc" ? "↑" : "↓"}
+        </button>
       </div>
 
       {/* Фильтр по мостикам */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setBridgeFilterWith(!bridgeFilterWith)}
@@ -201,7 +230,60 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         >
           Без мостиков
         </button>
+        <button
+          type="button"
+          onClick={() => setBridgeFilterSwapped(!bridgeFilterSwapped)}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+            bridgeFilterSwapped
+              ? "bg-orange-600 text-white"
+              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+          }`}
+        >
+          Свапнутые
+        </button>
       </div>
+
+      {/* Фильтр по % доминирования РАЗ над ПЯТЬ (только для треков без мостиков) */}
+      {bridgeFilterWithout && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">% РАЗ над ПЯТЬ</span>
+            <span className="text-xs text-gray-500 tabular-nums">
+              {squareDominanceMin > -100 || squareDominanceMax < 100
+                ? `${squareDominanceMin}% — ${squareDominanceMax}%`
+                : "все"}
+            </span>
+          </div>
+          <input
+            type="range"
+            min="-100"
+            max="100"
+            value={squareDominanceMin}
+            onChange={(e) =>
+              setSquareDominanceRange(
+                Math.min(Number(e.target.value), squareDominanceMax),
+                squareDominanceMax,
+              )
+            }
+            className="w-full h-1 accent-purple-500 cursor-pointer"
+            title={`Минимум: ${squareDominanceMin}%`}
+          />
+          <input
+            type="range"
+            min="-100"
+            max="100"
+            value={squareDominanceMax}
+            onChange={(e) =>
+              setSquareDominanceRange(
+                squareDominanceMin,
+                Math.max(Number(e.target.value), squareDominanceMin),
+              )
+            }
+            className="w-full h-1 accent-purple-500 cursor-pointer"
+            title={`Максимум: ${squareDominanceMax}%`}
+          />
+        </div>
+      )}
 
       {/* Список треков */}
       <div

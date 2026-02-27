@@ -91,8 +91,10 @@ export const usePlayerStore = create<PlayerState>()(
       searchQuery: "",
       bridgeFilterWith: true,
       bridgeFilterWithout: true,
+      bridgeFilterSwapped: true,
       squareSortDirection: "none",
       playlistSortBy: "title",
+      sortDirection: "asc",
       squareDominanceMin: -100,
       squareDominanceMax: 100,
       playUntilSeconds: null,
@@ -228,8 +230,10 @@ export const usePlayerStore = create<PlayerState>()(
       setSearchQuery: (query) => set({ searchQuery: query }),
       setBridgeFilterWith: (value) => set({ bridgeFilterWith: value }),
       setBridgeFilterWithout: (value) => set({ bridgeFilterWithout: value }),
+      setBridgeFilterSwapped: (value) => set({ bridgeFilterSwapped: value }),
       setSquareSortDirection: (dir) => set({ squareSortDirection: dir }),
       setPlaylistSortBy: (by) => set({ playlistSortBy: by }),
+      setSortDirection: (dir) => set({ sortDirection: dir }),
       setSquareDominanceRange: (min, max) =>
         set({
           squareDominanceMin: Math.max(-100, Math.min(100, min)),
@@ -283,6 +287,7 @@ export const usePlayerStore = create<PlayerState>()(
             searchQuery,
             bridgeFilterWith,
             bridgeFilterWithout,
+            bridgeFilterSwapped,
             squareDominanceMin,
             squareDominanceMax,
             isPlaying,
@@ -307,13 +312,17 @@ export const usePlayerStore = create<PlayerState>()(
             }
             // TODO: 'my' и 'all' фильтры для будущей реализации
 
-            // Мостики: с / без
+            // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
+            const isSwapped = !!(track.gridMap as { rowSwapped?: boolean })
+              ?.rowSwapped;
             const hasBridges = (track.gridMap?.bridges?.length ?? 0) > 0;
-            if (hasBridges && !bridgeFilterWith) return false;
-            if (!hasBridges && !bridgeFilterWithout) return false;
+            const matchesBridgeWith = hasBridges && bridgeFilterWith;
+            const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
+            const matchesSwapped = isSwapped && bridgeFilterSwapped;
+            if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
 
-            // Квадратные: диапазон % превосходства
-            if (!hasBridges && track.gridMap) {
+            // Квадратные: диапазон % превосходства (только несвапнутые, без мостиков)
+            if (!hasBridges && !isSwapped && track.gridMap) {
               const pct = (track.gridMap as { rowDominancePercent?: number })
                 .rowDominancePercent;
               if (pct != null) {
@@ -337,6 +346,7 @@ export const usePlayerStore = create<PlayerState>()(
           });
 
           const playlistSortBy = get().playlistSortBy;
+          const sortDirection = get().sortDirection;
           const squareSortDirection = get().squareSortDirection;
 
           const sortByMain = (list: Track[]): Track[] => {
@@ -344,19 +354,20 @@ export const usePlayerStore = create<PlayerState>()(
               sensitivity: "base",
               numeric: true,
             });
+            const dir = sortDirection === "desc" ? -1 : 1;
             return [...list].sort((a, b) => {
               switch (playlistSortBy) {
                 case "title":
-                  return collator.compare(a.title, b.title) || a.id - b.id;
+                  return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
                 case "duration": {
                   const da = a.gridMap?.duration ?? 0;
                   const db = b.gridMap?.duration ?? 0;
-                  return da !== db ? da - db : a.id - b.id;
+                  return (da !== db ? da - db : a.id - b.id) * dir;
                 }
                 case "date": {
                   const ta = new Date(a.createdAt).getTime();
                   const tb = new Date(b.createdAt).getTime();
-                  return tb - ta || a.id - b.id; // новее сначала
+                  return (ta !== tb ? ta - tb : a.id - b.id) * dir;
                 }
                 default:
                   return a.id - b.id;
@@ -482,6 +493,7 @@ export const usePlayerStore = create<PlayerState>()(
             searchQuery,
             bridgeFilterWith,
             bridgeFilterWithout,
+            bridgeFilterSwapped,
             squareDominanceMin,
             squareDominanceMax,
           } = get();
@@ -495,10 +507,14 @@ export const usePlayerStore = create<PlayerState>()(
 
           const filteredTracks = tracks.filter((track) => {
             if (playlistFilter === "free" && !track.isFree) return false;
+            const isSwapped = !!(track.gridMap as { rowSwapped?: boolean })
+              ?.rowSwapped;
             const hasBridges = (track.gridMap?.bridges?.length ?? 0) > 0;
-            if (hasBridges && !bridgeFilterWith) return false;
-            if (!hasBridges && !bridgeFilterWithout) return false;
-            if (!hasBridges && track.gridMap) {
+            const matchesBridgeWith = hasBridges && bridgeFilterWith;
+            const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
+            const matchesSwapped = isSwapped && bridgeFilterSwapped;
+            if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
+            if (!hasBridges && !isSwapped && track.gridMap) {
               const pct = (track.gridMap as { rowDominancePercent?: number })
                 .rowDominancePercent;
               if (pct != null) {
@@ -517,30 +533,33 @@ export const usePlayerStore = create<PlayerState>()(
           });
 
           const playlistSortBy = get().playlistSortBy;
+          const sortDirection = get().sortDirection;
           const squareSortDirection = get().squareSortDirection;
           const collator = new Intl.Collator(undefined, {
             sensitivity: "base",
             numeric: true,
           });
-          const sortByMain = (list: Track[]): Track[] =>
-            [...list].sort((a, b) => {
+          const sortByMain = (list: Track[]): Track[] => {
+            const dir = sortDirection === "desc" ? -1 : 1;
+            return [...list].sort((a, b) => {
               switch (playlistSortBy) {
                 case "title":
-                  return collator.compare(a.title, b.title) || a.id - b.id;
+                  return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
                 case "duration": {
                   const da = a.gridMap?.duration ?? 0;
                   const db = b.gridMap?.duration ?? 0;
-                  return da !== db ? da - db : a.id - b.id;
+                  return (da !== db ? da - db : a.id - b.id) * dir;
                 }
                 case "date": {
                   const ta = new Date(a.createdAt).getTime();
                   const tb = new Date(b.createdAt).getTime();
-                  return tb - ta || a.id - b.id;
+                  return (ta !== tb ? ta - tb : a.id - b.id) * dir;
                 }
                 default:
                   return a.id - b.id;
               }
             });
+          };
           const baseSorted = sortByMain(filteredTracks);
           const sortedForPlay =
             squareSortDirection === "none"
@@ -611,8 +630,10 @@ export const usePlayerStore = create<PlayerState>()(
         searchQuery: state.searchQuery,
         bridgeFilterWith: state.bridgeFilterWith,
         bridgeFilterWithout: state.bridgeFilterWithout,
+        bridgeFilterSwapped: state.bridgeFilterSwapped,
         squareSortDirection: state.squareSortDirection,
         playlistSortBy: state.playlistSortBy,
+        sortDirection: state.sortDirection,
         squareDominanceMin: state.squareDominanceMin,
         squareDominanceMax: state.squareDominanceMax,
         playUntilSeconds: state.playUntilSeconds,
@@ -638,11 +659,16 @@ export const usePlayerStore = create<PlayerState>()(
             "bridgeFilterWithout",
             currentState.bridgeFilterWithout,
           ),
+          bridgeFilterSwapped: get(
+            "bridgeFilterSwapped",
+            currentState.bridgeFilterSwapped,
+          ),
           squareSortDirection: get(
             "squareSortDirection",
             currentState.squareSortDirection,
           ),
           playlistSortBy: get("playlistSortBy", currentState.playlistSortBy),
+          sortDirection: get("sortDirection", currentState.sortDirection),
           ...(stored.playlistSortBy === "artist"
             ? { playlistSortBy: "title" as const }
             : {}),

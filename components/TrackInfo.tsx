@@ -64,31 +64,29 @@ export default function TrackInfo({}: TrackInfoProps) {
   useEffect(() => {
     if (currentTrack) {
       // Load saved v2 analysis (GET также считает rowDominancePercent из Row Analysis и пишет в БД)
-      fetch(`/api/tracks/${currentTrack.id}/analyze-v2`)
+      fetch(`/api/tracks/${currentTrack.id}/analyze-v2?t=${Date.now()}`, { cache: "no-store" })
         .then((r) => r.json())
         .then((data) => {
           if (data.found) setV2Result(data);
-          if (
-            data.found &&
-            typeof data.rowDominancePercent === "number" &&
-            currentTrack
-          ) {
-            const existing =
-              (currentTrack.gridMap as unknown as Record<string, unknown>) ||
-              {};
+          if (data.found && typeof data.rowDominancePercent === "number") {
+            // Берём АКТУАЛЬНЫЙ currentTrack из Zustand, а не из замыкания.
+            // Замыкание могло захватить устаревший стейт (например, до завершения анализа),
+            // и ...closureTrack при spread перезаписал бы свежие данные (offset и т.д.)
+            const latestTrack = usePlayerStore.getState().currentTrack;
+            if (!latestTrack || latestTrack.id !== currentTrack.id) return;
             const mergedGridMap: GridMap = {
-              ...(currentTrack.gridMap || {}),
+              ...(latestTrack.gridMap || {}),
               rowDominancePercent: data.rowDominancePercent,
             } as GridMap;
             const updatedTrack = {
-              ...currentTrack,
+              ...latestTrack,
               gridMap: mergedGridMap,
             };
             updateCurrentTrack(updatedTrack);
             const currentTracks = usePlayerStore.getState().tracks;
             setTracks(
               currentTracks.map((t) =>
-                t.id === currentTrack.id ? updatedTrack : t,
+                t.id === latestTrack.id ? updatedTrack : t,
               ),
             );
           }
@@ -118,9 +116,22 @@ export default function TrackInfo({}: TrackInfoProps) {
 
   const handleOffsetChange = async (newOffset: number) => {
     if (!currentTrack) return;
-    const updatedTrack = { ...currentTrack, offset: newOffset };
-    setCurrentTrack(updatedTrack);
-    console.log("Offset changed to:", newOffset);
+    try {
+      const res = await fetch("/api/rhythm/update-offset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_id: currentTrack.id, new_offset: newOffset }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка обновления offset");
+      if (data.track) {
+        updateCurrentTrack(data.track);
+        audioEngine.reloadBeatGrid(data.track);
+        setTempOffset(data.track.offset.toString());
+      }
+    } catch (e) {
+      console.error("Offset change failed:", e);
+    }
   };
 
   const resetBpm = () => {
@@ -446,14 +457,18 @@ export default function TrackInfo({}: TrackInfoProps) {
                     if (!data) throw new Error("No result received from analysis");
                     setV2Result(data);
                     // Сразу применяем раскладку v2 к воспроизведению (мостики учтены в счёте)
+                    // Используем getState() вместо closure-переменной currentTrack:
+                    // за время анализа (30–60 сек) GET-callback мог обновить Zustand,
+                    // и closure содержит устаревший снапшот. getState() даёт актуальный стейт.
+                    const freshTrack = usePlayerStore.getState().currentTrack;
                     if (
-                      currentTrack &&
+                      freshTrack &&
                       data.success &&
                       Array.isArray(data.layout) &&
                       data.layout.length > 0
                     ) {
                       const existing =
-                        currentTrack.gridMap as unknown as Record<
+                        freshTrack.gridMap as unknown as Record<
                           string,
                           unknown
                         > | null;
@@ -480,9 +495,9 @@ export default function TrackInfo({}: TrackInfoProps) {
                         .slice(1)
                         .map((s: { time_start?: number }) => s.time_start ?? 0);
                       const mergedGridMap: GridMap = {
-                        bpm: (data.bpm ?? currentTrack.bpm) as number,
+                        bpm: (data.bpm ?? freshTrack.bpm) as number,
                         offset: (data.song_start_time ??
-                          currentTrack.offset ??
+                          freshTrack.offset ??
                           base.offset ??
                           0) as number,
                         grid: (base.grid as GridMap["grid"]) ?? [],
@@ -498,16 +513,19 @@ export default function TrackInfo({}: TrackInfoProps) {
                         }),
                       };
                       const updatedTrack = {
-                        ...currentTrack,
+                        ...freshTrack,
                         offset: (data.song_start_time ??
-                          currentTrack.offset) as number,
+                          freshTrack.offset) as number,
+                        baseOffset: (data.song_start_time ??
+                          freshTrack.baseOffset) as number,
                         gridMap: mergedGridMap,
                       };
                       updateCurrentTrack(updatedTrack);
                       audioEngine.reloadBeatGrid(updatedTrack);
+                      const freshTracks = usePlayerStore.getState().tracks;
                       setTracks(
-                        tracks.map((t) =>
-                          t.id === currentTrack.id ? updatedTrack : t,
+                        freshTracks.map((t) =>
+                          t.id === freshTrack.id ? updatedTrack : t,
                         ),
                       );
                     }
@@ -517,7 +535,23 @@ export default function TrackInfo({}: TrackInfoProps) {
                   } finally {
                     setIsAnalyzingV2(false);
                     setV2Stage("");
-                    router.refresh();
+                    // Перечитываем треки из БД — это гарантированная синхронизация,
+                    // аналог обновления страницы, но без перезагрузки.
+                    // БД к этому моменту уже обновлена (route handler пишет ДО отправки SSE result).
+                    fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+                      .then((r) => (r.ok ? r.json() : Promise.reject()))
+                      .then((freshData: any) => {
+                        if (!Array.isArray(freshData)) return;
+                        const ct = usePlayerStore.getState().currentTrack;
+                        setTracks(freshData);
+                        const freshCt =
+                          freshData.find((t: any) => t.id === ct?.id) ?? null;
+                        if (freshCt) {
+                          updateCurrentTrack(freshCt);
+                          audioEngine.reloadBeatGrid(freshCt);
+                        }
+                      })
+                      .catch(() => {});
                   }
                 }}
                 disabled={isAnalyzingV2}

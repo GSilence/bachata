@@ -127,9 +127,12 @@ def log(msg):
 
 def classify_peaks(activations, all_beats, rnn_fps):
     """
-    Заход 1 Фазы 1: Определяем два пиковых ряда по МАДМОМ.
-    Не сравниваем, какой сильнее — только фиксируем: эти два ряда изучаем дальше.
-    Условно: первый по порядку (меньшая позиция 0–7) = РАЗ (ряд 1), второй = ПЯТЬ (ряд 5).
+    Фаза 0: Классификация трека — 2 пика (бачата) или 4 пика (попса).
+
+    Попса: берём 4 самых сильных позиции из 8 в цикле.
+           Если слабейший из них >= 70% от сильнейшего (разница < 30%) → попса.
+    Бачата: 2 доминирующих пика, разнесённых на ~4 позиции.
+
     Возвращает: (peak_count, peak1_pos, peak2_pos)
     """
     # Собираем madmom scores по позициям 0-7
@@ -144,8 +147,30 @@ def classify_peaks(activations, all_beats, rnn_fps):
     avg_scores = [np.mean(s) if s else 0.0 for s in position_scores]
     log(f"[Phase 0] Avg madmom by position (0-7): {[f'{v:.3f}' for v in avg_scores]}")
 
-    # Находим 2 самых сильных пика (какие два ряда изучаем)
+    # Сортируем все 8 позиций по убыванию
     sorted_positions = sorted(range(8), key=lambda p: avg_scores[p], reverse=True)
+
+    # Берём топ-4 и сравниваем слабейший с сильнейшим
+    top4 = sorted_positions[:4]
+    top4_scores = [avg_scores[p] for p in top4]
+    score_max = top4_scores[0]
+    score_4th = top4_scores[3]
+    ratio_4th = score_4th / max(score_max, 0.001)
+
+    config = load_config()
+    threshold = config['popsa_peak_threshold']  # 0.70 = разница < 30%
+
+    log(f"[Phase 0] Top-4 positions: {top4}, scores: {[f'{s:.3f}' for s in top4_scores]}")
+    log(f"[Phase 0] Ratio 4th/1st = {ratio_4th:.3f}, threshold = {threshold}")
+
+    if ratio_4th >= threshold:
+        # Все 4 сильных пика примерно равны → попса
+        peak1_pos = sorted_positions[0]
+        peak2_pos = sorted_positions[1]
+        log("[Phase 0] Result: 4 peaks (POPSA)")
+        return 4, peak1_pos, peak2_pos
+
+    # 2 доминирующих пика — стандартная бачата
     peak1_pos = sorted_positions[0]
     peak2_pos = sorted_positions[1]
 
@@ -162,32 +187,9 @@ def classify_peaks(activations, all_beats, rnn_fps):
 
     score_peak1 = avg_scores[peak1_pos]
     score_peak2 = avg_scores[peak2_pos]
-
     log(f"[Phase 0] Main peaks at positions: {peak1_pos} ({score_peak1:.3f}), {peak2_pos} ({score_peak2:.3f})")
-
-    # Проверяем промежуточные позиции (между двумя главными пиками)
-    # Если они тоже сильные — это 4 пика (попса)
-    config = load_config()
-    threshold = config['popsa_peak_threshold']
-
-    mid1 = (peak1_pos + 2) % 8  # позиция между peak1 и peak2
-    mid2 = (peak2_pos + 2) % 8  # позиция между peak2 и peak1 (через цикл)
-    score_mid1 = avg_scores[mid1]
-    score_mid2 = avg_scores[mid2]
-
-    ref_score = max(score_peak1, score_peak2, 0.001)
-    ratio_mid1 = score_mid1 / ref_score
-    ratio_mid2 = score_mid2 / ref_score
-
-    log(f"[Phase 0] Mid positions: {mid1} ({score_mid1:.3f}, ratio={ratio_mid1:.2f}), "
-        f"{mid2} ({score_mid2:.3f}, ratio={ratio_mid2:.2f}), threshold={threshold}")
-
-    if ratio_mid1 >= threshold and ratio_mid2 >= threshold:
-        log("[Phase 0] Result: 4 peaks (POPSA)")
-        return 4, peak1_pos, peak2_pos
-    else:
-        log("[Phase 0] Result: 2 peaks (standard bachata)")
-        return 2, peak1_pos, peak2_pos
+    log("[Phase 0] Result: 2 peaks (standard bachata)")
+    return 2, peak1_pos, peak2_pos
 
 
 # ==========================================
@@ -1012,25 +1014,45 @@ def analyze_perc_bridges(indicators, beats, config):
 # АНАЛИЗ ПОПСА
 # ==========================================
 
+def find_popsa_start(beats, peak1_pos):
+    """
+    Для попсы: ищем первый бит с позицией в 8-цикле из числа 4 сильных позиций
+    И с madmom_score выше среднего по треку.
+    Сильные позиции: peak1_pos, +2, +4, +6 (каждая чётная в цикле).
+    """
+    avg_score = np.mean([b['madmom_score'] for b in beats])
+    strong_positions = {(peak1_pos + i * 2) % 8 for i in range(4)}
+    log(f"[Popsa] Strong positions in 8-cycle: {sorted(strong_positions)}, avg_madmom={avg_score:.3f}")
+
+    for i, b in enumerate(beats):
+        if (i % 8) in strong_positions and b['madmom_score'] >= avg_score:
+            log(f"[Popsa] First strong beat: idx={i} pos={i % 8} time={b['time']:.2f}s madmom={b['madmom_score']:.3f}")
+            return i
+
+    # Fallback: первый бит на сильной позиции без порога
+    for i, b in enumerate(beats):
+        if (i % 8) in strong_positions:
+            log(f"[Popsa] Fallback start: idx={i} pos={i % 8} time={b['time']:.2f}s")
+            return i
+
+    return 0
+
+
 def analyze_popsa(beats, start_idx):
     """
-    Раскладка для 4-пикового трека: чередуем Row 1 и Row 5,
-    каждая сильная доля = счёт 1.
+    Раскладка для 4-пикового трека: один сегмент на весь трек, row1_start=1.
+    Счёт идёт просто 1-8 без мостиков.
     """
-    layout = []
-    active_beats = beats[start_idx:]
-    # Каждая четвёрка — отдельный "ряд", чередуя 1-4 и 5-8
-    i = 0
-    while i + 3 < len(active_beats):
-        layout.append({
-            'from_beat': start_idx + i,
-            'to_beat': start_idx + i + 3,
-            'time_start': active_beats[i]['time'],
-            'time_end': active_beats[min(i + 3, len(active_beats) - 1)]['time'],
-            'row1_start': 1 if (i // 4) % 2 == 0 else 5,
-        })
-        i += 4
-    return layout
+    if start_idx >= len(beats):
+        return []
+    last_idx = len(beats) - 1
+    return [{
+        'from_beat': start_idx,
+        'to_beat': last_idx,
+        'time_start': beats[start_idx]['time'],
+        'time_end': beats[last_idx]['time'],
+        'row1_start': 1,
+    }]
 
 
 # ==========================================
@@ -1154,41 +1176,23 @@ def analyze_v2(audio_path):
     peaks, peak1_pos, peak2_pos = classify_peaks(activations, all_beats, rnn_fps)
     log(f"[Phase 0] Peak positions in 8-beat cycle: {peak1_pos}, {peak2_pos}")
 
-    # === ФАЗА 1: РАЗ по perceptual_energy ===
-    start_idx, strong_rows_tact_list, strong_rows_tact_by_row = find_song_start_perc(
-        beats, peak1_pos, peak2_pos, config
-    )
-    row1_offset = 0
-    row_swapped = False
-
-    # Натягиваем сетку на начало трека кратно 8 битам (без остатка)
-    shift_back = (start_idx // 8) * 8
-    if shift_back > 0:
-        start_idx -= shift_back
-        log(f"[Phase 1] Shift back {shift_back} beats → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
-    log(f"[Phase 1] Final РАЗ: beat {start_idx} ({beats[start_idx]['time']:.2f}s)")
-
-    # === Попса ===
+    # === ПОПСА: ранний выход — вся остальная логика только для 2-пиковых треков ===
     if peaks == 4:
-        # Старт от первого пика: peak1_pos — позиция (0-7) сильнейшего такта.
-        # Первый бит с этой позицией имеет индекс = peak1_pos (по модулю 8).
-        popsa_start_idx = peak1_pos
+        popsa_start_idx = find_popsa_start(beats, peak1_pos)
         layout = analyze_popsa(beats, popsa_start_idx)
 
-        # Проверка выравнивания: начало каждого 4-битового чанка должно попадать
-        # на одну из двух сильных позиций (peak1_pos и peak1_pos+4).
-        peak_pos_set = {peak1_pos % 8, (peak1_pos + 4) % 8}
+        # Проверка выравнивания в лог
+        strong_positions = {(peak1_pos + i * 2) % 8 for i in range(4)}
         log(f"[Popsa] Grid from beat {popsa_start_idx} ({beats[popsa_start_idx]['time']:.2f}s), "
-            f"strong positions in cycle: {sorted(peak_pos_set)}")
+            f"strong positions in cycle: {sorted(strong_positions)}")
         for seg in layout[:6]:
             fb = seg['from_beat']
             pos_in_8 = fb % 8
-            on_peak = pos_in_8 in peak_pos_set
+            on_peak = pos_in_8 in strong_positions
             ms = beats[fb]['madmom_score']
             log(f"  row1_start={seg['row1_start']} beat={fb} pos={pos_in_8} "
                 f"madmom={ms:.3f} {'OK' if on_peak else '!! NOT ON PEAK'}")
 
-        # Счёт битов с 1 в выходном JSON
         return {
             'success': True,
             'version': 'v2',
@@ -1215,6 +1219,20 @@ def analyze_v2(audio_path):
                               for b in beats],
         }
 
+    # === ФАЗА 1: РАЗ по perceptual_energy (только для 2-пиковых треков) ===
+    start_idx, strong_rows_tact_list, strong_rows_tact_by_row = find_song_start_perc(
+        beats, peak1_pos, peak2_pos, config
+    )
+    row1_offset = 0
+    row_swapped = False
+
+    # Натягиваем сетку на начало трека кратно 8 битам (без остатка)
+    shift_back = (start_idx // 8) * 8
+    if shift_back > 0:
+        start_idx -= shift_back
+        log(f"[Phase 1] Shift back {shift_back} beats → start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
+    log(f"[Phase 1] Final РАЗ: beat {start_idx} ({beats[start_idx]['time']:.2f}s)")
+
     # === Row Analysis — первым делом, нужен для ранней проверки мадмом ===
     row_analysis, row_analysis_verdict = compute_row_analysis(
         beats, start_idx, peak1_pos, peak2_pos
@@ -1228,11 +1246,13 @@ def analyze_v2(audio_path):
     madmom_diff_pct = round((_m1 - _m5) / abs(_m5) * 100, 2) if _m5 != 0 else 0.0
     log(f"[Phase 2] Мадмом РАЗ={_m1:.3f}, ПЯТЬ={_m5:.3f}, diff={madmom_diff_pct:.2f}%")
 
-    if round(abs(madmom_diff_pct), 1) >= 5.0:
-        # Один из рядов явно доминирует ≥5% (по модулю) — квадратная песня, мостики не ищем
+    rounded_diff = round(madmom_diff_pct, 1)
+
+    if rounded_diff >= 5.0:
+        # РАЗ явно доминирует ≥+5% → РАЗ подтверждён, квадрат, мостики не ищем
         skip_bridges = True
-        skip_reason = f'madmom_dominance {madmom_diff_pct:.1f}%'
-        log(f"[Phase 2] Мадмом |diff|≥5% → skip_bridges=True ({skip_reason}), пропускаем analyze_square/quarters/indicators")
+        skip_reason = f'madmom_raz_dominance {madmom_diff_pct:.1f}%'
+        log(f"[Phase 2] Мадмом diff={rounded_diff}%≥+5% → РАЗ подтверждён, квадрат, skip_bridges=True")
         square_result = {'verdict': 'skipped', 'reason': skip_reason}
         quarters = []
         indicators = []
@@ -1242,6 +1262,38 @@ def analyze_v2(audio_path):
         perc_bridge_candidates = []
         perc_confirmed_bridges = []
         perc_indicator_decisions = []
+
+    elif rounded_diff <= -5.0:
+        # ПЯТЬ явно доминирует ≤-5% → наше "РАЗ" оказалось ПЯТЬ → свопаем ряды
+        # Квадратная песня, мостики не ищем
+        skip_bridges = True
+        row_swapped = True
+
+        # Свопаем row_analysis_verdict: старый ПЯТЬ становится новым РАЗ
+        true_row_one = _row_five
+        true_row_five = _row_one
+        row_analysis_verdict['row_one'] = true_row_one
+        # madmom_diff_pct теперь относительно нового РАЗ (должен быть положительным)
+        madmom_diff_pct = round((_m5 - _m1) / abs(_m1) * 100, 2) if _m1 != 0 else 0.0
+        skip_reason = f'madmom_pyat_dominance_rows_swapped new_raz={true_row_one} diff={madmom_diff_pct:.1f}%'
+
+        # Сдвигаем start_idx на первый бит нового РАЗ-ряда (по модулю 8, оставаясь в первых 8 битах)
+        start_idx = (start_idx + 4) % 8
+        row1_offset = 0  # start_idx теперь сразу указывает на новый РАЗ
+
+        log(f"[Phase 2] Мадмом diff={rounded_diff}%≤-5% → ПЯТЬ доминирует, свопаем ряды")
+        log(f"[Phase 2] Новый РАЗ = ряд {true_row_one} (мадмом {_m5:.3f}), новый ПЯТЬ = ряд {true_row_five} (мадмом {_m1:.3f}), новый diff={madmom_diff_pct:.2f}%")
+        log(f"[Phase 2] Новый start_idx={start_idx} ({beats[start_idx]['time']:.2f}s)")
+        square_result = {'verdict': 'skipped', 'reason': skip_reason}
+        quarters = []
+        indicators = []
+        indicator_tact_table = []
+        indicator_decisions = []
+        bridges = []
+        perc_bridge_candidates = []
+        perc_confirmed_bridges = []
+        perc_indicator_decisions = []
+
     else:
         # === ФАЗА 2: Анализ КВАДРАТ ===
         square_result = analyze_square(beats, start_idx, row1_offset)
@@ -1393,7 +1445,7 @@ def analyze_v2(audio_path):
 
     log(f"\n=== RESULT ===")
     log(f"Type: {result['track_type']}")
-    log(f"Start: beat {start_idx} ({beats[start_idx]['time']:.2f}s)")
+    log(f"Start: beat {start_idx} ({beats[start_idx]['time']:.2f}s){' [SWAPPED]' if row_swapped else ''}")
     log(f"Row swapped: {row_swapped}")
     log(f"Square: {square_result['verdict']}")
     log(f"Bridges: {len(bridges)}")

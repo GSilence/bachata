@@ -273,6 +273,7 @@ export async function POST(
                 // [] = нет мостиков — это тоже валидный результат (skip_bridges=True)
                 bridges: v2BridgesTimes,
                 ...(rowDominancePercent != null && { rowDominancePercent }),
+                rowSwapped: result.row_swapped ?? false,
               };
 
               if (prisma) {
@@ -280,8 +281,10 @@ export async function POST(
                   where: { id: trackId },
                   data: {
                     gridMap: mergedGridMap as object,
+                    analyzerType: "v2",
                     ...(result.song_start_time != null && {
                       offset: result.song_start_time,
+                      baseOffset: result.song_start_time,
                     }),
                   },
                 });
