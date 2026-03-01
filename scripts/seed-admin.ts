@@ -3,13 +3,16 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+const DEFAULT_EMAIL = "valerynistratov@gmail.com";
+
 async function main() {
-  const email = "valerynistratov@gmail.com";
+  const email = (process.env.ADMIN_EMAIL ?? DEFAULT_EMAIL).toLowerCase().trim();
   const password = process.env.ADMIN_PASSWORD;
 
   if (!password) {
     console.error("Установите переменную окружения ADMIN_PASSWORD");
     console.error("Пример: ADMIN_PASSWORD=your_password npx tsx scripts/seed-admin.ts");
+    console.error("Другой email: ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=... npx tsx scripts/seed-admin.ts");
     process.exit(1);
   }
 
