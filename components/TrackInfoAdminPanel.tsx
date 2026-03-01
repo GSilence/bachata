@@ -280,6 +280,14 @@ export default function TrackInfoAdminPanel({
     v2Result?.row_analysis_verdict?.start_beat_id ??
     (currentTrack.gridMap as { song_start_beat?: number } | undefined)?.song_start_beat;
 
+  const gm = currentTrack.gridMap as GridMap | undefined;
+  const rowOne = gm?.row_one;
+  const rowSwapped = currentTrack.rowSwapped ?? false;
+  const displayedBeatId =
+    rowSwapped && rowOne != null && rowOne >= 1 && rowOne <= 8
+      ? (rowOne <= 4 ? rowOne + 4 : rowOne - 4)
+      : startBeatId;
+
   return (
     <div className="mt-4 sm:mt-6 space-y-4 border-t border-gray-700 pt-4">
       {/* Предполагаемый стиль */}
@@ -330,7 +338,7 @@ export default function TrackInfoAdminPanel({
             <span className="text-sm font-medium text-gray-400">Offset:</span>
             <span className="text-white font-medium">
               {(currentTrack.baseOffset ?? currentTrack.offset).toFixed(3)}s
-              {startBeatId != null ? ` (бит #${startBeatId})` : ""}
+              {displayedBeatId != null ? ` (бит #${displayedBeatId})` : ""}
             </span>
           </span>
         </div>
