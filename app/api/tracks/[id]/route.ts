@@ -5,6 +5,75 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { requireAdmin } from '@/lib/auth'
 
+/** PATCH /api/tracks/[id] — обновление названия и метаданных трека (только для админа). */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAdmin(request)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { id } = await params
+  const trackId = parseInt(id, 10)
+  if (isNaN(trackId)) {
+    return NextResponse.json({ error: 'Invalid track ID' }, { status: 400 })
+  }
+  if (!prisma) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
+  }
+  let body: Record<string, unknown>
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const allowed: (keyof typeof body)[] = [
+    'title', 'artist',
+    'metaTitle', 'metaArtist', 'metaAlbum', 'metaYear', 'metaGenre', 'metaComment', 'metaTrackNum',
+    'hasAccents', 'hasMambo', 'trackStatus',
+  ]
+  const data: Record<string, unknown> = {}
+  for (const key of allowed) {
+    if (body[key] === undefined) continue
+    if (key === 'title' && typeof body[key] === 'string') {
+      data['title'] = body[key].trim() || (body[key] as string)
+    } else if (key === 'artist' && (body[key] === null || typeof body[key] === 'string')) {
+      data['artist'] = body[key] === null ? null : (body[key] as string).trim() || null
+    } else if (key === 'metaTitle' && (body[key] === null || typeof body[key] === 'string')) {
+      data['metaTitle'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 500) || null
+    } else if (key === 'metaArtist' && (body[key] === null || typeof body[key] === 'string')) {
+      data['metaArtist'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 500) || null
+    } else if (key === 'metaAlbum' && (body[key] === null || typeof body[key] === 'string')) {
+      data['metaAlbum'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 500) || null
+    } else if (key === 'metaYear' && (body[key] === null || (typeof body[key] === 'number' && Number.isInteger(body[key])))) {
+      data['metaYear'] = body[key] as number | null
+    } else if (key === 'metaGenre' && (body[key] === null || typeof body[key] === 'string')) {
+      data['metaGenre'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 200) || null
+    } else if (key === 'metaComment' && (body[key] === null || typeof body[key] === 'string')) {
+      data['metaComment'] = body[key] === null ? null : (body[key] as string).trim() || null
+    } else if (key === 'metaTrackNum' && (body[key] === null || (typeof body[key] === 'number' && Number.isInteger(body[key])))) {
+      data['metaTrackNum'] = body[key] as number | null
+    } else if (key === 'hasAccents' && typeof body[key] === 'boolean') {
+      data['hasAccents'] = body[key]
+    } else if (key === 'hasMambo' && typeof body[key] === 'boolean') {
+      data['hasMambo'] = body[key]
+    } else if (key === 'trackStatus' && typeof body[key] === 'string' && ['unlistened', 'moderation', 'approved'].includes(body[key] as string)) {
+      data['trackStatus'] = body[key] as string
+    }
+  }
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: 'No allowed fields to update' }, { status: 400 })
+  }
+  type UpdateData = Parameters<typeof prisma.track.update>[0]['data']
+  const updated = await prisma.track.update({
+    where: { id: trackId },
+    data: data as UpdateData,
+  })
+  return NextResponse.json({ track: updated })
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

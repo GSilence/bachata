@@ -18,7 +18,8 @@
     "db:clear": "tsx scripts/clear-tracks.ts",
     "check:demucs": "tsx scripts/check-demucs.ts",
     "create:silent-anchor": "node scripts/create-silent-anchor.js",
-    "db:seed-admin": "tsx scripts/seed-admin.ts"
+    "db:seed-admin": "tsx scripts/seed-admin.ts",
+    "db:set-admin": "tsx scripts/set-admin-email.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.19.0",

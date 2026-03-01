@@ -1,5 +1,5 @@
 import { Howl, Howler } from "howler";
-import type { Track, GridMap, Beat } from "@/types";
+import type { Track, GridMap, Beat, VoiceType } from "@/types";
 import {
   generateFallbackBeatGrid,
   generateBeatGridFromDownbeats,
@@ -97,6 +97,11 @@ export class AudioEngine {
   private voiceFilter: "mute" | "on1" | "on1times3" | "on1and5" | "full" =
     "full";
   private voiceLanguage: "en" | "pt" = "en";
+  private voiceType: VoiceType = "human";
+
+  // Буферы для альтернативных типов озвучки (тарелка / хлопок)
+  private cymbalBuffer: AudioBuffer | null = null;
+  private clapBuffer: AudioBuffer | null = null;
 
   // Voice count files (Howl — запасной путь)
   private voiceFiles: Map<number, Howl> = new Map();
@@ -163,8 +168,27 @@ export class AudioEngine {
       this.voiceGain.connect(this.voiceCtx.destination);
 
       this.loadVoiceBuffers();
+      this.loadAlternativeBuffers();
     } catch {
       // Web Audio недоступен — остаётся Howl
+    }
+  }
+
+  private async loadAlternativeBuffers() {
+    if (!this.voiceCtx) return;
+    for (const [key, path] of [
+      ["cymbal", "/sounds/cymbal.m4a"],
+      ["clap", "/sounds/clap.m4a"],
+    ] as [string, string][]) {
+      try {
+        const r = await fetch(path);
+        const ab = await r.arrayBuffer();
+        const buf = await this.voiceCtx.decodeAudioData(ab);
+        if (key === "cymbal") this.cymbalBuffer = buf;
+        else this.clapBuffer = buf;
+      } catch (err) {
+        console.warn(`[AudioEngine] Failed to load ${key} buffer:`, err);
+      }
     }
   }
 
@@ -878,6 +902,12 @@ export class AudioEngine {
     this.voiceFilter = filter;
   }
 
+  setVoiceType(type: VoiceType) {
+    this.voiceType = type;
+    // Сбрасываем индекс — чтобы не пропустить биты после смены типа
+    this.lastScheduledVoiceBeatIndex = -1;
+  }
+
   setVoiceLanguage(language: "en" | "pt") {
     if (this.voiceLanguage === language) return;
     this.voiceLanguage = language;
@@ -1061,7 +1091,12 @@ export class AudioEngine {
   private scheduleVoiceAt(beatNumber: number, whenWallSec: number) {
     if (beatNumber < 1 || beatNumber > 8 || !this.voiceCtx || !this.voiceGain)
       return;
-    const buf = this.voiceBuffers.get(beatNumber);
+    const buf =
+      this.voiceType === "cymbal"
+        ? this.cymbalBuffer
+        : this.voiceType === "clap"
+          ? this.clapBuffer
+          : (this.voiceBuffers.get(beatNumber) ?? null);
     if (!buf) return;
 
     // Логируем первые несколько воспроизведений для диагностики
@@ -1119,14 +1154,10 @@ export class AudioEngine {
 
   /** Планирует удары счёта на 1.5 с вперёд. Вызов из update() даже при троттлинге вкладки даёт буфер. */
   private scheduleVoiceAhead() {
-    if (
-      !this.voiceCtx ||
-      this.voiceBuffers.size < 8 ||
-      !this.voiceGain ||
-      this.beatGrid.length === 0
-    ) {
-      return;
-    }
+    if (!this.voiceCtx || !this.voiceGain || this.beatGrid.length === 0) return;
+    if (this.voiceType === "human" && this.voiceBuffers.size < 8) return;
+    if (this.voiceType === "cymbal" && !this.cymbalBuffer) return;
+    if (this.voiceType === "clap" && !this.clapBuffer) return;
     const nowTrack = this.getCurrentTime();
     const nowWall = this.voiceCtx.currentTime;
     const horizon = nowTrack + AudioEngine.SCHEDULE_AHEAD_SEC;
@@ -1148,6 +1179,14 @@ export class AudioEngine {
   private playVoiceCount(beatNumber: number, beatIndex?: number) {
     if (beatNumber < 1 || beatNumber > 8) return;
     if (!this.shouldPlayVoiceForBeat(beatNumber, beatIndex)) return;
+
+    // Для cymbal/clap всегда идём через Web Audio (один буфер на все биты)
+    if (this.voiceType !== "human") {
+      if (this.voiceCtx) {
+        this.scheduleVoiceAt(beatNumber, this.voiceCtx.currentTime);
+      }
+      return;
+    }
 
     // Приоритет: Web Audio (буфер в браузере, точное время, работает в фоне)
     if (this.voiceCtx && this.voiceBuffers.has(beatNumber)) {

@@ -3,7 +3,7 @@
  * Сохраняет и восстанавливает настройки громкости, режима воспроизведения и озвучки
  */
 
-import type { PlayMode, VoiceFilter, VoiceLanguage } from "@/types";
+import type { PlayMode, VoiceFilter, VoiceLanguage, VoiceType } from "@/types";
 
 export interface UserSettings {
   musicVolume: number;
@@ -11,6 +11,7 @@ export interface UserSettings {
   playMode: PlayMode;
   voiceFilter: VoiceFilter;
   voiceLanguage: VoiceLanguage;
+  voiceType: VoiceType;
 }
 
 const SETTINGS_KEY = "bachata-user-settings";
@@ -39,9 +40,8 @@ export function getUserSettings(): UserSettings | null {
       parsed.voiceVolume <= 100
     ) {
       // Добавляем значения по умолчанию для новых полей (миграция старых настроек)
-      if (!parsed.voiceLanguage) {
-        parsed.voiceLanguage = "en";
-      }
+      if (!parsed.voiceLanguage) parsed.voiceLanguage = "en";
+      if (!parsed.voiceType) parsed.voiceType = "human";
       return parsed;
     }
   } catch (error) {
@@ -99,6 +99,7 @@ export function getDefaultSettings(): UserSettings {
     playMode: "sequential",
     voiceFilter: "full",
     voiceLanguage: "en",
+    voiceType: "human",
   };
 }
 

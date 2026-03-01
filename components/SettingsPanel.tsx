@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { usePlayerStore } from "@/store/playerStore";
-import type { PlayMode, VoiceFilter, VoiceLanguage } from "@/types";
+import type { PlayMode, VoiceFilter, VoiceLanguage, VoiceType } from "@/types";
 
 interface SettingsPanelProps {
   showOnlyVoiceFilter?: boolean;
@@ -17,15 +17,26 @@ export default function SettingsPanel({
     playMode,
     voiceFilter,
     voiceLanguage,
+    voiceType,
     playUntilSeconds,
     setPlayMode,
     setVoiceFilter,
     setVoiceLanguage,
+    setVoiceType,
     setPlayUntilSeconds,
   } = usePlayerStore();
+  const [mounted, setMounted] = useState(false);
   const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
   const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false);
   const [playUntilInput, setPlayUntilInput] = useState("");
+
+  useEffect(() => { setMounted(true); }, []);
+
+  // SSR-безопасные значения: до mount используем дефолты, чтобы SSR и клиент совпадали
+  const activeVoiceType: VoiceType     = mounted ? voiceType     : "human";
+  const activeVoiceLanguage: VoiceLanguage = mounted ? voiceLanguage : "en";
+  const activeVoiceFilter: VoiceFilter = mounted ? voiceFilter   : "full";
+  const activePlayMode: PlayMode       = mounted ? playMode      : "sequential";
 
   // Синхронизируем поле "воспроизводить до" с store (при загрузке из persist)
   useEffect(() => {
@@ -40,6 +51,12 @@ export default function SettingsPanel({
     { value: "sequential", label: "Sequential (По порядку)" },
     { value: "random", label: "Random (Случайно)" },
     { value: "loop", label: "Loop (Один трек)" },
+  ];
+
+  const voiceTypes: { value: VoiceType; label: string; title: string }[] = [
+    { value: "human", label: "Голос", title: "Человеческий голос" },
+    { value: "cymbal", label: "Тарелка", title: "Удар тарелкой" },
+    { value: "clap", label: "Хлопок", title: "Хлопок ладошками" },
   ];
 
   const voiceLanguages: { value: VoiceLanguage; label: string }[] = [
@@ -92,7 +109,7 @@ export default function SettingsPanel({
                   type="radio"
                   name="playMode"
                   value={mode.value}
-                  checked={playMode === mode.value}
+                  checked={activePlayMode === mode.value}
                   onChange={() => setPlayMode(mode.value)}
                   className="mr-2 w-4 h-4 text-purple-600 focus:ring-purple-600 cursor-pointer"
                 />
@@ -166,25 +183,48 @@ export default function SettingsPanel({
               !isVoiceFilterExpanded ? "hidden lg:block" : ""
             }`}
           >
-            {/* Language selector */}
+            {/* Тип озвучки */}
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm text-gray-400">Язык:</span>
+              <span className="text-sm text-gray-400 shrink-0">Тип:</span>
               <div className="flex gap-1">
-                {voiceLanguages.map((lang) => (
+                {voiceTypes.map((vt) => (
                   <button
-                    key={lang.value}
-                    onClick={() => setVoiceLanguage(lang.value)}
+                    key={vt.value}
+                    onClick={() => setVoiceType(vt.value)}
+                    title={vt.title}
                     className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                      voiceLanguage === lang.value
+                      activeVoiceType === vt.value
                         ? "bg-purple-600 text-white"
                         : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"
                     }`}
                   >
-                    {lang.label}
+                    {vt.label}
                   </button>
                 ))}
               </div>
             </div>
+
+            {/* Language selector — только для человеческого голоса */}
+            {activeVoiceType === "human" && (
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm text-gray-400">Язык:</span>
+                <div className="flex gap-1">
+                  {voiceLanguages.map((lang) => (
+                    <button
+                      key={lang.value}
+                      onClick={() => setVoiceLanguage(lang.value)}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                        activeVoiceLanguage === lang.value
+                          ? "bg-purple-600 text-white"
+                          : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"
+                      }`}
+                    >
+                      {lang.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Filter options */}
             <div className="space-y-2">
@@ -198,7 +238,7 @@ export default function SettingsPanel({
                     type="radio"
                     name="voiceFilter"
                     value={filter.value}
-                    checked={voiceFilter === filter.value}
+                    checked={activeVoiceFilter === filter.value}
                     onChange={() => setVoiceFilter(filter.value)}
                     className="mr-2 w-4 h-4 text-purple-600 focus:ring-purple-600 cursor-pointer"
                   />

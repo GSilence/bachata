@@ -28,6 +28,40 @@ export function useLiveBeatDispatch() {
   return useContext(LiveBeatDispatchContext);
 }
 
+/** Кнопка «Бридж здесь»: использует время отображаемого бита (liveBeatInfo), чтобы бридж ставился на РАЗ, а не на ВОСЕМЬ. */
+interface BridgeHereButtonProps {
+  disabled: boolean;
+  isSaving: boolean;
+  onAddBridge: (bridgeTime: number) => void;
+}
+
+export function BridgeHereButton({
+  disabled,
+  isSaving,
+  onAddBridge,
+}: BridgeHereButtonProps) {
+  const liveBeatInfo = useLiveBeatState();
+
+  const handleClick = () => {
+    const bridgeTime =
+      liveBeatInfo?.time ?? audioEngine.getCurrentBeatInfo()?.time;
+    if (bridgeTime == null) return;
+    onAddBridge(bridgeTime);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={disabled}
+      title="Добавить бридж на отображаемой позиции (ряд 1–8)"
+      className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    >
+      {isSaving ? "Сохранение..." : "+ Бридж здесь"}
+    </button>
+  );
+}
+
 interface LiveBeatProviderProps {
   isPlaying: boolean;
   currentTrack: { offset: number } | null;
@@ -42,16 +76,30 @@ export function LiveBeatProvider({
   const [liveBeatInfo, setLiveBeatInfo] = useState<LiveBeatInfo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // При смене трека — показываем бит 1
+  // Синхронизация с дорожкой счёта плеера: при смене трека берём текущий бит из той же сетки, что и воспроизведение
   useEffect(() => {
-    if (currentTrack) {
+    if (!currentTrack) return;
+    const info = audioEngine.getCurrentBeatInfo();
+    if (info) {
+      setLiveBeatInfo(info);
+      return;
+    }
+    const grid = audioEngine.getBeatGrid();
+    if (grid && grid.length > 0) {
+      const first = grid[0];
+      setLiveBeatInfo({
+        time: first.time,
+        number: first.number,
+        isBridge: !!first.isBridge,
+      });
+    } else {
       setLiveBeatInfo({
         time: currentTrack.offset,
         number: 1,
         isBridge: false,
       });
     }
-  }, [currentTrack?.id, currentTrack?.offset]);
+  }, [currentTrack?.id, currentTrack?.offset, currentTrack]);
 
   // Тик только для блока счётчика — не трогает TrackInfo и анализ
   useEffect(() => {

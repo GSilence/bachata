@@ -154,6 +154,7 @@ export async function POST(request: NextRequest) {
             baseOffset: finalOffset,
             analyzerType: "v2",
             gridMap: mergedGridMap as object,
+            hasBridges: v2BridgesTimes.length > 0,
           },
         });
 

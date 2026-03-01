@@ -14,6 +14,8 @@ import {
   setMediaSessionMetadata,
   setMediaSessionPlaybackState,
 } from "@/lib/media-session";
+import { useAuthStore } from "@/store/authStore";
+import { isAdmin } from "@/lib/roles";
 import type { Track } from "@/types";
 
 export default function PlaybackPage() {
@@ -68,12 +70,13 @@ export default function PlaybackPage() {
       setAudioEngine(audioEngine);
 
       // Устанавливаем все восстановленные настройки из store
-      const { musicVolume, voiceVolume, voiceFilter, voiceLanguage } =
+      const { musicVolume, voiceVolume, voiceFilter, voiceLanguage, voiceType } =
         usePlayerStore.getState();
       audioEngine.setMusicVolume(musicVolume);
       audioEngine.setVoiceVolume(voiceVolume);
       audioEngine.setVoiceFilter(voiceFilter);
       audioEngine.setVoiceLanguage(voiceLanguage);
+      audioEngine.setVoiceType(voiceType);
 
       // If track already exists in store, load it via store
       const { currentTrack: existingTrack, tracks } = usePlayerStore.getState();
@@ -183,21 +186,39 @@ export default function PlaybackPage() {
         if (Array.isArray(data)) {
           setTracks(data);
 
-          // Background: populate rowDominancePercent for tracks that are missing it
-          fetch("/api/tracks/sync-dominance")
-            .then((r) => (r.ok ? r.json() : null))
-            .then((res) => {
-              if (!res || res.updated === 0 || cancelled) return;
-              fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
-                .then((r) => (r.ok ? r.json() : null))
-                .then((freshData) => {
-                  if (!cancelled && Array.isArray(freshData)) {
-                    setTracks(freshData);
-                  }
-                })
-                .catch(() => {});
-            })
-            .catch(() => {});
+          // Только админ: подтянуть rowDominancePercent и hasBridges в БД (API защищены requireAdmin)
+          const user = useAuthStore.getState().user;
+          if (isAdmin(user?.role)) {
+            fetch("/api/tracks/sync-dominance")
+              .then((r) => (r.ok ? r.json() : null))
+              .then((res) => {
+                if (!res || res.updated === 0 || cancelled) return;
+                fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((freshData) => {
+                    if (!cancelled && Array.isArray(freshData)) {
+                      setTracks(freshData);
+                    }
+                  })
+                  .catch(() => {});
+              })
+              .catch(() => {});
+
+            fetch("/api/tracks/sync-has-bridges")
+              .then((r) => (r.ok ? r.json() : null))
+              .then((res) => {
+                if (!res || res.updated === 0 || cancelled) return;
+                fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((freshData) => {
+                    if (!cancelled && Array.isArray(freshData)) {
+                      setTracks(freshData);
+                    }
+                  })
+                  .catch(() => {});
+              })
+              .catch(() => {});
+          }
 
           const { currentTrack: currentTrackState } = usePlayerStore.getState();
 

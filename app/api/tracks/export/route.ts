@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth";
+import type { NextRequest } from "next/server";
 
 type RowAnalysisRow = {
   count?: number;
@@ -64,7 +66,12 @@ function getRowAnalysisFromGridMap(gridMap: unknown): {
   };
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const { searchParams } = new URL(request.url);
     const format = searchParams.get("format") || "csv";

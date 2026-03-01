@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePlayerStore } from "@/store/playerStore";
+import { useAuthStore } from "@/store/authStore";
+import { isAdmin } from "@/lib/roles";
 import type { Track, PlaylistSortBy } from "@/types";
 
 interface PlaylistProps {
@@ -9,6 +11,8 @@ interface PlaylistProps {
 }
 
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
+  const { user } = useAuthStore();
+  const isAdminUser = isAdmin(user?.role);
   const {
     tracks,
     currentTrack,
@@ -17,21 +21,38 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     bridgeFilterWith,
     bridgeFilterWithout,
     bridgeFilterSwapped,
+    setAdmin,
+    statusFilterUnlistened,
+    statusFilterModeration,
+    statusFilterApproved,
+    accentFilterOn,
+    mamboFilterOn,
     playlistSortBy,
     sortDirection,
     squareSortDirection,
-    squareDominanceMin,
-    squareDominanceMax,
+    dominanceBucketNeg,
+    dominanceBucketLow,
+    dominanceBucketHigh,
     setPlaylistFilter,
     setSearchQuery,
     setBridgeFilterWith,
     setBridgeFilterWithout,
     setBridgeFilterSwapped,
+    setStatusFilterUnlistened,
+    setStatusFilterModeration,
+    setStatusFilterApproved,
+    setAccentFilterOn,
+    setMamboFilterOn,
     setPlaylistSortBy,
     setSortDirection,
     setSquareSortDirection,
-    setSquareDominanceRange,
+    setDominanceBucket,
   } = usePlayerStore();
+
+  // Синхронизируем флаг админа в store для фильтра в playNext/playPrevious
+  useEffect(() => {
+    setAdmin(isAdminUser);
+  }, [isAdminUser, setAdmin]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollIndicator, setShowScrollIndicator] = useState(false);
@@ -43,28 +64,55 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       return false;
     }
 
+    // Базовый фильтр для админа: по статусу (хотя бы один выбран, трек должен попадать в выбранные)
+    if (isAdminUser) {
+      const s = track.trackStatus ?? "unlistened";
+      const match =
+        (s === "unlistened" && statusFilterUnlistened) ||
+        (s === "moderation" && statusFilterModeration) ||
+        (s === "approved" && statusFilterApproved);
+      if (!match) return false;
+    }
+
     // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
-    const gm = track.gridMap as Record<string, unknown> | null;
-    const percLayout = Array.isArray(gm?.v2LayoutPerc)
-      ? (gm!.v2LayoutPerc as unknown[])
-      : null;
-    const hasBridges = percLayout != null ? percLayout.length > 1 : false;
-    const isSwapped = !!(gm?.rowSwapped);
+    // hasBridges: из колонки БД, fallback на gridMap для старых записей
+    const hasBridges =
+      track.hasBridges ??
+      (() => {
+        const gm = track.gridMap;
+        if (!gm) return false;
+        if (Array.isArray(gm.bridges) && gm.bridges.length > 0) return true;
+        const pl = Array.isArray(gm.v2LayoutPerc) ? gm.v2LayoutPerc : gm.v2Layout;
+        return Array.isArray(pl) && pl.length > 1;
+      })();
+    // rowSwapped и rowDominancePercent теперь отдельные колонки БД
+    const isSwapped = track.rowSwapped;
 
     const matchesBridgeWith = hasBridges && bridgeFilterWith;
     const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
     const matchesSwapped = isSwapped && bridgeFilterSwapped;
-    if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
+    const includeSwapped = isAdminUser && matchesSwapped;
+    if (!matchesBridgeWith && !matchesBridgeWithout && !includeSwapped) return false;
 
-    // Фильтр по % доминирования РАЗ (только для несвапнутых треков без мостиков)
-    if (!hasBridges && !isSwapped) {
-      const pct = (track.gridMap as { rowDominancePercent?: number })
-        ?.rowDominancePercent;
-      const isNarrowed = squareDominanceMin > -100 || squareDominanceMax < 100;
-      if (isNarrowed) {
+    // AND-фильтр по меткам: включённая кнопка = только треки с этой меткой
+    if (accentFilterOn && !track.hasAccents) return false;
+    if (mamboFilterOn && !track.hasMambo) return false;
+
+    // Фильтр по % доминирования РАЗ (только для админа, для всех треков)
+    if (isAdminUser) {
+      const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
+      const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
+      if (!noneSelected && !allSelected) {
+        // Один источник: БД (track.rowDominancePercent), fallback из gridMap если обновили трек из отчёта
+        const pct =
+          track.rowDominancePercent ??
+          (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
+          undefined;
         if (pct == null) return false;
-        if (pct < squareDominanceMin) return false;
-        if (pct > squareDominanceMax) return false;
+        const inNeg = dominanceBucketNeg && pct < 0;
+        const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
+        const inHigh = dominanceBucketHigh && pct >= 5;
+        if (!inNeg && !inLow && !inHigh) return false;
       }
     }
 
@@ -110,15 +158,14 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
   if (squareSortDirection !== "none") {
     const gmHasBridges = (t: Track) => {
-      const gm = t.gridMap as Record<string, unknown> | null;
-      const percLayout = Array.isArray(gm?.v2LayoutPerc)
-        ? (gm!.v2LayoutPerc as unknown[])
+      if (t.hasBridges != null) return t.hasBridges;
+      const pl = Array.isArray(t.gridMap?.v2LayoutPerc)
+        ? t.gridMap!.v2LayoutPerc!
         : null;
-      return percLayout != null ? percLayout.length > 1 : false;
+      return pl != null ? pl.length > 1 : false;
     };
     const getDominance = (t: Track) =>
-      (t.gridMap as { rowDominancePercent?: number })?.rowDominancePercent ??
-      -Infinity;
+      t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
     const squareTracks = sortedTracks.filter((t) => !gmHasBridges(t));
     const bridgeTracks = sortedTracks.filter((t) => gmHasBridges(t));
     const sortedSquare =
@@ -175,6 +222,48 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         <span className="text-sm text-gray-600 select-none">Free</span>
       </div>
 
+      {/* Админ: базовый фильтр по статусу — перед поиском */}
+      {isAdminUser && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setStatusFilterUnlistened(!statusFilterUnlistened)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              statusFilterUnlistened
+                ? "bg-sky-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+            }`}
+            title={statusFilterUnlistened ? "Показать новые (не прослушаны)" : "Скрыть новые"}
+          >
+            Новые
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilterModeration(!statusFilterModeration)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              statusFilterModeration
+                ? "bg-amber-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+            }`}
+            title={statusFilterModeration ? "Показать на модерации" : "Скрыть на модерации"}
+          >
+            Модерация
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilterApproved(!statusFilterApproved)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              statusFilterApproved
+                ? "bg-emerald-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+            }`}
+            title={statusFilterApproved ? "Показать согласованные" : "Скрыть согласованные"}
+          >
+            Согласована
+          </button>
+        </div>
+      )}
+
       {/* Поиск */}
       <input
         type="text"
@@ -230,60 +319,83 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         >
           Без мостиков
         </button>
-        <button
-          type="button"
-          onClick={() => setBridgeFilterSwapped(!bridgeFilterSwapped)}
-          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-            bridgeFilterSwapped
-              ? "bg-orange-600 text-white"
-              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-          }`}
-        >
-          Свапнутые
-        </button>
+        {isAdminUser && (
+          <button
+            type="button"
+            onClick={() => setBridgeFilterSwapped(!bridgeFilterSwapped)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              bridgeFilterSwapped
+                ? "bg-orange-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+            }`}
+          >
+            Свапнутые
+          </button>
+        )}
       </div>
 
-      {/* Фильтр по % доминирования РАЗ над ПЯТЬ (только для треков без мостиков) */}
-      {bridgeFilterWithout && (
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400">% РАЗ над ПЯТЬ</span>
-            <span className="text-xs text-gray-500 tabular-nums">
-              {squareDominanceMin > -100 || squareDominanceMax < 100
-                ? `${squareDominanceMin}% — ${squareDominanceMax}%`
-                : "все"}
-            </span>
-          </div>
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={squareDominanceMin}
-            onChange={(e) =>
-              setSquareDominanceRange(
-                Math.min(Number(e.target.value), squareDominanceMax),
-                squareDominanceMax,
-              )
-            }
-            className="w-full h-1 accent-purple-500 cursor-pointer"
-            title={`Минимум: ${squareDominanceMin}%`}
-          />
-          <input
-            type="range"
-            min="-100"
-            max="100"
-            value={squareDominanceMax}
-            onChange={(e) =>
-              setSquareDominanceRange(
-                squareDominanceMin,
-                Math.max(Number(e.target.value), squareDominanceMin),
-              )
-            }
-            className="w-full h-1 accent-purple-500 cursor-pointer"
-            title={`Максимум: ${squareDominanceMax}%`}
-          />
+      {/* Фильтр по % доминирования РАЗ над ПЯТЬ — только для админа */}
+      {isAdminUser && bridgeFilterWithout && (
+        <div className="flex flex-wrap gap-2">
+          <span className="text-xs text-gray-400 self-center shrink-0">% РАЗ:</span>
+          {(
+            [
+              { key: "neg", label: "−4.99% — 0" },
+              { key: "low", label: "0 — 4.99%" },
+              { key: "high", label: "5% — 100%" },
+            ] as const
+          ).map(({ key, label }) => {
+            const active =
+              key === "neg"
+                ? dominanceBucketNeg
+                : key === "low"
+                  ? dominanceBucketLow
+                  : dominanceBucketHigh;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setDominanceBucket(key, !active)}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-teal-600 text-white"
+                    : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
+
+      {/* Фильтр по меткам: Акценты / Мамбо — выбрано = только с меткой (AND к остальным) */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setAccentFilterOn(!accentFilterOn)}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+            accentFilterOn
+              ? "bg-amber-600 text-white"
+              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+          }`}
+          title={accentFilterOn ? "Показать только треки с акцентами" : "Не фильтровать по акцентам"}
+        >
+          Акценты
+        </button>
+        <button
+          type="button"
+          onClick={() => setMamboFilterOn(!mamboFilterOn)}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+            mamboFilterOn
+              ? "bg-rose-600 text-white"
+              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+          }`}
+          title={mamboFilterOn ? "Показать только треки с мамбо" : "Не фильтровать по мамбо"}
+        >
+          Мамбо
+        </button>
+      </div>
 
       {/* Список треков */}
       <div
@@ -307,6 +419,23 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         ) : (
           sortedTracks.map((track) => {
             const isActive = currentTrack?.id === track.id;
+            const pct =
+              track.rowDominancePercent ??
+              (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent;
+            const trackHasBridges =
+              track.hasBridges ??
+              (() => {
+                const gm = track.gridMap;
+                if (!gm) return false;
+                if (Array.isArray((gm as { bridges?: unknown }).bridges) && (gm as { bridges: unknown[] }).bridges.length > 0) return true;
+                const pl = Array.isArray((gm as { v2LayoutPerc?: unknown }).v2LayoutPerc) ? (gm as { v2LayoutPerc: unknown[] }).v2LayoutPerc : (gm as { v2Layout?: unknown }).v2Layout;
+                return Array.isArray(pl) && pl.length > 1;
+              })();
+            const isSquare = isAdminUser && !trackHasBridges && !track.rowSwapped;
+            const pctLabel =
+              isSquare && pct != null
+                ? ` — ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`
+                : "";
             return (
               <button
                 key={track.id}
@@ -317,7 +446,14 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                     : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
                 }`}
               >
-                <div className="font-medium text-white">{track.title}</div>
+                <div className="font-medium text-white">
+                  {track.title}
+                  {pctLabel && (
+                    <span className="text-gray-400 font-normal text-xs ml-1" title="% РАЗ (для фильтра)">
+                      {pctLabel}
+                    </span>
+                  )}
+                </div>
                 {track.artist && (
                   <div
                     className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}

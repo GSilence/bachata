@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { writeFileSync, mkdirSync } from "fs";
-import { randomUUID, createHash } from "crypto";
+import { createHash } from "crypto";
 import { analyzeGenre } from "@/lib/analyzeGenre";
 import { requireAdmin } from "@/lib/auth";
 
@@ -16,8 +16,44 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 600; // 10 минут таймаут для API route (Next.js 15)
 
-// Максимальный размер файла: 100MB
-const MAX_FILE_SIZE = 100 * 1024 * 1024;
+// Максимальный размер файла: 25MB
+const MAX_FILE_SIZE = 25 * 1024 * 1024;
+
+/** Нормализация для имени файла: нижний регистр, слова через дефис, только ASCII (a-z, 0-9, -). */
+function normalizeFilename(name: string): string {
+  const s = name
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s\-]/gu, " ")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    // Только безопасный ASCII — без сломанной кодировки и странных символов (ð, ï и т.д.)
+    .replace(/[^a-z0-9\-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 200);
+  return s || "track";
+}
+
+/** Уникальный путь: base.ext, base_2.ext, ... */
+function getUniqueFilePath(
+  dir: string,
+  baseName: string,
+  ext: string,
+): { filePath: string; fileName: string } {
+  let candidate = baseName;
+  let n = 0;
+  let filePath = join(dir, `${candidate}.${ext}`);
+  while (existsSync(filePath)) {
+    n += 1;
+    candidate = `${baseName}_${n}`;
+    filePath = join(dir, `${candidate}.${ext}`);
+  }
+  return { filePath, fileName: `${candidate}.${ext}` };
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,13 +87,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
 
-    // Проверка типа файла
-    if (
-      !file.type.includes("audio") &&
-      !file.name.toLowerCase().endsWith(".mp3")
-    ) {
+    // Проверка типа файла: только аудио, без видео
+    const lowerName = file.name.toLowerCase();
+    const videoExtensions = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".flv", ".ogv"];
+    const isVideoByExt = videoExtensions.some((ext) => lowerName.endsWith(ext));
+    const isVideoByMime = file.type.startsWith("video/");
+    if (isVideoByExt || isVideoByMime) {
       return NextResponse.json(
-        { error: "Only MP3 audio files are supported" },
+        { error: "Загрузка видео запрещена. Разрешены только аудиофайлы." },
+        { status: 400 },
+      );
+    }
+    const allowedAudioExtensions = [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac"];
+    const hasAudioExt = allowedAudioExtensions.some((ext) => lowerName.endsWith(ext));
+    const isAudioByMime = file.type.startsWith("audio/");
+    if (!hasAudioExt && !isAudioByMime) {
+      return NextResponse.json(
+        { error: "Разрешены только аудиофайлы (MP3, M4A, WAV и т.д.)." },
         { status: 400 },
       );
     }
@@ -90,48 +136,55 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Проверка дубликатов ---
-    // 1. По MD5 хешу файла (точное совпадение)
-    const hashDuplicate = await prisma.track.findFirst({
-      where: { fileHash },
-    });
-    if (hashDuplicate) {
-      return NextResponse.json(
+    const dupResponse = (existing: { id: number; title: string; artist: string | null }, reason: string) =>
+      NextResponse.json(
         {
-          error: "Этот файл уже загружен",
+          error: reason,
           duplicate: true,
-          existingTrack: {
-            id: hashDuplicate.id,
-            title: hashDuplicate.title,
-            artist: hashDuplicate.artist,
-          },
+          existingTrack: { id: existing.id, title: existing.title, artist: existing.artist },
         },
         { status: 409 },
       );
+
+    // 1. По MD5 хешу — побайтово одинаковый файл
+    const hashDuplicate = await prisma.track.findFirst({ where: { fileHash } });
+    if (hashDuplicate) {
+      return dupResponse(hashDuplicate, "Этот файл уже загружен (совпадение по содержимому)");
     }
 
-    // 2. По title + artist (MySQL ci collation = case-insensitive)
-    const trimmedTitle = title.trim();
+    const trimmedTitle  = title.trim();
     const trimmedArtist = artist?.trim() || null;
+    const parsedYear    = year ? parseInt(year, 10) || null : null;
 
+    // 2. По metaTitle + metaArtist + metaYear — тот же трек из другого источника/рипа
+    //    Срабатывает только если все три поля присутствуют в загрузке
+    if (trimmedTitle && trimmedArtist && parsedYear) {
+      const metaDuplicate = await prisma.track.findFirst({
+        where: {
+          metaTitle:  trimmedTitle,
+          metaArtist: trimmedArtist,
+          metaYear:   parsedYear,
+        },
+      });
+      if (metaDuplicate) {
+        return dupResponse(
+          metaDuplicate,
+          `Трек "${metaDuplicate.title}" — ${metaDuplicate.artist || "Unknown"} (${parsedYear}) уже есть в базе`,
+        );
+      }
+    }
+
+    // 3. По title + artist — fallback, когда мета-поля в БД могут быть пустыми
     const titleArtistDuplicate = await prisma.track.findFirst({
       where: {
         title: trimmedTitle,
         ...(trimmedArtist ? { artist: trimmedArtist } : { artist: null }),
       },
     });
-
     if (titleArtistDuplicate) {
-      return NextResponse.json(
-        {
-          error: `Трек "${titleArtistDuplicate.title}" — ${titleArtistDuplicate.artist || "Unknown"} уже существует`,
-          duplicate: true,
-          existingTrack: {
-            id: titleArtistDuplicate.id,
-            title: titleArtistDuplicate.title,
-            artist: titleArtistDuplicate.artist,
-          },
-        },
-        { status: 409 },
+      return dupResponse(
+        titleArtistDuplicate,
+        `Трек "${titleArtistDuplicate.title}" — ${titleArtistDuplicate.artist || "Unknown"} уже существует`,
       );
     }
 
@@ -142,12 +195,15 @@ export async function POST(request: NextRequest) {
       await mkdir(uploadsDir, { recursive: true });
     }
 
-    // Генерируем уникальный идентификатор для трека
-    const uniqueId = randomUUID();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileExtension = safeFileName.split(".").pop() || "mp3";
-    const fileName = `${uniqueId}.${fileExtension}`;
-    const filePath = join(uploadsDir, fileName);
+    // Имя файла: название-трека-имя-автора (оба нормализованы, через дефис)
+    const titlePart = trimmedTitle
+      ? normalizeFilename(trimmedTitle)
+      : normalizeFilename(file.name.replace(/\.[^.]+$/, ""));
+    const artistPart = trimmedArtist ? normalizeFilename(trimmedArtist) : "";
+    const rawBase = (artistPart ? `${titlePart}-${artistPart}` : titlePart).slice(0, 200);
+    const extFromName = (file.name.split(".").pop() || "mp3").toLowerCase();
+    const fileExtension = /^[a-z0-9]+$/.test(extFromName) ? extFromName : "mp3";
+    const { filePath, fileName } = getUniqueFilePath(uploadsDir, rawBase, fileExtension);
 
     console.log(`Processing track: ${title} by ${artist || "Unknown"}`);
     console.log(
@@ -202,6 +258,31 @@ export async function POST(request: NextRequest) {
         if (stderr) console.log("[V2] stderr:", stderr);
         const result = JSON.parse(stdout.trim());
         if (result.error) throw new Error(result.error);
+
+        // Не загружаем треки, не являющиеся бачатой: 4 пика (попса) или расстояние между сильными рядами ≠ 4 бита
+        if (result.track_type === "popsa" || result.peaks_per_octave === 4) {
+          await rm(filePath).catch(() => {});
+          return NextResponse.json(
+            { error: "Трек не является Бачатой" },
+            { status: 400 },
+          );
+        }
+        const verdict = result.row_analysis_verdict;
+        const winningRows = Array.isArray(verdict?.winning_rows) ? verdict.winning_rows : null;
+        if (winningRows && winningRows.length === 2) {
+          const a = Number(winningRows[0]);
+          const b = Number(winningRows[1]);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            const distance = (Math.max(a, b) - Math.min(a, b) + 8) % 8;
+            if (distance !== 4) {
+              await rm(filePath).catch(() => {});
+              return NextResponse.json(
+                { error: "Трек не является Бачатой" },
+                { status: 400 },
+              );
+            }
+          }
+        }
 
         finalBpm = result.bpm ?? 120;
         baseBpm = result.bpm ?? null;
@@ -283,6 +364,14 @@ export async function POST(request: NextRequest) {
         analyzerType: useV2 ? "v2" : "basic",
         fileHash: fileHash,
         genreHint: genreResult?.genre_hint || null,
+        // Метаданные из ID3-тегов → выделенные колонки БД
+        metaTitle: title || null,
+        metaArtist: artist?.trim() || null,
+        metaAlbum: album?.trim() || null,
+        metaYear: year ? parseInt(year, 10) || null : null,
+        metaGenre: genre?.trim() || null,
+        metaComment: comment?.trim() || null,
+        metaTrackNum: trackNumber ? parseInt(trackNumber, 10) || null : null,
         gridMap:
           gridMap != null
             ? JSON.parse(JSON.stringify({ ...gridMap, metadata }))
@@ -322,6 +411,7 @@ export async function POST(request: NextRequest) {
         where: { id: track.id },
         data: {
           gridMap: mergedGridMap as object,
+          hasBridges: v2BridgesTimes.length > 0,
           // Синхронизируем track.offset с новым song_start_time из v2-анализа
           ...(result.song_start_time != null && {
             offset: result.song_start_time as number,

@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { usePlayerStore } from "@/store/playerStore";
 import { useAuthStore } from "@/store/authStore";
-import { audioEngine } from "@/lib/audioEngine";
+import { isAdmin } from "@/lib/roles";
 import { useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
 import React from "react";
-import type { GridMap } from "@/types";
-import { LiveBeatProvider, LiveBeatBlock } from "./LiveBeatContext";
+import type { GridMap, TrackStatus } from "@/types";
+import TrackInfoAdminPanel from "./TrackInfoAdminPanel";
 
-const V2AnalysisDisplay = React.memo(
-  dynamic(() => import("./charts/V2AnalysisDisplay"), { ssr: false }),
-);
+const TRACK_STATUS_OPTIONS: { value: TrackStatus; label: string }[] = [
+  { value: "unlistened", label: "Не прослушана" },
+  { value: "moderation", label: "На модерации" },
+  { value: "approved", label: "Согласована" },
+];
 
 interface TrackInfoProps {}
 
@@ -26,74 +27,87 @@ export default function TrackInfo({}: TrackInfoProps) {
     stop,
     isPlaying,
     isReanalyzing,
-    setReanalyzing,
   } = usePlayerStore();
   const router = useRouter();
   const { user } = useAuthStore();
-  const isAdmin = user?.role === "admin";
-  const [editingBpm, setEditingBpm] = useState(false);
-  const [editingOffset, setEditingOffset] = useState(false);
-  const [tempBpm, setTempBpm] = useState(currentTrack?.bpm.toString() || "120");
-  const [tempOffset, setTempOffset] = useState(
-    currentTrack?.offset.toString() || "0",
-  );
+  const isAdminUser = isAdmin(user?.role);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isShifting, setIsShifting] = useState(false);
 
-  // V2 analysis state
-  const [v2Result, setV2Result] = useState<any>(null);
-  const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
-  const [v2Stage, setV2Stage] = useState<string>("");
-
-  // Bridge state
-  const [bridges, setBridges] = useState<number[]>([]);
-  const [isSavingBridge, setIsSavingBridge] = useState(false);
-  // Обновляем временные значения при смене трека
-  useEffect(() => {
-    if (currentTrack) {
-      setTempBpm(currentTrack.bpm.toString());
-      setTempOffset(currentTrack.offset.toString());
-      setEditingBpm(false);
-      setEditingOffset(false);
-      const gridMap = currentTrack.gridMap as GridMap | null;
-      setBridges(gridMap?.bridges || []);
+  // Admin: редактирование названия и метаданных
+  const [isEditingMeta, setIsEditingMeta] = useState(false);
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [metaDraft, setMetaDraft] = useState({
+    title: "",
+    artist: "",
+    metaTitle: "",
+    metaArtist: "",
+    metaAlbum: "",
+    metaYear: "" as string,
+    metaGenre: "",
+    metaComment: "",
+    metaTrackNum: "" as string,
+  });
+  const fillMetaDraft = () => {
+    if (!currentTrack) return;
+    setMetaDraft({
+      title: currentTrack.title || "",
+      artist: currentTrack.artist ?? "",
+      metaTitle: currentTrack.metaTitle ?? "",
+      metaArtist: currentTrack.metaArtist ?? "",
+      metaAlbum: currentTrack.metaAlbum ?? "",
+      metaYear: currentTrack.metaYear != null ? String(currentTrack.metaYear) : "",
+      metaGenre: currentTrack.metaGenre ?? "",
+      metaComment: currentTrack.metaComment ?? "",
+      metaTrackNum: currentTrack.metaTrackNum != null ? String(currentTrack.metaTrackNum) : "",
+    });
+  };
+  const handleStartEditMeta = () => {
+    fillMetaDraft();
+    setIsEditingMeta(true);
+  };
+  const handleCancelEditMeta = () => {
+    setIsEditingMeta(false);
+  };
+  const handleSaveMeta = async () => {
+    if (!currentTrack || metaSaving) return;
+    setMetaSaving(true);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: metaDraft.title.trim() || currentTrack.title,
+          artist: metaDraft.artist.trim() || null,
+          metaTitle: metaDraft.metaTitle.trim() || null,
+          metaArtist: metaDraft.metaArtist.trim() || null,
+          metaAlbum: metaDraft.metaAlbum.trim() || null,
+          metaYear: metaDraft.metaYear.trim() ? parseInt(metaDraft.metaYear, 10) || null : null,
+          metaGenre: metaDraft.metaGenre.trim() || null,
+          metaComment: metaDraft.metaComment.trim() || null,
+          metaTrackNum: metaDraft.metaTrackNum.trim() ? parseInt(metaDraft.metaTrackNum, 10) || null : null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || res.statusText);
+      }
+      const { track } = await res.json();
+      updateCurrentTrack(track);
+      const list = usePlayerStore.getState().tracks;
+      setTracks(list.map((t) => (t.id === track.id ? track : t)));
+      setIsEditingMeta(false);
+    } catch (e) {
+      console.error(e);
+      alert(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setMetaSaving(false);
     }
-  }, [currentTrack]);
+  };
 
-  // При смене трека — загружаем сохранённые результаты анализов (начальный бит выставляет LiveBeatProvider)
+  // Обновляем временные значения при смене трека (для формы меты)
   useEffect(() => {
-    if (currentTrack) {
-      // Load saved v2 analysis (GET также считает rowDominancePercent из Row Analysis и пишет в БД)
-      fetch(`/api/tracks/${currentTrack.id}/analyze-v2?t=${Date.now()}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.found) setV2Result(data);
-          if (data.found && typeof data.rowDominancePercent === "number") {
-            // Берём АКТУАЛЬНЫЙ currentTrack из Zustand, а не из замыкания.
-            // Замыкание могло захватить устаревший стейт (например, до завершения анализа),
-            // и ...closureTrack при spread перезаписал бы свежие данные (offset и т.д.)
-            const latestTrack = usePlayerStore.getState().currentTrack;
-            if (!latestTrack || latestTrack.id !== currentTrack.id) return;
-            const mergedGridMap: GridMap = {
-              ...(latestTrack.gridMap || {}),
-              rowDominancePercent: data.rowDominancePercent,
-            } as GridMap;
-            const updatedTrack = {
-              ...latestTrack,
-              gridMap: mergedGridMap,
-            };
-            updateCurrentTrack(updatedTrack);
-            const currentTracks = usePlayerStore.getState().tracks;
-            setTracks(
-              currentTracks.map((t) =>
-                t.id === latestTrack.id ? updatedTrack : t,
-              ),
-            );
-          }
-        })
-        .catch(() => {});
-    } else {
-      setV2Result(null);
+    if (currentTrack && isEditingMeta) {
+      fillMetaDraft();
     }
   }, [currentTrack?.id]);
 
@@ -106,50 +120,6 @@ export default function TrackInfo({}: TrackInfoProps) {
       </div>
     );
   }
-
-  const handleBpmChange = async (newBpm: number) => {
-    if (!currentTrack) return;
-    const updatedTrack = { ...currentTrack, bpm: newBpm };
-    setCurrentTrack(updatedTrack);
-    console.log("BPM changed to:", newBpm);
-  };
-
-  const handleOffsetChange = async (newOffset: number) => {
-    if (!currentTrack) return;
-    try {
-      const res = await fetch("/api/rhythm/update-offset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track_id: currentTrack.id, new_offset: newOffset }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка обновления offset");
-      if (data.track) {
-        updateCurrentTrack(data.track);
-        audioEngine.reloadBeatGrid(data.track);
-        setTempOffset(data.track.offset.toString());
-      }
-    } catch (e) {
-      console.error("Offset change failed:", e);
-    }
-  };
-
-  const resetBpm = () => {
-    if (currentTrack.baseBpm) {
-      setTempBpm(currentTrack.baseBpm.toString());
-      handleBpmChange(currentTrack.baseBpm);
-    }
-  };
-
-  const resetOffset = () => {
-    if (
-      currentTrack.baseOffset !== null &&
-      currentTrack.baseOffset !== undefined
-    ) {
-      setTempOffset(currentTrack.baseOffset.toString());
-      handleOffsetChange(currentTrack.baseOffset);
-    }
-  };
 
   const handleDelete = async () => {
     if (!currentTrack || isDeleting) return;
@@ -192,144 +162,13 @@ export default function TrackInfo({}: TrackInfoProps) {
     }
   };
 
-  const analysisCompleted =
-    currentTrack &&
-    (currentTrack.analyzerType === "v2" ||
-      currentTrack.analyzerType === "basic" ||
-      currentTrack.analyzerType === "extended");
-
-  // 1 Доля = 1 такт = 4 бита, 1 Счёт = 1 бит
-  const beatInterval =
-    currentTrack && currentTrack.bpm > 0 ? 60 / currentTrack.bpm : 0;
-  const shiftBeat = beatInterval * 4; // 1 доля = 1 такт = 4 бита
-  const shiftCount = beatInterval; // 1 счёт = 1 бит
-  const hasBridges = bridges.length > 0;
-
-  const handleGridShift = async (
-    direction: "back" | "forward",
-    amount?: number,
-  ) => {
-    if (!currentTrack || isShifting || !analysisCompleted) return;
-    if (hasBridges) return; // Сдвиг сетки блокирован при наличии бриджей
-
-    const shift = amount ?? shiftBeat;
-    const newOffset =
-      direction === "forward"
-        ? currentTrack.offset + shift
-        : currentTrack.offset - shift;
-
-    if (newOffset < 0) return;
-
-    setIsShifting(true);
-    try {
-      const res = await fetch("/api/rhythm/update-offset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          track_id: currentTrack.id,
-          new_offset: newOffset,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка сдвига сетки");
-      if (data.track) {
-        updateCurrentTrack(data.track);
-        audioEngine.reloadBeatGrid(data.track);
-      }
-      setTempOffset(data.track.offset.toString());
-    } catch (e) {
-      console.error("Grid shift failed:", e);
-      alert(
-        `Ошибка при сдвиге сетки: ${
-          e instanceof Error ? e.message : "Unknown error"
-        }`,
-      );
-    } finally {
-      setIsShifting(false);
-    }
-  };
-
-  // === Bridge handlers ===
-
-  const saveBridges = async (newBridges: number[]) => {
-    if (!currentTrack) return;
-    setIsSavingBridge(true);
-    try {
-      const res = await fetch("/api/rhythm/update-bridges", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          track_id: currentTrack.id,
-          bridges: newBridges,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка сохранения бриджа");
-      if (data.track) {
-        updateCurrentTrack(data.track);
-        audioEngine.reloadBeatGrid(data.track);
-      }
-      setBridges(newBridges);
-    } catch (e) {
-      console.error("Save bridges failed:", e);
-      alert(`Ошибка: ${e instanceof Error ? e.message : "Unknown error"}`);
-    } finally {
-      setIsSavingBridge(false);
-    }
-  };
-
-  const applyLayout = async (type: "rms" | "perc") => {
-    if (!currentTrack) return;
-    setIsSavingBridge(true);
-    try {
-      const res = await fetch("/api/rhythm/apply-layout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track_id: currentTrack.id, type }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка применения сетки");
-      if (data.track) {
-        updateCurrentTrack(data.track);
-        audioEngine.reloadBeatGrid(data.track);
-        const newBridges = (data.track.gridMap?.bridges as number[]) ?? [];
-        setBridges(newBridges);
-      }
-    } catch (e) {
-      console.error("Apply layout failed:", e);
-      alert(`Ошибка: ${e instanceof Error ? e.message : "Unknown error"}`);
-    } finally {
-      setIsSavingBridge(false);
-    }
-  };
-
-  const handleAddBridgeHere = () => {
-    if (!currentTrack || isSavingBridge) return;
-    const info = audioEngine.getCurrentBeatInfo();
-    if (!info) return;
-    // Используем время бита из движка — это именно то, что видит админ в линейке
-    const bridgeTime = info.time;
-    const beatInterval = 60 / currentTrack.bpm;
-
-    // Проверка дубликатов (в пределах половины бита)
-    if (bridges.some((b) => Math.abs(b - bridgeTime) < beatInterval / 2)) {
-      alert("Бридж уже существует рядом с этой позицией");
-      return;
-    }
-
-    const newBridges = [...bridges, bridgeTime].sort((a, b) => a - b);
-    saveBridges(newBridges);
-  };
-
-  const handleRemoveBridge = (bridgeTime: number) => {
-    const newBridges = bridges.filter((b) => b !== bridgeTime);
-    saveBridges(newBridges);
-  };
-
-  const formatTime = (seconds: number) => {
-    const min = Math.floor(seconds / 60);
-    const sec = (seconds % 60).toFixed(1);
-    return `${min}:${sec.padStart(4, "0")}`;
+  const refetchTracks = () => {
+    fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((freshData: any) => {
+        if (Array.isArray(freshData)) setTracks(freshData);
+      })
+      .catch(() => {});
   };
 
   return (
@@ -337,29 +176,77 @@ export default function TrackInfo({}: TrackInfoProps) {
       className="bg-gray-800 rounded-lg p-4 sm:p-6 border border-gray-700"
       data-component="track-info"
     >
-      {/* Название и исполнитель */}
+      {/* Название, исполнитель, год, альбом — для всех (только чтение) */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">
-            {currentTrack.title}
-          </h2>
-          {currentTrack.artist && (
-            <p className="text-gray-400">{currentTrack.artist}</p>
-          )}
-          {currentTrack.genreHint && (
-            <span
-              className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${
-                currentTrack.genreHint === "bachata" ||
-                currentTrack.genreHint === "latin"
-                  ? "bg-green-900/40 text-green-400 border border-green-700/50"
-                  : "bg-gray-700/40 text-gray-400 border border-gray-600/50"
-              }`}
-            >
-              {currentTrack.genreHint}
-            </span>
+          <div className="flex items-center gap-2 mb-1">
+            {isAdminUser && (
+              <button
+                type="button"
+                onClick={handleStartEditMeta}
+                className="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors shrink-0"
+                title="Редактировать название и мета"
+                aria-label="Редактировать название и мета"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            )}
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">
+              {currentTrack.title}
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-gray-400 text-sm">
+            {(currentTrack.artist || currentTrack.metaArtist) && (
+              <span>{currentTrack.artist || currentTrack.metaArtist}</span>
+            )}
+            {currentTrack.metaYear != null && (
+              <span>{currentTrack.metaYear}</span>
+            )}
+            {currentTrack.metaAlbum && (
+              <span>{currentTrack.metaAlbum}</span>
+            )}
+          </div>
+          {isAdminUser && (
+            <div className="mt-2">
+              <label className="block text-xs text-gray-500 mb-1">Статус</label>
+              <select
+                value={currentTrack.trackStatus ?? "unlistened"}
+                onChange={async (e) => {
+                  const value = e.target.value as TrackStatus;
+                  if (!currentTrack || value === (currentTrack.trackStatus ?? "unlistened")) return;
+                  try {
+                    const res = await fetch(`/api/tracks/${currentTrack.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ trackStatus: value }),
+                    });
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      throw new Error(err?.error || res.statusText);
+                    }
+                    const { track } = await res.json();
+                    updateCurrentTrack(track);
+                    const list = usePlayerStore.getState().tracks;
+                    setTracks(list.map((t) => (t.id === track.id ? track : t)));
+                  } catch (err) {
+                    console.error(err);
+                    alert(err instanceof Error ? err.message : "Ошибка смены статуса");
+                  }
+                }}
+                className="px-2 py-1.5 text-sm rounded bg-gray-700 border border-gray-600 text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer"
+              >
+                {TRACK_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
-        {isAdmin && (
+        {isAdminUser && (
           <button
             onClick={handleDelete}
             disabled={isDeleting}
@@ -400,522 +287,114 @@ export default function TrackInfo({}: TrackInfoProps) {
         )}
       </div>
 
-      {/* Расклад анализа, сдвиг сетки, BPM/Offset (только для админа) */}
-      {isAdmin && (
-        <>
-          <div className="mt-4 sm:mt-6 mb-4 sm:mb-6 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-400">Расклад:</span>
-            <span className="text-sm text-white">
-              {currentTrack.analyzerType === "v2"
-                ? "v2 (ряды + мостики)"
-                : currentTrack.analyzerType || "не указан"}
-            </span>
-            <div className="flex items-center gap-2 ml-2">
+      {/* Метаданные: для админа — форма редактирования по клику на иконку */}
+      {isAdminUser && (
+        <div className="mt-2 text-sm text-gray-400">
+          {!isEditingMeta ? null : (
+            <div className="mt-2 p-3 bg-gray-700/50 rounded-lg space-y-2 max-w-xl">
+              {currentTrack.genreHint && (
+                <p className="text-xs text-gray-500">Предполагаемый стиль: <span className="text-gray-300">{currentTrack.genreHint}</span></p>
+              )}
+              <div>
+              <label className="block text-xs text-gray-500 mb-0.5">Название</label>
+              <input
+                type="text"
+                value={metaDraft.title}
+                onChange={(e) => setMetaDraft((d) => ({ ...d, title: e.target.value }))}
+                className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-0.5">Исполнитель</label>
+              <input
+                type="text"
+                value={metaDraft.artist}
+                onChange={(e) => setMetaDraft((d) => ({ ...d, artist: e.target.value }))}
+                className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">Альбом</label>
+                <input
+                  type="text"
+                  value={metaDraft.metaAlbum}
+                  onChange={(e) => setMetaDraft((d) => ({ ...d, metaAlbum: e.target.value }))}
+                  className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">Год</label>
+                <input
+                  type="text"
+                  value={metaDraft.metaYear}
+                  onChange={(e) => setMetaDraft((d) => ({ ...d, metaYear: e.target.value }))}
+                  className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+                  placeholder="число"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">Жанр</label>
+                <input
+                  type="text"
+                  value={metaDraft.metaGenre}
+                  onChange={(e) => setMetaDraft((d) => ({ ...d, metaGenre: e.target.value }))}
+                  className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">№ в альбоме</label>
+                <input
+                  type="text"
+                  value={metaDraft.metaTrackNum}
+                  onChange={(e) => setMetaDraft((d) => ({ ...d, metaTrackNum: e.target.value }))}
+                  className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+                  placeholder="число"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-0.5">Комментарий</label>
+              <input
+                type="text"
+                value={metaDraft.metaComment}
+                onChange={(e) => setMetaDraft((d) => ({ ...d, metaComment: e.target.value }))}
+                className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
+              />
+            </div>
+            <div className="flex gap-2 mt-2">
               <button
                 type="button"
-                onClick={async () => {
-                  if (!currentTrack || isAnalyzingV2) return;
-                  setIsAnalyzingV2(true);
-                  setV2Result(null);
-                  setV2Stage("");
-                  try {
-                    const res = await fetch(
-                      `/api/tracks/${currentTrack.id}/analyze-v2`,
-                      { method: "POST" },
-                    );
-
-                    // SSE streaming — read stage logs until result arrives
-                    let data: any = null;
-                    if (res.headers.get("Content-Type")?.includes("text/event-stream") && res.body) {
-                      const reader = res.body.getReader();
-                      const decoder = new TextDecoder();
-                      let buf = "";
-                      outer: while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        buf += decoder.decode(value, { stream: true });
-                        const parts = buf.split("\n\n");
-                        buf = parts.pop() ?? "";
-                        for (const part of parts) {
-                          const line = part.split("\n").find((l) => l.startsWith("data: "));
-                          if (!line) continue;
-                          let evt: any;
-                          try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-                          if (evt.type === "log") {
-                            setV2Stage(evt.message);
-                          } else if (evt.type === "result") {
-                            data = evt.data;
-                          } else if (evt.type === "error") {
-                            throw new Error(evt.message);
-                          }
-                        }
-                        if (data) break outer;
-                      }
-                    } else {
-                      data = await res.json();
-                    }
-                    if (!data) throw new Error("No result received from analysis");
-                    setV2Result(data);
-                    // Сразу применяем раскладку v2 к воспроизведению (мостики учтены в счёте)
-                    // Используем getState() вместо closure-переменной currentTrack:
-                    // за время анализа (30–60 сек) GET-callback мог обновить Zustand,
-                    // и closure содержит устаревший снапшот. getState() даёт актуальный стейт.
-                    const freshTrack = usePlayerStore.getState().currentTrack;
-                    if (
-                      freshTrack &&
-                      data.success &&
-                      Array.isArray(data.layout) &&
-                      data.layout.length > 0
-                    ) {
-                      const existing =
-                        freshTrack.gridMap as unknown as Record<
-                          string,
-                          unknown
-                        > | null;
-                      const base =
-                        existing && typeof existing === "object"
-                          ? { ...existing }
-                          : {};
-                      const squareAnalysis = data.square_analysis as
-                        | { verdict?: string; row_dominance_pct?: number }
-                        | undefined;
-                      const rowDominancePercent =
-                        typeof squareAnalysis?.row_dominance_pct === "number"
-                          ? squareAnalysis.row_dominance_pct
-                          : undefined;
-                      const v2LayoutRms = Array.isArray(data.layout)
-                        ? data.layout
-                        : [];
-                      const v2LayoutPerc = Array.isArray(data.layout_perc)
-                        ? data.layout_perc
-                        : [];
-                      const activeLayout =
-                        v2LayoutPerc.length > 0 ? v2LayoutPerc : v2LayoutRms;
-                      const percBridgeTimes = activeLayout
-                        .slice(1)
-                        .map((s: { time_start?: number }) => s.time_start ?? 0);
-                      const mergedGridMap: GridMap = {
-                        bpm: (data.bpm ?? freshTrack.bpm) as number,
-                        offset: (data.song_start_time ??
-                          freshTrack.offset ??
-                          base.offset ??
-                          0) as number,
-                        grid: (base.grid as GridMap["grid"]) ?? [],
-                        bridges: percBridgeTimes,
-                        duration: (data.duration ?? base.duration) as
-                          | number
-                          | undefined,
-                        v2Layout: activeLayout as GridMap["v2Layout"],
-                        v2LayoutRms: v2LayoutRms as GridMap["v2LayoutRms"],
-                        v2LayoutPerc: v2LayoutPerc as GridMap["v2LayoutPerc"],
-                        ...(rowDominancePercent != null && {
-                          rowDominancePercent,
-                        }),
-                      };
-                      const updatedTrack = {
-                        ...freshTrack,
-                        offset: (data.song_start_time ??
-                          freshTrack.offset) as number,
-                        baseOffset: (data.song_start_time ??
-                          freshTrack.baseOffset) as number,
-                        gridMap: mergedGridMap,
-                      };
-                      updateCurrentTrack(updatedTrack);
-                      audioEngine.reloadBeatGrid(updatedTrack);
-                      const freshTracks = usePlayerStore.getState().tracks;
-                      setTracks(
-                        freshTracks.map((t) =>
-                          t.id === freshTrack.id ? updatedTrack : t,
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    console.error("V2 analysis error:", e);
-                    setV2Result({ error: String(e) });
-                  } finally {
-                    setIsAnalyzingV2(false);
-                    setV2Stage("");
-                    // Перечитываем треки из БД — это гарантированная синхронизация,
-                    // аналог обновления страницы, но без перезагрузки.
-                    // БД к этому моменту уже обновлена (route handler пишет ДО отправки SSE result).
-                    fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
-                      .then((r) => (r.ok ? r.json() : Promise.reject()))
-                      .then((freshData: any) => {
-                        if (!Array.isArray(freshData)) return;
-                        const ct = usePlayerStore.getState().currentTrack;
-                        setTracks(freshData);
-                        const freshCt =
-                          freshData.find((t: any) => t.id === ct?.id) ?? null;
-                        if (freshCt) {
-                          updateCurrentTrack(freshCt);
-                          audioEngine.reloadBeatGrid(freshCt);
-                        }
-                      })
-                      .catch(() => {});
-                  }
-                }}
-                disabled={isAnalyzingV2}
-                title="Запустить анализ v2 (ряды + мостики)"
-                className={`text-xs px-2 py-1.5 rounded bg-indigo-700 hover:bg-indigo-600 text-gray-200 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5 min-w-[7rem] ${
-                  isAnalyzingV2 ? "opacity-50" : ""
-                }`}
+                onClick={handleSaveMeta}
+                disabled={metaSaving}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded disabled:opacity-50"
               >
-                {isAnalyzingV2 ? (
-                  <svg
-                    className="w-4 h-4 animate-spin shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                ) : null}
-                {isAnalyzingV2 ? "Анализ v2…" : "Анализ v2"}
+                {metaSaving ? "Сохранение…" : "Сохранить"}
               </button>
-              {isAnalyzingV2 && v2Stage && (
-                <span className="text-xs text-indigo-300 truncate max-w-[220px]" title={v2Stage}>
-                  {v2Stage}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* V2 Analysis results */}
-          {v2Result && !v2Result.error && (
-            <div className="mb-4 sm:mb-6">
-              <details open>
-                <summary className="text-sm font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
-                  Анализ v2 —{" "}
-                  {v2Result.track_type === "popsa" ? "Попса" : "Бачата"}
-                </summary>
-                <div className="mt-2">
-                  <V2AnalysisDisplay
-                    data={v2Result}
-                    trackId={currentTrack?.id}
-                    trackTitle={currentTrack?.title}
-                  />
-                </div>
-              </details>
-            </div>
-          )}
-          {v2Result?.error && (
-            <p className="text-red-400 text-xs mb-4">{v2Result.error}</p>
-          )}
-
-          {/* Сдвиг сетки (offset) — заблокирован при наличии бриджей */}
-          {analysisCompleted && (
-            <div className="mb-4 sm:mb-6">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-gray-400">
-                  Сдвиг сетки:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleGridShift("back")}
-                  disabled={
-                    isShifting ||
-                    isReanalyzing ||
-                    hasBridges ||
-                    currentTrack.offset - shiftBeat < 0
-                  }
-                  title="Сдвинуть сетку на 1 долю назад"
-                  className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:opacity-60 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5"
-                >
-                  {isShifting ? (
-                    <svg
-                      className="w-4 h-4 animate-spin shrink-0"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
-                  ) : null}
-                  &laquo; -1 Доля
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleGridShift("forward")}
-                  disabled={isShifting || isReanalyzing || hasBridges}
-                  title="Сдвинуть сетку на 1 долю вперёд"
-                  className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-gray-200 disabled:opacity-60 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-1.5"
-                >
-                  +1 Доля &raquo;
-                </button>
-                <span className="text-gray-600 mx-1">|</span>
-                <button
-                  type="button"
-                  onClick={() => handleGridShift("back", shiftCount)}
-                  disabled={
-                    isShifting ||
-                    isReanalyzing ||
-                    hasBridges ||
-                    currentTrack.offset - shiftCount < 0
-                  }
-                  title="Тонкий сдвиг на 1 счёт назад (1/8 доли)"
-                  className="text-xs px-2 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  &laquo; -1 Счёт
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleGridShift("forward", shiftCount)}
-                  disabled={isShifting || isReanalyzing || hasBridges}
-                  title="Тонкий сдвиг на 1 счёт вперёд (1/8 доли)"
-                  className="text-xs px-2 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  +1 Счёт &raquo;
-                </button>
-              </div>
-              {hasBridges && (
-                <p className="text-xs text-yellow-500/70 mt-1">
-                  Сдвиг сетки заблокирован — удалите все бриджи для изменения
-                  offset
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Управление бриджами */}
-          {analysisCompleted && (
-            <div className="mb-4 sm:mb-6">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="text-sm font-medium text-gray-400">
-                  Бриджи:
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAddBridgeHere}
-                  disabled={isSavingBridge || isReanalyzing}
-                  title="Добавить бридж на текущей позиции"
-                  className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isSavingBridge ? "Сохранение..." : "+ Бридж здесь"}
-                </button>
-                {v2Result && !v2Result.error && (
-                  <>
-                    {v2Result.perc_confirmed_bridges?.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => applyLayout("perc")}
-                        disabled={isSavingBridge || isReanalyzing}
-                        title="Применить перцептивную сетку из v2 анализа (по умолчанию)"
-                        className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isSavingBridge
-                          ? "Сохранение..."
-                          : `← Перц. (${v2Result.perc_confirmed_bridges.length})`}
-                      </button>
-                    )}
-                    {v2Result.bridges?.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => applyLayout("rms")}
-                        disabled={isSavingBridge || isReanalyzing}
-                        title="Применить RMS сетку из v2 анализа"
-                        className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isSavingBridge
-                          ? "Сохранение..."
-                          : `← RMS (${v2Result.bridges.length})`}
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Линейка битов (live) — тик только здесь, без перерисовки анализа */}
-              <LiveBeatProvider
-                isPlaying={isPlaying}
-                currentTrack={currentTrack}
+              <button
+                type="button"
+                onClick={handleCancelEditMeta}
+                disabled={metaSaving}
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded disabled:opacity-50"
               >
-                <LiveBeatBlock
-                  currentTrack={currentTrack}
-                  isReanalyzing={isReanalyzing}
-                />
-              </LiveBeatProvider>
-
-              {/* Список бриджей */}
-              {bridges.length > 0 && (
-                <div className="space-y-1 mt-1">
-                  {bridges.map((b, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      <span className="text-yellow-400 font-mono text-xs">
-                        {formatTime(b)}
-                      </span>
-                      <span className="text-gray-500 text-xs">
-                        ({b.toFixed(2)}s)
-                      </span>
-                      <button
-                        onClick={() => handleRemoveBridge(b)}
-                        disabled={isSavingBridge}
-                        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
-                        title="Удалить бридж"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Параметры */}
-          <div className="space-y-2">
-            {/* BPM и Offset в одну строку */}
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-400">BPM:</span>
-                {editingBpm ? (
-                  <>
-                    <input
-                      type="number"
-                      value={tempBpm}
-                      onChange={(e) => setTempBpm(e.target.value)}
-                      onBlur={() => {
-                        const bpm = parseInt(tempBpm);
-                        if (!isNaN(bpm) && bpm > 0) {
-                          handleBpmChange(bpm);
-                        }
-                        setEditingBpm(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const bpm = parseInt(tempBpm);
-                          if (!isNaN(bpm) && bpm > 0) {
-                            handleBpmChange(bpm);
-                          }
-                          setEditingBpm(false);
-                        } else if (e.key === "Escape") {
-                          setTempBpm(currentTrack.bpm.toString());
-                          setEditingBpm(false);
-                        }
-                      }}
-                      className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-600"
-                      autoFocus
-                    />
-                    {currentTrack.baseBpm &&
-                      currentTrack.baseBpm !== parseInt(tempBpm) && (
-                        <button
-                          onClick={resetBpm}
-                          className="text-xs text-purple-400 hover:text-purple-300"
-                          title="Сбросить к базовому значению"
-                        >
-                          ↺
-                        </button>
-                      )}
-                  </>
-                ) : (
-                  <>
-                    <span className="text-white font-medium">
-                      {currentTrack.bpm}
-                    </span>
-                    <button
-                      onClick={() => setEditingBpm(true)}
-                      className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors hidden"
-                      title="Редактировать BPM"
-                    >
-                      ✎
-                    </button>
-                    {currentTrack.baseBpm &&
-                      currentTrack.baseBpm !== currentTrack.bpm && (
-                        <button
-                          onClick={resetBpm}
-                          className="text-xs text-purple-400 hover:text-purple-300 ml-1"
-                          title="Сбросить к базовому значению"
-                        >
-                          ↺
-                        </button>
-                      )}
-                  </>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-400">
-                  Offset:
-                </span>
-                {editingOffset ? (
-                  <>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={tempOffset}
-                      onChange={(e) => setTempOffset(e.target.value)}
-                      onBlur={() => {
-                        const offset = parseFloat(tempOffset);
-                        if (!isNaN(offset) && offset >= 0) {
-                          handleOffsetChange(offset);
-                        }
-                        setEditingOffset(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const offset = parseFloat(tempOffset);
-                          if (!isNaN(offset) && offset >= 0) {
-                            handleOffsetChange(offset);
-                          }
-                          setEditingOffset(false);
-                        } else if (e.key === "Escape") {
-                          setTempOffset(currentTrack.offset.toString());
-                          setEditingOffset(false);
-                        }
-                      }}
-                      className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-600"
-                      autoFocus
-                    />
-                    {currentTrack.baseOffset !== null &&
-                      currentTrack.baseOffset !== undefined &&
-                      currentTrack.baseOffset !== parseFloat(tempOffset) && (
-                        <button
-                          onClick={resetOffset}
-                          className="text-xs text-purple-400 hover:text-purple-300"
-                          title="Сбросить к базовому значению"
-                        >
-                          ↺
-                        </button>
-                      )}
-                  </>
-                ) : (
-                  <>
-                    <span className="text-white font-medium">
-                      {currentTrack.offset.toFixed(2)}s
-                    </span>
-                    <button
-                      onClick={() => setEditingOffset(true)}
-                      className="text-xs text-purple-400 hover:text-purple-300 ml-2 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors hidden"
-                      title="Редактировать Offset"
-                    >
-                      ✎
-                    </button>
-                    {currentTrack.baseOffset !== null &&
-                      currentTrack.baseOffset !== undefined &&
-                      currentTrack.baseOffset !== currentTrack.offset && (
-                        <button
-                          onClick={resetOffset}
-                          className="text-xs text-purple-400 hover:text-purple-300 ml-1"
-                          title="Сбросить к базовому значению"
-                        >
-                          ↺
-                        </button>
-                      )}
-                  </>
-                )}
-              </div>
+                Отмена
+              </button>
             </div>
           </div>
-        </>
+        )}
+        </div>
+      )}
+
+      {/* Админ: анализ, счёт, бриджи — отдельный компонент */}
+      {isAdminUser && (
+        <TrackInfoAdminPanel
+          currentTrack={currentTrack}
+          isPlaying={isPlaying}
+          isReanalyzing={isReanalyzing}
+          onTracksRefetch={refetchTracks}
+        />
       )}
     </div>
   );

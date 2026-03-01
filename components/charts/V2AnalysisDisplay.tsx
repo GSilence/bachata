@@ -163,6 +163,8 @@ interface Props {
   data: V2ResultWithBeats;
   trackId?: number;
   trackTitle?: string;
+  /** true если админ вручную свапнул ряды — в Raw Analysis помечаем новый РАЗ оранжевым */
+  trackRowSwapped?: boolean;
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -227,41 +229,10 @@ export default function V2AnalysisDisplay({
   data,
   trackId,
   trackTitle,
+  trackRowSwapped = false,
 }: Props) {
   return (
     <div className="space-y-4 text-sm">
-      {/* Header badges */}
-      <div className="flex flex-wrap gap-2">
-        <span
-          className={`px-2 py-1 rounded text-xs font-bold ${
-            data.track_type === "popsa" ? "bg-purple-700" : "bg-green-700"
-          }`}
-        >
-          {data.track_type === "popsa" ? "ПОПСА (4 пика)" : "БАЧАТА (2 пика)"}
-        </span>
-        <span className="px-2 py-1 rounded text-xs bg-gray-700">
-          BPM: {data.bpm}
-        </span>
-        {data.row_swapped && (
-          <span className="px-2 py-1 rounded text-xs bg-orange-700">
-            Ряды свопнуты
-          </span>
-        )}
-        {(() => {
-          const n = data.perc_confirmed_bridges?.length ?? data.bridges.length;
-          return (
-            <span
-              className={`px-2 py-1 rounded text-xs ${
-                n > 0 ? "bg-yellow-700" : "bg-green-800"
-              }`}
-            >
-              Мостиков: {n}
-            </span>
-          );
-        })()}
-      </div>
-
-
       {/* Raw Analysis (8 рядов, Beats / Sum / Avg / Max + Perc sum/avg) */}
       {data.track_type === "bachata" &&
         data.row_analysis &&
@@ -298,12 +269,6 @@ export default function V2AnalysisDisplay({
                     })}
                   </div>
                 )}
-              {data.row_analysis_verdict && (
-                <p className="text-xs text-green-400">
-                  Offset: {data.row_analysis_verdict.start_time}s (beat #
-                  {data.row_analysis_verdict.start_beat_id})
-                </p>
-              )}
               <table className="text-xs w-full border-collapse">
                 <thead>
                   <tr className="text-gray-500 border-b border-gray-700">
@@ -318,61 +283,83 @@ export default function V2AnalysisDisplay({
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(data.row_analysis)
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([key, row]) => {
-                      const rowNum = parseInt(key.replace("row_", ""), 10);
-                      const winningRows =
-                        data.row_analysis_verdict?.winning_rows ??
-                        (data.row_analysis_verdict?.winning_row != null
-                          ? [data.row_analysis_verdict.winning_row]
-                          : []);
-                      const isWinner = winningRows.includes(rowNum);
-                      const isRowOne =
-                        data.row_analysis_verdict?.row_one != null &&
-                        rowNum === data.row_analysis_verdict.row_one;
-                      const beatsInRow =
-                        data.per_beat_data?.filter(
-                          (b) => (b.id - 1) % 8 === rowNum - 1,
-                        ) ?? [];
-                      const percSum = beatsInRow.reduce(
-                        (s, b) => s + (b.perceptual_energy ?? 0),
-                        0,
-                      );
-                      const percAvg =
-                        beatsInRow.length > 0 ? percSum / beatsInRow.length : 0;
-                      return (
-                        <tr
-                          key={key}
-                          className={`border-b border-gray-800 ${
-                            isWinner
-                              ? "bg-green-900/20 text-green-300"
-                              : "text-gray-300"
-                          }`}
-                        >
-                          <td className="py-1 px-2 font-mono">{rowNum}</td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {row.count}
-                          </td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {row.madmom_sum?.toFixed(3)}
-                          </td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {row.madmom_avg?.toFixed(3)}
-                          </td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {row.madmom_max?.toFixed(3)}
-                          </td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {percSum.toFixed(2)}
-                          </td>
-                          <td className="py-1 px-2 text-right font-mono">
-                            {percAvg.toFixed(2)}
-                          </td>
-                          <td className="py-1 px-2">{isRowOne ? "<<" : ""}</td>
-                        </tr>
-                      );
-                    })}
+                  {(() => {
+                    const rowOne = data.row_analysis_verdict?.row_one;
+                    // При ручном свайпе новый РАЗ = противоположная половина восьмёрки: 1↔5, 2↔6, 3↔7, 4↔8
+                    const displayedRazAfterSwap =
+                      trackRowSwapped && rowOne != null && rowOne >= 1 && rowOne <= 8
+                        ? (rowOne <= 4 ? rowOne + 4 : rowOne - 4)
+                        : null;
+                    return Object.entries(data.row_analysis)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([key, row]) => {
+                        const rowNum = parseInt(key.replace("row_", ""), 10);
+                        const winningRows =
+                          data.row_analysis_verdict?.winning_rows ??
+                          (data.row_analysis_verdict?.winning_row != null
+                            ? [data.row_analysis_verdict.winning_row]
+                            : []);
+                        const isWinner = winningRows.includes(rowNum);
+                        const isRowOne =
+                          rowOne != null && rowNum === rowOne;
+                        const isDisplayedRazAfterSwap =
+                          displayedRazAfterSwap != null &&
+                          rowNum === displayedRazAfterSwap;
+                        const beatsInRow =
+                          data.per_beat_data?.filter(
+                            (b) => (b.id - 1) % 8 === rowNum - 1,
+                          ) ?? [];
+                        const percSum = beatsInRow.reduce(
+                          (s, b) => s + (b.perceptual_energy ?? 0),
+                          0,
+                        );
+                        const percAvg =
+                          beatsInRow.length > 0 ? percSum / beatsInRow.length : 0;
+                        return (
+                          <tr
+                            key={key}
+                            className={`border-b border-gray-800 ${
+                              isDisplayedRazAfterSwap
+                                ? "bg-orange-900/20 text-orange-300"
+                                : isWinner
+                                  ? "bg-green-900/20 text-green-300"
+                                  : "text-gray-300"
+                            }`}
+                          >
+                            <td className="py-1 px-2 font-mono">{rowNum}</td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {row.count}
+                            </td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {row.madmom_sum?.toFixed(3)}
+                            </td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {row.madmom_avg?.toFixed(3)}
+                            </td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {row.madmom_max?.toFixed(3)}
+                            </td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {percSum.toFixed(2)}
+                            </td>
+                            <td className="py-1 px-2 text-right font-mono">
+                              {percAvg.toFixed(2)}
+                            </td>
+                            <td className="py-1 px-2">
+                              {isDisplayedRazAfterSwap ? (
+                                <span className="text-orange-400 font-bold" title="Свапнутый ряд (текущий РАЗ)">
+                                  &lt;&lt;
+                                </span>
+                              ) : isRowOne ? (
+                                "<<"
+                              ) : (
+                                ""
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                  })()}
                 </tbody>
               </table>
               {data.row_analysis_verdict && (
@@ -905,22 +892,6 @@ export default function V2AnalysisDisplay({
         </details>
       )}
 
-      {/* Perceptual bridges — только для сравнения/дебага */}
-      {data.perc_confirmed_bridges && data.perc_confirmed_bridges.length > 0 && (
-        <div className="text-xs text-gray-400">
-          <span className="font-semibold text-gray-300">
-            Перцептивные мостики ({data.perc_confirmed_bridges.length}):
-          </span>{" "}
-          {data.perc_confirmed_bridges.map((b, i) => (
-            <span key={i} className="mr-2 font-mono text-purple-400">
-              {formatTime(b.time_sec)}
-              {b.diff_pct != null && (
-                <span className="text-gray-500"> ({b.diff_pct}%)</span>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

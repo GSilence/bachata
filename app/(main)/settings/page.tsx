@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SettingsPanel from "@/components/SettingsPanel";
 import { useAuthStore } from "@/store/authStore";
+import { isAdmin } from "@/lib/roles";
 
 interface TrackStats {
   total: number;
@@ -40,14 +41,14 @@ export default function SettingsPage() {
   }, [checkAuth]);
 
   useEffect(() => {
-    if (!isLoading && (!user || user.role !== "admin")) {
+    if (!isLoading && (!user || !isAdmin(user?.role))) {
       router.push("/login?redirect=/settings");
     }
   }, [user, isLoading, router]);
 
   // Загружаем статистику при монтировании (только для админа)
   useEffect(() => {
-    if (user?.role === "admin") fetchStats();
+    if (isAdmin(user?.role)) fetchStats();
   }, [user]);
 
   const fetchStats = async () => {

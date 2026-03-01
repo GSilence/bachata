@@ -8,6 +8,7 @@ import type {
   PlayMode,
   VoiceFilter,
   VoiceLanguage,
+  VoiceType,
   PlaylistFilter,
   PlaylistSortBy,
 } from "@/types";
@@ -87,16 +88,24 @@ export const usePlayerStore = create<PlayerState>()(
       playMode: restoredSettings.playMode,
       voiceFilter: restoredSettings.voiceFilter,
       voiceLanguage: restoredSettings.voiceLanguage,
+      voiceType: (restoredSettings as { voiceType?: VoiceType }).voiceType ?? "human",
       playlistFilter: "free",
       searchQuery: "",
       bridgeFilterWith: true,
       bridgeFilterWithout: true,
       bridgeFilterSwapped: true,
+      isAdmin: false,
+      statusFilterUnlistened: true,
+      statusFilterModeration: true,
+      statusFilterApproved: true,
+      accentFilterOn: false,
+      mamboFilterOn: false,
       squareSortDirection: "none",
       playlistSortBy: "title",
       sortDirection: "asc",
-      squareDominanceMin: -100,
-      squareDominanceMax: 100,
+      dominanceBucketNeg: true,
+      dominanceBucketLow: true,
+      dominanceBucketHigh: true,
       playUntilSeconds: null,
       isReanalyzing: false,
       savedTrackId: null,
@@ -226,19 +235,30 @@ export const usePlayerStore = create<PlayerState>()(
         audioEngine.setVoiceLanguage(language);
         saveUserSettings({ voiceLanguage: language });
       },
+      setVoiceType: (type) => {
+        set({ voiceType: type });
+        saveUserSettings({ voiceType: type });
+        audioEngine.setVoiceType(type);
+      },
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),
       setBridgeFilterWith: (value) => set({ bridgeFilterWith: value }),
       setBridgeFilterWithout: (value) => set({ bridgeFilterWithout: value }),
       setBridgeFilterSwapped: (value) => set({ bridgeFilterSwapped: value }),
+      setAdmin: (value) => set({ isAdmin: value }),
+      setStatusFilterUnlistened: (value) => set({ statusFilterUnlistened: value }),
+      setStatusFilterModeration: (value) => set({ statusFilterModeration: value }),
+      setStatusFilterApproved: (value) => set({ statusFilterApproved: value }),
+      setAccentFilterOn: (value) => set({ accentFilterOn: value }),
+      setMamboFilterOn: (value) => set({ mamboFilterOn: value }),
       setSquareSortDirection: (dir) => set({ squareSortDirection: dir }),
       setPlaylistSortBy: (by) => set({ playlistSortBy: by }),
       setSortDirection: (dir) => set({ sortDirection: dir }),
-      setSquareDominanceRange: (min, max) =>
-        set({
-          squareDominanceMin: Math.max(-100, Math.min(100, min)),
-          squareDominanceMax: Math.max(-100, Math.min(100, max)),
-        }),
+      setDominanceBucket: (bucket, value) => {
+        if (bucket === "neg") set({ dominanceBucketNeg: value });
+        else if (bucket === "low") set({ dominanceBucketLow: value });
+        else set({ dominanceBucketHigh: value });
+      },
       setPlayUntilSeconds: (seconds) => set({ playUntilSeconds: seconds }),
       setAudioEngine: (engine) => set({ audioEngine: engine }),
 
@@ -288,8 +308,15 @@ export const usePlayerStore = create<PlayerState>()(
             bridgeFilterWith,
             bridgeFilterWithout,
             bridgeFilterSwapped,
-            squareDominanceMin,
-            squareDominanceMax,
+            isAdmin,
+            statusFilterUnlistened,
+            statusFilterModeration,
+            statusFilterApproved,
+            accentFilterOn,
+            mamboFilterOn,
+            dominanceBucketNeg,
+            dominanceBucketLow,
+            dominanceBucketHigh,
             isPlaying,
           } = get();
           if (!currentTrack || tracks.length === 0) {
@@ -312,23 +339,45 @@ export const usePlayerStore = create<PlayerState>()(
             }
             // TODO: 'my' и 'all' фильтры для будущей реализации
 
+            // Базовый фильтр для админа: по статусу (хотя бы один выбран, трек должен попадать в выбранные)
+            if (isAdmin) {
+              const s = track.trackStatus ?? "unlistened";
+              const match =
+                (s === "unlistened" && statusFilterUnlistened) ||
+                (s === "moderation" && statusFilterModeration) ||
+                (s === "approved" && statusFilterApproved);
+              if (!match) return false;
+            }
+
             // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
-            const isSwapped = !!(track.gridMap as { rowSwapped?: boolean })
-              ?.rowSwapped;
-            const hasBridges = (track.gridMap?.bridges?.length ?? 0) > 0;
+            const isSwapped = track.rowSwapped; // колонка БД
+            const hasBridges =
+              track.hasBridges ??
+              (Array.isArray(track.gridMap?.v2LayoutPerc)
+                ? (track.gridMap!.v2LayoutPerc!.length > 1)
+                : Array.isArray(track.gridMap?.bridges) && track.gridMap!.bridges!.length > 0);
             const matchesBridgeWith = hasBridges && bridgeFilterWith;
             const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
             const matchesSwapped = isSwapped && bridgeFilterSwapped;
             if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
 
-            // Квадратные: диапазон % превосходства (только несвапнутые, без мостиков)
-            if (!hasBridges && !isSwapped && track.gridMap) {
-              const pct = (track.gridMap as { rowDominancePercent?: number })
-                .rowDominancePercent;
-              if (pct != null) {
-                if (pct < squareDominanceMin) return false;
-                if (pct > squareDominanceMax) return false;
-              }
+            // AND-фильтр по меткам: если кнопка включена — только треки с этой меткой
+            if (accentFilterOn && !track.hasAccents) return false;
+            if (mamboFilterOn && !track.hasMambo) return false;
+
+            // Квадратные: фильтр по bucket'ам % доминирования (для всех треков)
+            const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
+            const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
+            if (!noneSelected && !allSelected) {
+              const pct =
+                track.rowDominancePercent ??
+                (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
+                undefined;
+              if (pct == null) return false;
+              const inNeg = dominanceBucketNeg && pct < 0;
+              const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
+              const inHigh = dominanceBucketHigh && pct >= 5;
+              if (!inNeg && !inLow && !inHigh) return false;
             }
 
             // Поиск по названию
@@ -380,13 +429,15 @@ export const usePlayerStore = create<PlayerState>()(
             squareSortDirection === "none"
               ? baseSorted
               : (() => {
-                  const hasBridges = (t: Track) =>
-                    (t.gridMap?.bridges?.length ?? 0) > 0;
+                  const tHasBridges = (t: Track) =>
+                    t.hasBridges ??
+                    (Array.isArray(t.gridMap?.v2LayoutPerc)
+                      ? t.gridMap!.v2LayoutPerc!.length > 1
+                      : Array.isArray(t.gridMap?.bridges) && (t.gridMap!.bridges!.length > 0));
                   const getDominance = (t: Track) =>
-                    (t.gridMap as { rowDominancePercent?: number })
-                      ?.rowDominancePercent ?? -Infinity;
-                  const squareTracks = baseSorted.filter((t) => !hasBridges(t));
-                  const bridgeTracks = baseSorted.filter((t) => hasBridges(t));
+                    t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
+                  const squareTracks = baseSorted.filter((t) => !tHasBridges(t));
+                  const bridgeTracks = baseSorted.filter((t) => tHasBridges(t));
                   const sortedSquare =
                     squareSortDirection === "desc"
                       ? [...squareTracks].sort((a, b) => {
@@ -404,13 +455,6 @@ export const usePlayerStore = create<PlayerState>()(
 
           const currentIndex = sortedForPlay.findIndex(
             (t) => t.id === currentTrack.id,
-          );
-          console.log(
-            `playNext: currentTrack=${currentTrack.title} (id=${currentTrack.id}), currentIndex=${currentIndex}, playMode=${playMode}, filteredCount=${sortedForPlay.length}, wasPlaying=${isPlaying}`,
-          );
-          console.log(
-            `Filtered tracks:`,
-            sortedForPlay.map((t) => `${t.title} (id=${t.id})`),
           );
 
           let nextTrack: Track | null = null;
@@ -494,8 +538,15 @@ export const usePlayerStore = create<PlayerState>()(
             bridgeFilterWith,
             bridgeFilterWithout,
             bridgeFilterSwapped,
-            squareDominanceMin,
-            squareDominanceMax,
+            isAdmin,
+            statusFilterUnlistened,
+            statusFilterModeration,
+            statusFilterApproved,
+            accentFilterOn,
+            mamboFilterOn,
+            dominanceBucketNeg,
+            dominanceBucketLow,
+            dominanceBucketHigh,
           } = get();
           if (!currentTrack || tracks.length === 0) {
             releaseLock();
@@ -507,20 +558,38 @@ export const usePlayerStore = create<PlayerState>()(
 
           const filteredTracks = tracks.filter((track) => {
             if (playlistFilter === "free" && !track.isFree) return false;
-            const isSwapped = !!(track.gridMap as { rowSwapped?: boolean })
-              ?.rowSwapped;
-            const hasBridges = (track.gridMap?.bridges?.length ?? 0) > 0;
+            if (isAdmin) {
+              const s = track.trackStatus ?? "unlistened";
+              const match =
+                (s === "unlistened" && statusFilterUnlistened) ||
+                (s === "moderation" && statusFilterModeration) ||
+                (s === "approved" && statusFilterApproved);
+              if (!match) return false;
+            }
+            const isSwapped = track.rowSwapped; // колонка БД
+            const hasBridges =
+              track.hasBridges ??
+              (Array.isArray(track.gridMap?.v2LayoutPerc)
+                ? (track.gridMap!.v2LayoutPerc!.length > 1)
+                : Array.isArray(track.gridMap?.bridges) && track.gridMap!.bridges!.length > 0);
             const matchesBridgeWith = hasBridges && bridgeFilterWith;
             const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
             const matchesSwapped = isSwapped && bridgeFilterSwapped;
             if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
-            if (!hasBridges && !isSwapped && track.gridMap) {
-              const pct = (track.gridMap as { rowDominancePercent?: number })
-                .rowDominancePercent;
-              if (pct != null) {
-                if (pct < squareDominanceMin) return false;
-                if (pct > squareDominanceMax) return false;
-              }
+            if (accentFilterOn && !track.hasAccents) return false;
+            if (mamboFilterOn && !track.hasMambo) return false;
+            const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
+            const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
+            if (!noneSelected && !allSelected) {
+              const pct =
+                track.rowDominancePercent ??
+                (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
+                undefined;
+              if (pct == null) return false;
+              const inNeg = dominanceBucketNeg && pct < 0;
+              const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
+              const inHigh = dominanceBucketHigh && pct >= 5;
+              if (!inNeg && !inLow && !inHigh) return false;
             }
             if (searchQuery) {
               const q = searchQuery.toLowerCase();
@@ -565,13 +634,15 @@ export const usePlayerStore = create<PlayerState>()(
             squareSortDirection === "none"
               ? baseSorted
               : (() => {
-                  const hasBridges = (t: Track) =>
-                    (t.gridMap?.bridges?.length ?? 0) > 0;
+                  const tHasBridges = (t: Track) =>
+                    t.hasBridges ??
+                    (Array.isArray(t.gridMap?.v2LayoutPerc)
+                      ? t.gridMap!.v2LayoutPerc!.length > 1
+                      : Array.isArray(t.gridMap?.bridges) && (t.gridMap!.bridges!.length > 0));
                   const getDominance = (t: Track) =>
-                    (t.gridMap as { rowDominancePercent?: number })
-                      ?.rowDominancePercent ?? -Infinity;
-                  const squareTracks = baseSorted.filter((t) => !hasBridges(t));
-                  const bridgeTracks = baseSorted.filter((t) => hasBridges(t));
+                    t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
+                  const squareTracks = baseSorted.filter((t) => !tHasBridges(t));
+                  const bridgeTracks = baseSorted.filter((t) => tHasBridges(t));
                   const sortedSquare =
                     squareSortDirection === "desc"
                       ? [...squareTracks].sort((a, b) => {
@@ -624,6 +695,7 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: "player-storage",
+      version: 3,
       partialize: (state) => ({
         savedTrackId: state.savedTrackId,
         playlistFilter: state.playlistFilter,
@@ -631,21 +703,30 @@ export const usePlayerStore = create<PlayerState>()(
         bridgeFilterWith: state.bridgeFilterWith,
         bridgeFilterWithout: state.bridgeFilterWithout,
         bridgeFilterSwapped: state.bridgeFilterSwapped,
+        statusFilterUnlistened: state.statusFilterUnlistened,
+        statusFilterModeration: state.statusFilterModeration,
+        statusFilterApproved: state.statusFilterApproved,
+        accentFilterOn: state.accentFilterOn,
+        mamboFilterOn: state.mamboFilterOn,
         squareSortDirection: state.squareSortDirection,
         playlistSortBy: state.playlistSortBy,
         sortDirection: state.sortDirection,
-        squareDominanceMin: state.squareDominanceMin,
-        squareDominanceMax: state.squareDominanceMax,
+        dominanceBucketNeg: state.dominanceBucketNeg,
+        dominanceBucketLow: state.dominanceBucketLow,
+        dominanceBucketHigh: state.dominanceBucketHigh,
         playUntilSeconds: state.playUntilSeconds,
       }),
       storage: trackStorage,
       merge: (persistedState: any, currentState: any) => {
         // Формат в localStorage: { state: { ... }, version } или сразу { ... }
         const stored = persistedState?.state ?? persistedState ?? {};
+        const storedVersion = persistedState?.version ?? stored?.version ?? 0;
         const get = <T>(key: string, defaultVal: T): T =>
           Object.prototype.hasOwnProperty.call(stored, key)
             ? (stored[key] as T)
             : defaultVal;
+        // Сброс бакетов фильтра % при обновлении версии (избегаем старого инвертированного состояния)
+        const useDefaultBuckets = storedVersion < 2;
         return {
           ...currentState,
           savedTrackId: stored.savedTrackId ?? null,
@@ -663,6 +744,11 @@ export const usePlayerStore = create<PlayerState>()(
             "bridgeFilterSwapped",
             currentState.bridgeFilterSwapped,
           ),
+          statusFilterUnlistened: get("statusFilterUnlistened", currentState.statusFilterUnlistened),
+          statusFilterModeration: get("statusFilterModeration", currentState.statusFilterModeration),
+          statusFilterApproved: get("statusFilterApproved", currentState.statusFilterApproved),
+          accentFilterOn: get("accentFilterOn", currentState.accentFilterOn),
+          mamboFilterOn: get("mamboFilterOn", currentState.mamboFilterOn),
           squareSortDirection: get(
             "squareSortDirection",
             currentState.squareSortDirection,
@@ -672,19 +758,9 @@ export const usePlayerStore = create<PlayerState>()(
           ...(stored.playlistSortBy === "artist"
             ? { playlistSortBy: "title" as const }
             : {}),
-          squareDominanceMin: get(
-            "squareDominanceMin",
-            currentState.squareDominanceMin,
-          ),
-          squareDominanceMax: get(
-            "squareDominanceMax",
-            currentState.squareDominanceMax,
-          ),
-          // Миграция: раньше по умолчанию было 0–100%, треки с отриц. % пропадали; теперь -100–100%
-          ...(stored.squareDominanceMin === 0 &&
-          stored.squareDominanceMax === 100
-            ? { squareDominanceMin: -100, squareDominanceMax: 100 }
-            : {}),
+          dominanceBucketNeg: useDefaultBuckets ? currentState.dominanceBucketNeg : get("dominanceBucketNeg", currentState.dominanceBucketNeg),
+          dominanceBucketLow: useDefaultBuckets ? currentState.dominanceBucketLow : get("dominanceBucketLow", currentState.dominanceBucketLow),
+          dominanceBucketHigh: useDefaultBuckets ? currentState.dominanceBucketHigh : get("dominanceBucketHigh", currentState.dominanceBucketHigh),
           playUntilSeconds: get(
             "playUntilSeconds",
             currentState.playUntilSeconds,

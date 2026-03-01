@@ -11,12 +11,17 @@ export const maxDuration = 300;
 
 /**
  * GET /api/tracks/[id]/analyze-v2
- * Returns saved v2 analysis results if available.
+ * Returns saved v2 analysis results if available. Only for admin (reads reports, may update DB).
  */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const { id } = await params;
     const trackId = parseInt(id, 10);
@@ -66,37 +71,37 @@ export async function GET(
         track.artist != null && { track_artist: track.artist }),
     };
 
-    // Вычисляем % превосходства из Row Analysis
+    // Вычисляем % как в UI: только два ряда — row_one (РАЗ) и второй winning row (ПЯТЬ)
     let rowDominancePercent: number | undefined;
     const rowAnalysis = data.row_analysis as
       | Record<string, { madmom_sum?: number }>
       | undefined;
-    if (rowAnalysis && typeof rowAnalysis === "object") {
-      const r1 =
-        (rowAnalysis["row_1"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_2"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_3"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_4"]?.madmom_sum ?? 0);
-      const r5 =
-        (rowAnalysis["row_5"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_6"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_7"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_8"]?.madmom_sum ?? 0);
-      if (r5 > 0) {
-        rowDominancePercent = Math.round(((r1 - r5) / r5) * 100 * 100) / 100;
+    const verdict = data.row_analysis_verdict as
+      | { row_one?: number; winning_rows?: number[]; winning_row?: number }
+      | undefined;
+    if (rowAnalysis && verdict) {
+      const rowOne = verdict.row_one;
+      const winningRows =
+        verdict.winning_rows ??
+        (verdict.winning_row != null ? [verdict.winning_row] : []);
+      if (rowOne != null && winningRows.length >= 2) {
+        const r1 = rowAnalysis[`row_${rowOne}`]?.madmom_sum ?? 0;
+        const other = winningRows.find((r) => r !== rowOne) ?? winningRows[1];
+        const r2 = rowAnalysis[`row_${other}`]?.madmom_sum ?? 0;
+        if (r2 !== 0) {
+          rowDominancePercent =
+            Math.round(((r1 - r2) / Math.abs(r2)) * 100 * 100) / 100;
+        }
       }
+    }
+    if (rowDominancePercent == null && typeof data.madmom_diff_pct === "number") {
+      rowDominancePercent = data.madmom_diff_pct;
     }
 
     if (rowDominancePercent != null && prisma) {
-      const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
       await prisma.track.update({
         where: { id: trackId },
-        data: {
-          gridMap: {
-            ...existingGridMap,
-            rowDominancePercent,
-          } as object,
-        },
+        data: { rowDominancePercent },
       });
     }
 
@@ -171,7 +176,9 @@ export async function POST(
       );
     }
 
-    console.log(`[V2 Analysis] Running: "${pythonPath}" "${scriptPath}" "${filePath}"`);
+    console.log(
+      `[V2 Analysis] Running: "${pythonPath}" "${scriptPath}" "${filePath}"`,
+    );
 
     const encoder = new TextEncoder();
     const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
@@ -250,14 +257,6 @@ export async function POST(
               )
                 .slice(1)
                 .map((s: { time_start?: number }) => s.time_start ?? 0);
-              const squareAnalysis = result.square_analysis as
-                | { verdict?: string; row_dominance_pct?: number }
-                | undefined;
-              const rowDominancePercent =
-                typeof squareAnalysis?.row_dominance_pct === "number"
-                  ? squareAnalysis.row_dominance_pct
-                  : undefined;
-
               const mergedGridMap = {
                 ...existingGridMap,
                 bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
@@ -272,8 +271,40 @@ export async function POST(
                 // Анализ прошёл успешно → всегда перезаписываем мостики результатом анализа
                 // [] = нет мостиков — это тоже валидный результат (skip_bridges=True)
                 bridges: v2BridgesTimes,
-                ...(rowDominancePercent != null && { rowDominancePercent }),
-                rowSwapped: result.row_swapped ?? false,
+              };
+
+              // rowDominancePercent — та же формула, что в UI: два ряда (row_one и второй winning row)
+              let finalRowDominancePct: number | null = null;
+              if (typeof result.madmom_diff_pct === "number") {
+                finalRowDominancePct = result.madmom_diff_pct;
+              } else {
+                const rowAnalysisData = result.row_analysis as
+                  | Record<string, { madmom_sum?: number }>
+                  | undefined;
+                const verdictData = result.row_analysis_verdict as
+                  | { row_one?: number; winning_rows?: number[]; winning_row?: number }
+                  | undefined;
+                if (rowAnalysisData && verdictData) {
+                  const rowOne = verdictData.row_one;
+                  const winningRows =
+                    verdictData.winning_rows ??
+                    (verdictData.winning_row != null ? [verdictData.winning_row] : []);
+                  if (rowOne != null && winningRows.length >= 2) {
+                    const r1 = rowAnalysisData[`row_${rowOne}`]?.madmom_sum ?? 0;
+                    const other = winningRows.find((r) => r !== rowOne) ?? winningRows[1];
+                    const r2 = rowAnalysisData[`row_${other}`]?.madmom_sum ?? 0;
+                    if (r2 !== 0) {
+                      finalRowDominancePct =
+                        Math.round(((r1 - r2) / Math.abs(r2)) * 100 * 100) / 100;
+                    }
+                  }
+                }
+              }
+              const finalRowSwapped = result.row_swapped === true;
+              // В ответе клиенту — тот же ключ, что в GET, чтобы админка обновила track.rowDominancePercent
+              const payload: Record<string, unknown> = {
+                ...toSave,
+                ...(finalRowDominancePct != null && { rowDominancePercent: finalRowDominancePct }),
               };
 
               if (prisma) {
@@ -282,6 +313,12 @@ export async function POST(
                   data: {
                     gridMap: mergedGridMap as object,
                     analyzerType: "v2",
+                    hasBridges: v2BridgesTimes.length > 0,
+                    // Пишем в отдельные колонки БД для надёжной фильтрации
+                    rowSwapped: finalRowSwapped,
+                    ...(finalRowDominancePct != null && {
+                      rowDominancePercent: finalRowDominancePct,
+                    }),
                     ...(result.song_start_time != null && {
                       offset: result.song_start_time,
                       baseOffset: result.song_start_time,
@@ -293,7 +330,7 @@ export async function POST(
                 `[V2 Analysis] gridMap updated (perc=${v2LayoutPerc.length}, rms=${v2LayoutRms.length})`,
               );
 
-              send({ type: "result", data: toSave });
+              send({ type: "result", data: payload });
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
               console.error("[V2 Analysis] Error:", msg);

@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
       where: { id: trackId },
       data: {
         gridMap: updatedGridMap as object,
+        hasBridges: bridges.length > 0,
       },
     });
 

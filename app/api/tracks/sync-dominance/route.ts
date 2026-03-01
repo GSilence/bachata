@@ -2,25 +2,32 @@ import { NextResponse } from "next/server";
 import { join } from "path";
 import { existsSync, readFileSync } from "fs";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
+import type { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/tracks/sync-dominance
- * One-time migration: populates rowDominancePercent and rowSwapped for all
- * tracks that are missing these fields but have a v2 analysis JSON.
- * Safe to call multiple times — skips tracks that already have both values.
+ * Одноразовая миграция: читает row_analysis из v2 JSON-файлов и
+ * заполняет колонки rowDominancePercent и rowSwapped в БД.
+ * Только для админа (меняет данные в БД).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   if (!prisma) return NextResponse.json({ updated: 0 });
 
-  const tracks = await prisma.track.findMany();
+  // Берём только треки без данных в новых колонках
+  const tracks = await prisma.track.findMany({
+    where: { rowDominancePercent: null },
+  });
   let updated = 0;
 
   for (const track of tracks) {
-    const gm = track.gridMap as Record<string, unknown> | null;
-    if (gm?.rowDominancePercent != null && gm?.rowSwapped != null) continue; // already populated
-
     const pathOriginal = track.pathOriginal;
     if (!pathOriginal) continue;
 
@@ -42,40 +49,45 @@ export async function GET() {
       const rowAnalysis = data.row_analysis as
         | Record<string, { madmom_sum?: number }>
         | undefined;
+      const verdict = data.row_analysis_verdict as
+        | { row_one?: number; winning_rows?: number[]; winning_row?: number }
+        | undefined;
 
       if (!rowAnalysis || typeof rowAnalysis !== "object") continue;
 
-      const r1 =
-        (rowAnalysis["row_1"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_2"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_3"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_4"]?.madmom_sum ?? 0);
-      const r5 =
-        (rowAnalysis["row_5"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_6"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_7"]?.madmom_sum ?? 0) +
-        (rowAnalysis["row_8"]?.madmom_sum ?? 0);
-
-      const rowSwapped = data.row_swapped === true;
-      const existingGridMap =
-        (track.gridMap as Record<string, unknown>) || {};
-
-      const patch: Record<string, unknown> = { rowSwapped };
-
-      if (r5 !== 0 && gm?.rowDominancePercent == null) {
-        patch.rowDominancePercent =
-          Math.round(((r1 - r5) / r5) * 100 * 100) / 100;
+      // Та же формула, что в UI: два ряда — row_one (РАЗ) и второй winning row (ПЯТЬ)
+      let rowDominancePercent: number | undefined;
+      if (verdict) {
+        const rowOne = verdict.row_one;
+        const winningRows =
+          verdict.winning_rows ??
+          (verdict.winning_row != null ? [verdict.winning_row] : []);
+        if (rowOne != null && winningRows.length >= 2) {
+          const r1 = rowAnalysis[`row_${rowOne}`]?.madmom_sum ?? 0;
+          const other = winningRows.find((r) => r !== rowOne) ?? winningRows[1];
+          const r2 = rowAnalysis[`row_${other}`]?.madmom_sum ?? 0;
+          if (r2 !== 0) {
+            rowDominancePercent =
+              Math.round(((r1 - r2) / Math.abs(r2)) * 100 * 100) / 100;
+          }
+        }
+      }
+      if (rowDominancePercent == null && typeof data.madmom_diff_pct === "number") {
+        rowDominancePercent = data.madmom_diff_pct;
       }
 
+      if (rowDominancePercent == null) continue;
+
+      const rowSwapped = data.row_swapped === true;
+
+      // Пишем в отдельные колонки БД (не в gridMap JSON)
       await prisma.track.update({
         where: { id: track.id },
-        data: {
-          gridMap: { ...existingGridMap, ...patch } as object,
-        },
+        data: { rowDominancePercent, rowSwapped },
       });
       updated++;
     } catch {
-      // skip this track on error
+      // пропускаем трек при ошибке
     }
   }
 

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
+import { isAdmin } from "@/lib/roles";
 
 interface NavItem {
   name: string;
@@ -97,7 +98,7 @@ export default function Sidebar() {
     checkAuth();
   }, [checkAuth]);
 
-  const isAdmin = user?.role === "admin";
+  const isAdminUser = isAdmin(user?.role);
 
   const handleLogout = async () => {
     await logout();
@@ -205,7 +206,7 @@ export default function Sidebar() {
           </ul>
 
           {/* Admin section */}
-          {isAdmin && (
+          {isAdminUser && (
             <div className="mt-6 pt-4 border-t border-gray-800">
               <p className="px-4 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                 Админ

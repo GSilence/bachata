@@ -1,6 +1,8 @@
 export type PlayMode = "sequential" | "random" | "loop";
 export type VoiceFilter = "mute" | "on1" | "on1times3" | "on1and5" | "full";
 export type VoiceLanguage = "en" | "pt";
+export type VoiceType = "human" | "cymbal" | "clap";
+export type TrackStatus = "unlistened" | "moderation" | "approved";
 export type PlaylistFilter = "free" | "my" | "all";
 /** Основная сортировка списка треков в плейлисте */
 export type PlaylistSortBy = "title" | "duration" | "date";
@@ -38,6 +40,11 @@ export interface GridMap {
   rowDominancePercent?: number;
   /** true если ряды были свопнуты при v2-анализе (ПЯТЬ оказался сильнее) */
   rowSwapped?: boolean;
+  // Оригинальные значения до первого свапа — используются для ресета
+  originalOffset?: number;
+  v2LayoutOriginal?: V2LayoutSegment[];
+  v2LayoutRmsOriginal?: V2LayoutSegment[];
+  v2LayoutPercOriginal?: V2LayoutSegment[];
 }
 
 export interface Beat {
@@ -54,21 +61,37 @@ export interface Track {
   filename: string;
   bpm: number;
   offset: number;
-  baseBpm: number | null; // базовое значение BPM (определено автоматически или при загрузке)
-  baseOffset: number | null; // базовое значение Offset (определено автоматически или при загрузке)
+  baseBpm: number | null;
+  baseOffset: number | null;
   isFree: boolean;
   createdAt: Date;
-  // Поля для Spleeter
+  // Поля для Demucs
   pathOriginal: string | null;
   pathVocals: string | null;
   pathDrums: string | null;
   pathBass: string | null;
   pathOther: string | null;
   isProcessed: boolean;
-  gridMap: GridMap | null; // сложная структура с grid (verse/bridge секции) от madmom анализа
-  beatGrid: Beat[] | null; // Pre-calculated beat grid for rhythm counting
-  analyzerType?: "basic" | "extended" | "correlation" | "v2" | null; // какой анализатор: v2 (по умолчанию при загрузке), остальные отключены
-  genreHint?: string | null; // автоопределённый жанр: "bachata", "latin", "pop" и т.д.
+  gridMap: GridMap | null;
+  beatGrid: Beat[] | null;
+  analyzerType?: "basic" | "extended" | "correlation" | "v2" | null;
+  genreHint?: string | null;
+  // Анализ расклада — отдельные колонки БД для фильтрации/сортировки
+  rowDominancePercent: number | null;
+  rowSwapped: boolean;
+  hasBridges: boolean;
+  // Статус и метки
+  trackStatus: TrackStatus;
+  hasAccents: boolean;
+  hasMambo: boolean;
+  // Метаданные из тегов аудиофайла
+  metaTitle: string | null;
+  metaArtist: string | null;
+  metaAlbum: string | null;
+  metaYear: number | null;
+  metaGenre: string | null;
+  metaComment: string | null;
+  metaTrackNum: number | null;
 }
 
 export interface PlayerState {
@@ -104,6 +127,7 @@ export interface PlayerState {
   playMode: PlayMode;
   voiceFilter: VoiceFilter;
   voiceLanguage: VoiceLanguage;
+  voiceType: VoiceType;
 
   // Плейлист
   playlistFilter: PlaylistFilter;
@@ -114,16 +138,30 @@ export interface PlayerState {
   bridgeFilterWithout: boolean;
   /** Показывать треки со свапнутыми рядами (по умолчанию true) */
   bridgeFilterSwapped: boolean;
+  /** Только для админа: флаг для применения фильтра по статусу в store (playNext/playPrevious) */
+  isAdmin: boolean;
+  /** Админ: показывать треки «Не прослушана» (по умолчанию true) */
+  statusFilterUnlistened: boolean;
+  /** Админ: показывать треки «На модерации» (по умолчанию true) */
+  statusFilterModeration: boolean;
+  /** Админ: показывать треки «Согласована» (по умолчанию true) */
+  statusFilterApproved: boolean;
+  /** Фильтр «Акценты»: true = только треки с меткой «С акцентами» (AND к остальным фильтрам) */
+  accentFilterOn: boolean;
+  /** Фильтр «Мамбо»: true = только треки с меткой «С мамбо» (AND к остальным фильтрам) */
+  mamboFilterOn: boolean;
   /** Сортировка по % доминирования РАЗ над ПЯТЬ: none = без сортировки, asc/desc = только песни без мостиков; с мостиками внизу */
   squareSortDirection: "none" | "asc" | "desc";
   /** Основная сортировка плейлиста: по названию, длительности, дате загрузки, исполнителю */
   playlistSortBy: PlaylistSortBy;
   /** Направление основной сортировки: asc = по возрастанию, desc = по убыванию */
   sortDirection: "asc" | "desc";
-  /** Фильтр по % доминирования: от (двойной ползунок) */
-  squareDominanceMin: number;
-  /** Фильтр по % доминирования: до (двойной ползунок) */
-  squareDominanceMax: number;
+  /** Фильтр по % доминирования: показывать треки с pct < 0 */
+  dominanceBucketNeg: boolean;
+  /** Фильтр по % доминирования: показывать треки с 0 <= pct < 5 */
+  dominanceBucketLow: boolean;
+  /** Фильтр по % доминирования: показывать треки с pct >= 5 */
+  dominanceBucketHigh: boolean;
 
   /** Ограничить воспроизведение трека до указанного времени (секунды). null = без ограничения */
   playUntilSeconds: number | null;
@@ -153,15 +191,22 @@ export interface PlayerState {
   setPlayMode: (mode: PlayMode) => void;
   setVoiceFilter: (filter: VoiceFilter) => void;
   setVoiceLanguage: (language: VoiceLanguage) => void;
+  setVoiceType: (type: VoiceType) => void;
   setPlaylistFilter: (filter: PlaylistFilter) => void;
   setSearchQuery: (query: string) => void;
   setBridgeFilterWith: (value: boolean) => void;
   setBridgeFilterWithout: (value: boolean) => void;
   setBridgeFilterSwapped: (value: boolean) => void;
+  setAdmin: (value: boolean) => void;
+  setStatusFilterUnlistened: (value: boolean) => void;
+  setStatusFilterModeration: (value: boolean) => void;
+  setStatusFilterApproved: (value: boolean) => void;
+  setAccentFilterOn: (value: boolean) => void;
+  setMamboFilterOn: (value: boolean) => void;
   setSquareSortDirection: (dir: "none" | "asc" | "desc") => void;
   setPlaylistSortBy: (by: PlaylistSortBy) => void;
   setSortDirection: (dir: "asc" | "desc") => void;
-  setSquareDominanceRange: (min: number, max: number) => void;
+  setDominanceBucket: (bucket: "neg" | "low" | "high", value: boolean) => void;
   setPlayUntilSeconds: (seconds: number | null) => void;
   setAudioEngine: (engine: any | null) => void;
 

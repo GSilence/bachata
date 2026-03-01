@@ -10,15 +10,23 @@ const CONCURRENCY = 2;
 interface TrackMetadata {
   title?: string;
   artist?: string;
+  album?: string;
+  year?: string;
+  genre?: string;
+  comment?: string;
+  trackNum?: string;
 }
 
 type ItemStatus = "pending" | "processing" | "done" | "error" | "duplicate";
 type AnalyzerChoice = "v2";
 
+type LockedFields = Partial<Record<keyof TrackMetadata, boolean>>;
+
 interface QueueItem {
   id: string;
   file: File;
   metadata: TrackMetadata;
+  lockedFields: LockedFields;
   status: ItemStatus;
   error?: string;
 }
@@ -31,10 +39,25 @@ async function extractMetadataFromFile(file: File): Promise<TrackMetadata> {
         onSuccess: (tag: { tags?: Record<string, unknown> }) => {
           const extracted: TrackMetadata = {};
           const tags = tag.tags || {};
-          if (tags.title) extracted.title = String(tags.title);
+          const stripTrackPrefix = (s: string) =>
+            s.replace(/^\d+\s*-\s*/, "").trim();
+          if (tags.title) extracted.title = stripTrackPrefix(String(tags.title));
           if (tags.artist) extracted.artist = String(tags.artist);
+          if (tags.album) extracted.album = String(tags.album);
+          if (tags.year) extracted.year = String(tags.year);
+          if (tags.genre) extracted.genre = String(tags.genre);
+          if (tags.comment) {
+            const c = tags.comment;
+            extracted.comment =
+              typeof c === "object" && c !== null && "text" in c
+                ? String((c as { text: unknown }).text)
+                : String(c);
+          }
+          if (tags.track) extracted.trackNum = String(tags.track);
           if (!extracted.title) {
-            extracted.title = file.name.replace(/\.mp3$/i, "");
+            extracted.title = stripTrackPrefix(
+              file.name.replace(/\.mp3$/i, ""),
+            );
           }
           resolve(extracted);
         },
@@ -112,13 +135,21 @@ export default function LibraryPage() {
     setAllDone(false);
     try {
       const meta = await Promise.all(files.map(extractMetadataFromFile));
-      const newItems: QueueItem[] = files.map((file, i) => ({
-        id: `${file.name}-${file.size}-${i}-${Date.now()}`,
-        file,
-        metadata: meta[i] ?? { title: file.name.replace(/\.mp3$/i, "") },
-        status: "pending",
-      }));
-      setItems(newItems);
+      const newItems: QueueItem[] = files.map((file, i) => {
+        const m = meta[i] ?? { title: file.name.replace(/\.mp3$/i, "") };
+        const locked: LockedFields = {};
+        (Object.keys(m) as (keyof TrackMetadata)[]).forEach((k) => {
+          if (m[k]) locked[k] = true;
+        });
+        return {
+          id: `${file.name}-${file.size}-${i}-${Date.now()}`,
+          file,
+          metadata: m,
+          lockedFields: locked,
+          status: "pending",
+        };
+      });
+      setItems((prev) => [...prev, ...newItems]);
     } catch (err: unknown) {
       setGlobalError(
         err instanceof Error ? err.message : "Ошибка подготовки файлов",
@@ -148,6 +179,11 @@ export default function LibraryPage() {
     formData.append("file", item.file);
     formData.append("title", m.title);
     if (m.artist) formData.append("artist", m.artist);
+    if (m.album) formData.append("album", m.album);
+    if (m.year) formData.append("year", m.year);
+    if (m.genre) formData.append("genre", m.genre);
+    if (m.comment) formData.append("comment", m.comment);
+    if (m.trackNum) formData.append("track", m.trackNum);
     formData.append("autoBpm", "true");
     formData.append("autoOffset", "true");
     formData.append("analyzer", uploadAnalyzer);
@@ -314,11 +350,11 @@ export default function LibraryPage() {
             {/* Analyzer selection hidden — correlation is now the default and only active analyzer */}
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-2">
-                MP3 файлы (выберите один или несколько)
+                Аудиофайлы (макс. 25 MB, без видео)
               </label>
               <input
                 type="file"
-                accept="audio/mpeg,audio/mp3,.mp3"
+                accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,audio/ogg,audio/aac,.mp3,.m4a,.wav,.flac,.ogg,.aac"
                 multiple
                 onChange={handleFileChange}
                 disabled={isExtracting || isProcessing}
@@ -373,43 +409,39 @@ export default function LibraryPage() {
                       )}
                       <StatusBadge status={it.status} error={it.error} />
                     </div>
-                    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-                      <div>
-                        <label className="sr-only">Название</label>
-                        <input
-                          type="text"
-                          value={it.metadata.title ?? ""}
-                          onChange={(e) =>
-                            updateItem(it.id, {
-                              metadata: {
-                                ...it.metadata,
-                                title: e.target.value,
-                              },
-                            })
-                          }
-                          disabled={it.status !== "pending"}
-                          placeholder="Название *"
-                          className="w-full px-3 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-purple-600 text-white disabled:opacity-60"
-                        />
-                      </div>
-                      <div>
-                        <label className="sr-only">Исполнитель</label>
-                        <input
-                          type="text"
-                          value={it.metadata.artist ?? ""}
-                          onChange={(e) =>
-                            updateItem(it.id, {
-                              metadata: {
-                                ...it.metadata,
-                                artist: e.target.value,
-                              },
-                            })
-                          }
-                          disabled={it.status !== "pending"}
-                          placeholder="Исполнитель"
-                          className="w-full px-3 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-purple-600 text-white disabled:opacity-60"
-                        />
-                      </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          { field: "title", placeholder: "Название *" },
+                          { field: "artist", placeholder: "Исполнитель" },
+                          { field: "album", placeholder: "Альбом" },
+                          { field: "year", placeholder: "Год" },
+                        ] as { field: keyof TrackMetadata; placeholder: string }[]
+                      ).map(({ field, placeholder }) => {
+                        const isLocked =
+                          it.status !== "pending" ||
+                          !!it.lockedFields[field];
+                        return (
+                          <div key={field}>
+                            <label className="sr-only">{placeholder}</label>
+                            <input
+                              type="text"
+                              value={it.metadata[field] ?? ""}
+                              onChange={(e) =>
+                                updateItem(it.id, {
+                                  metadata: {
+                                    ...it.metadata,
+                                    [field]: e.target.value,
+                                  },
+                                })
+                              }
+                              disabled={isLocked}
+                              placeholder={placeholder}
+                              className="w-full px-3 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-purple-600 text-white disabled:opacity-60"
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   </li>
                 ))}
