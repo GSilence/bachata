@@ -257,11 +257,15 @@ export async function POST(
               )
                 .slice(1)
                 .map((s: { time_start?: number }) => s.time_start ?? 0);
+              const verdictData = result.row_analysis_verdict as
+                | { row_one?: number; winning_rows?: number[]; winning_row?: number }
+                | undefined;
               const mergedGridMap = {
                 ...existingGridMap,
                 bpm: result.bpm ?? track.bpm ?? existingGridMap.bpm,
                 offset:
                   result.song_start_time ??
+                  track.baseOffset ??
                   track.offset ??
                   existingGridMap.offset,
                 duration: result.duration ?? existingGridMap.duration,
@@ -271,6 +275,11 @@ export async function POST(
                 // Анализ прошёл успешно → всегда перезаписываем мостики результатом анализа
                 // [] = нет мостиков — это тоже валидный результат (skip_bridges=True)
                 bridges: v2BridgesTimes,
+                // Для свайпа: ряд РАЗ (1–8) и два сильных ряда — направление сдвига ±4 бита
+                ...(verdictData?.row_one != null && { row_one: verdictData.row_one }),
+                ...(Array.isArray(verdictData?.winning_rows) && verdictData.winning_rows.length >= 2 && {
+                  winning_rows: verdictData.winning_rows,
+                }),
               };
 
               // rowDominancePercent — та же формула, что в UI: два ряда (row_one и второй winning row)
@@ -280,9 +289,6 @@ export async function POST(
               } else {
                 const rowAnalysisData = result.row_analysis as
                   | Record<string, { madmom_sum?: number }>
-                  | undefined;
-                const verdictData = result.row_analysis_verdict as
-                  | { row_one?: number; winning_rows?: number[]; winning_row?: number }
                   | undefined;
                 if (rowAnalysisData && verdictData) {
                   const rowOne = verdictData.row_one;

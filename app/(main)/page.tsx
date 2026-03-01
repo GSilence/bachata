@@ -16,9 +16,11 @@ import {
 } from "@/lib/media-session";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
+import { useRouter } from "next/navigation";
 import type { Track } from "@/types";
 
 export default function PlaybackPage() {
+  const router = useRouter();
   const {
     currentTrack,
     tracks,
@@ -54,7 +56,7 @@ export default function PlaybackPage() {
     setIsClient(true);
   }, []);
 
-  // Инициализация аудио-движка (только на клиенте)
+  // Инициализация аудио-движка
   // Store-Driven: Subscribe to onTrackEnd ONCE on mount
   useEffect(() => {
     if (!isClient || typeof window === "undefined") return;
@@ -172,6 +174,11 @@ export default function PlaybackPage() {
     fetch("/api/tracks", { cache: "no-store" })
       .then((res) => {
         if (!res.ok) {
+          if (res.status === 401) {
+            const redirect = encodeURIComponent(typeof window !== "undefined" ? window.location.pathname || "/" : "/");
+            router.replace(`/login?redirect=${redirect}`);
+            return null;
+          }
           if (res.status === 500) {
             console.warn("Server returned 500, but continuing...");
             return res.json().catch(() => []);
@@ -181,7 +188,7 @@ export default function PlaybackPage() {
         return res.json();
       })
       .then((data) => {
-        if (cancelled) return;
+        if (cancelled || data == null) return;
 
         if (Array.isArray(data)) {
           setTracks(data);
@@ -297,6 +304,14 @@ export default function PlaybackPage() {
       audioEngine.setOnBeatUpdate(null);
     };
   }, [isClient]);
+
+  // При СТОП (0:00, не играет) — сбрасываем позицию счёта, чтобы при следующем Play не светилась цифра из середины
+  useEffect(() => {
+    if (currentTrack && currentTime === 0 && !isPlaying) {
+      setCurrentBeat(1);
+      setIsBridgeBeat(false);
+    }
+  }, [currentTrack, currentTime, isPlaying]);
 
   // Синхронизация voiceFilter с audioEngine
   useEffect(() => {

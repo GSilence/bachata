@@ -8,14 +8,12 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/tracks/[id]/swap-rows
  *
- * Полноценный свап рядов: РАЗ↔ПЯТЬ.
- * - offset сдвигается на 4 бита (= 240/BPM секунд) — новым РАЗ становится старый ПЯТЬ
- * - row1_start инвертируется во всех Layout-сегментах (1↔5)
- * - При первом свапе сохраняются оригинальные значения для ресета
- * - rowSwapped в БД тоглится
+ * Свап рядов РАЗ↔ПЯТЬ: источник истины — baseOffset (время первого бита ряда РАЗ).
+ * - baseOffset сдвигается на ±4 бита; offset храним в sync с baseOffset.
+ * - row1_start в первом сегменте выравниваем так, чтобы первый счёт всегда РАЗ (1).
+ * - При первом свапе сохраняем originalOffset в gridMap для ресета.
  *
- * POST /api/tracks/[id]/swap-rows?reset=1
- * Ресет к оригинальному состоянию анализатора (из сохранённых оригиналов).
+ * POST /api/tracks/[id]/swap-rows?reset=1 — ресет к состоянию после анализа.
  */
 export async function POST(
   request: NextRequest,
@@ -42,7 +40,7 @@ export async function POST(
     return NextResponse.json({ error: "Track not found" }, { status: 404 });
   }
 
-  const gm = (track.gridMap as GridMap) || {};
+  const gm = (track.gridMap as unknown as GridMap) || {};
   const hasBridges =
     (Array.isArray(gm.bridges) && gm.bridges.length > 0) ||
     (Array.isArray(gm.v2Layout) && gm.v2Layout.length > 1);
@@ -61,20 +59,34 @@ export async function POST(
     row1_start: seg.row1_start === 1 ? 5 : 1,
   });
 
+  // После свайпа первый произносимый бит ВСЕГДА РАЗ (1). Для этого первый сегмент
+  // должен начинаться в newOffset и иметь row1_start=1 (чтобы localBeatIndex=0 дал number=1).
+  const alignFirstSegmentToOffset = (
+    layout: V2LayoutSegment[] | undefined,
+    firstTimeStart: number,
+    firstRow1: 1 | 5,
+  ): V2LayoutSegment[] | undefined => {
+    if (!layout || layout.length === 0) return layout;
+    const [first, ...rest] = layout;
+    if (!first) return layout;
+    return [
+      { ...first, time_start: firstTimeStart, row1_start: firstRow1 },
+      ...rest,
+    ];
+  };
+
   if (isReset) {
-    // --- РЕСЕТ: восстанавливаем оригинальные значения ---
+    // --- РЕСЕТ: восстанавливаем baseOffset и grid из сохранённых оригиналов ---
     if (!track.rowSwapped) {
       return NextResponse.json({ error: "Трек уже в оригинальном состоянии" }, { status: 400 });
     }
 
-    const originalOffset =
-      gm.originalOffset ??         // сохранено при первом свапе
-      track.baseOffset ??           // fallback: исходный оффсет анализатора
-      track.offset;                 // последний резерв
+    const originalBase =
+      gm.originalOffset ?? track.baseOffset ?? track.offset;
 
     const newGridMap: GridMap = {
       ...gm,
-      offset: originalOffset,
+      offset: originalBase,
       v2Layout:     gm.v2LayoutOriginal    ?? gm.v2Layout?.map(flipRow),
       v2LayoutRms:  gm.v2LayoutRmsOriginal ?? gm.v2LayoutRms?.map(flipRow),
       v2LayoutPerc: gm.v2LayoutPercOriginal ?? gm.v2LayoutPerc?.map(flipRow),
@@ -84,7 +96,8 @@ export async function POST(
       where: { id: trackId },
       data: {
         gridMap: newGridMap as object,
-        offset: originalOffset,
+        baseOffset: originalBase,
+        offset: originalBase,
         rowSwapped: false,
       },
     });
@@ -93,31 +106,35 @@ export async function POST(
   }
 
   // --- СВАП (TOGGLE) ---
-  // Кнопка «Свайп» переключает между двумя половинами восьмёрки (1-4 ↔ 5-8).
-  // Направление (±4 бита) зависит от того, в какой половине выбран лидирующий ряд при анализе:
-  //   rowDominancePercent < 0 → лидирует ПЯТЬ (вторая половина 5-8) → свайп = показать первую половину → −4 бита
-  //   rowDominancePercent >= 0 или null → лидирует РАЗ (первая половина 1-4) → свайп = показать вторую половину → +4 бита
-  // Так мы не уходим на «вторую восьмёрку», когда лидирующий ряд уже во второй половине.
-  const leadingIsSecondHalf = track.rowDominancePercent != null && track.rowDominancePercent < 0;
-  const direction = leadingIsSecondHalf ? -1 : 1;
+  // Сдвиг на ±4 бита внутри двух сильных рядов: РАЗ на ряду 1–4 → +4, на ряду 5–8 → −4.
+  const currentBase = track.baseOffset ?? track.offset;
+  const rowOne = gm.row_one;
+  const winningRows = Array.isArray(gm.winning_rows) ? gm.winning_rows : [];
+  const hasRowInfo = rowOne != null && winningRows.length >= 2;
+  const currentOneRow: number | null = hasRowInfo
+    ? (track.rowSwapped
+        ? (winningRows.find((r) => r !== rowOne) ?? rowOne)
+        : rowOne)
+    : null;
+  const direction =
+    currentOneRow != null
+      ? (currentOneRow >= 1 && currentOneRow <= 4 ? 1 : -1)
+      : (track.rowDominancePercent != null && track.rowDominancePercent < 0 ? -1 : 1);
   const halfCycleSec = direction * 4 * (60 / track.bpm);
 
-  let newOffset: number;
+  let newBaseOffset: number;
   let originalsToSave: Record<string, unknown> = {};
 
   if (!track.rowSwapped) {
-    // Первый свап: идём на ±4 бита и запоминаем оригиналы
-    newOffset = track.offset + halfCycleSec;
+    newBaseOffset = currentBase + halfCycleSec;
     originalsToSave = {
-      originalOffset: track.offset,
+      originalOffset: currentBase,
       v2LayoutOriginal:     Array.isArray(gm.v2Layout)     ? [...gm.v2Layout]     : gm.v2Layout,
       v2LayoutRmsOriginal:  Array.isArray(gm.v2LayoutRms)  ? [...gm.v2LayoutRms]  : gm.v2LayoutRms,
       v2LayoutPercOriginal: Array.isArray(gm.v2LayoutPerc) ? [...gm.v2LayoutPerc] : gm.v2LayoutPerc,
     };
   } else {
-    // Повторный свап: возвращаемся к исходной позиции
-    // halfCycleSec здесь уже учитывает направление → вычитаем его (отменяем первый свап)
-    newOffset =
+    newBaseOffset =
       gm.originalOffset ??
       track.baseOffset ??
       (track.offset - halfCycleSec);
@@ -126,17 +143,30 @@ export async function POST(
   const newGridMap: GridMap = {
     ...gm,
     ...originalsToSave,
-    offset: newOffset,
-    v2Layout:     Array.isArray(gm.v2Layout)     ? gm.v2Layout.map(flipRow)     : gm.v2Layout,
-    v2LayoutRms:  Array.isArray(gm.v2LayoutRms)  ? gm.v2LayoutRms.map(flipRow)  : gm.v2LayoutRms,
-    v2LayoutPerc: Array.isArray(gm.v2LayoutPerc) ? gm.v2LayoutPerc.map(flipRow) : gm.v2LayoutPerc,
+    offset: newBaseOffset,
+    v2Layout: alignFirstSegmentToOffset(
+      Array.isArray(gm.v2Layout) ? gm.v2Layout.map(flipRow) : gm.v2Layout,
+      newBaseOffset,
+      1,
+    ) ?? gm.v2Layout,
+    v2LayoutRms: alignFirstSegmentToOffset(
+      Array.isArray(gm.v2LayoutRms) ? gm.v2LayoutRms.map(flipRow) : gm.v2LayoutRms,
+      newBaseOffset,
+      1,
+    ) ?? gm.v2LayoutRms,
+    v2LayoutPerc: alignFirstSegmentToOffset(
+      Array.isArray(gm.v2LayoutPerc) ? gm.v2LayoutPerc.map(flipRow) : gm.v2LayoutPerc,
+      newBaseOffset,
+      1,
+    ) ?? gm.v2LayoutPerc,
   };
 
   const updated = await prisma.track.update({
     where: { id: trackId },
     data: {
       gridMap: newGridMap as object,
-      offset: newOffset,
+      baseOffset: newBaseOffset,
+      offset: newBaseOffset,
       rowSwapped: !track.rowSwapped,
     },
   });

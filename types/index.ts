@@ -40,6 +40,10 @@ export interface GridMap {
   rowDominancePercent?: number;
   /** true если ряды были свопнуты при v2-анализе (ПЯТЬ оказался сильнее) */
   rowSwapped?: boolean;
+  /** Номер ряда (1–8), на который при счёте попадает РАЗ — из verdict анализа. Для свайпа: 1–4 → +4 бита, 5–8 → −4. */
+  row_one?: number;
+  /** Два сильных ряда (1–8), напр. [2, 6]. Второй = ПЯТЬ. */
+  winning_rows?: number[];
   // Оригинальные значения до первого свапа — используются для ресета
   originalOffset?: number;
   v2LayoutOriginal?: V2LayoutSegment[];

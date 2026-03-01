@@ -392,6 +392,9 @@ export async function POST(request: NextRequest) {
       const squareAnalysis = result.square_analysis as
         | { verdict?: string; row_dominance_pct?: number }
         | undefined;
+      const verdict = result.row_analysis_verdict as
+        | { row_one?: number; winning_rows?: number[]; winning_row?: number }
+        | undefined;
       const rowDominancePercent =
         typeof squareAnalysis?.row_dominance_pct === "number"
           ? squareAnalysis.row_dominance_pct
@@ -399,21 +402,25 @@ export async function POST(request: NextRequest) {
       const mergedGridMap = {
         ...existingGridMap,
         bpm: (result.bpm as number) ?? track.bpm ?? existingGridMap.bpm,
-        offset: result.song_start_time ?? track.offset ?? existingGridMap.offset,
+        offset: result.song_start_time ?? track.baseOffset ?? track.offset ?? existingGridMap.offset,
         duration: (result.duration as number) ?? existingGridMap.duration,
         v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
         v2LayoutRms,                  // RMS сетка
         v2LayoutPerc,                 // перцептивная сетка
         bridges: v2BridgesTimes,
         ...(rowDominancePercent != null && { rowDominancePercent }),
+        ...(verdict?.row_one != null && { row_one: verdict.row_one }),
+        ...(Array.isArray(verdict?.winning_rows) && verdict.winning_rows.length >= 2 && {
+          winning_rows: verdict.winning_rows,
+        }),
       };
       await prisma.track.update({
         where: { id: track.id },
         data: {
           gridMap: mergedGridMap as object,
           hasBridges: v2BridgesTimes.length > 0,
-          // Синхронизируем track.offset с новым song_start_time из v2-анализа
           ...(result.song_start_time != null && {
+            baseOffset: result.song_start_time as number,
             offset: result.song_start_time as number,
           }),
         },

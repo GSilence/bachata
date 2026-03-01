@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,22 @@ const NO_CACHE_HEADERS = {
   Expires: "0",
 } as const;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json(
+        { error: "Войдите в аккаунт, чтобы видеть музыку" },
+        { status: 401, headers: NO_CACHE_HEADERS }
+      );
+    }
+  } catch {
+    return NextResponse.json(
+      { error: "Войдите в аккаунт, чтобы видеть музыку" },
+      { status: 401, headers: NO_CACHE_HEADERS }
+    );
+  }
+
   try {
     // Динамический импорт Prisma, чтобы избежать ошибок при инициализации
     const { prisma } = await import("@/lib/prisma");

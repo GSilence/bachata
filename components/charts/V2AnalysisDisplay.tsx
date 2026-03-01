@@ -321,7 +321,7 @@ export default function V2AnalysisDisplay({
                             className={`border-b border-gray-800 ${
                               isDisplayedRazAfterSwap
                                 ? "bg-orange-900/20 text-orange-300"
-                                : isWinner
+                                : isWinner && (!trackRowSwapped || rowNum !== displayedRazAfterSwap)
                                   ? "bg-green-900/20 text-green-300"
                                   : "text-gray-300"
                             }`}
@@ -350,7 +350,7 @@ export default function V2AnalysisDisplay({
                                 <span className="text-orange-400 font-bold" title="Свапнутый ряд (текущий РАЗ)">
                                   &lt;&lt;
                                 </span>
-                              ) : isRowOne ? (
+                              ) : isRowOne && !trackRowSwapped ? (
                                 "<<"
                               ) : (
                                 ""

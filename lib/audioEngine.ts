@@ -302,16 +302,19 @@ export class AudioEngine {
     // 3. Beat Grid — из gridMap (v2 раскладка, бриджи, секции) или fallback 1–8
     const duration = track.gridMap?.duration || 180;
     const bpm = track.bpm || 120;
-    const offset = track.offset || 0;
+    const effectiveOffset = track.baseOffset ?? track.offset ?? 0;
+    const gridMapWithOffset = track.gridMap
+      ? { ...track.gridMap, offset: effectiveOffset }
+      : undefined;
     if (
-      track.gridMap &&
-      ((track.gridMap.grid && track.gridMap.grid.length > 0) ||
-        (track.gridMap.bridges && track.gridMap.bridges.length > 0) ||
-        (track.gridMap.v2Layout && track.gridMap.v2Layout.length > 0))
+      gridMapWithOffset &&
+      ((gridMapWithOffset.grid && gridMapWithOffset.grid.length > 0) ||
+        (gridMapWithOffset.bridges && gridMapWithOffset.bridges.length > 0) ||
+        (gridMapWithOffset.v2Layout && gridMapWithOffset.v2Layout.length > 0))
     ) {
-      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
+      this.beatGrid = generateBeatGridFromDownbeats(gridMapWithOffset, duration);
     } else {
-      this.beatGrid = generateFallbackBeatGrid(bpm, offset, duration);
+      this.beatGrid = generateFallbackBeatGrid(bpm, effectiveOffset, duration);
     }
 
     // 4. Загрузка аудио
@@ -366,20 +369,24 @@ export class AudioEngine {
         duration = this.stemsTracks.other.duration();
       }
       if (duration > 0) {
+        const effectiveOffset = t.baseOffset ?? t.offset ?? 0;
+        const gridMapWithOffset = t.gridMap
+          ? { ...t.gridMap, offset: effectiveOffset }
+          : undefined;
         if (
-          t.gridMap &&
-          ((t.gridMap.grid && t.gridMap.grid.length > 0) ||
-            (t.gridMap.bridges && t.gridMap.bridges.length > 0) ||
-            (t.gridMap.v2Layout && t.gridMap.v2Layout.length > 0))
+          gridMapWithOffset &&
+          ((gridMapWithOffset.grid && gridMapWithOffset.grid.length > 0) ||
+            (gridMapWithOffset.bridges && gridMapWithOffset.bridges.length > 0) ||
+            (gridMapWithOffset.v2Layout && gridMapWithOffset.v2Layout.length > 0))
         ) {
           this.beatGrid = generateBeatGridFromDownbeats(
-            { ...t.gridMap, duration },
+            { ...gridMapWithOffset, duration },
             duration,
           );
         } else {
           this.beatGrid = generateFallbackBeatGrid(
             t.bpm || 120,
-            t.offset || 0,
+            effectiveOffset,
             duration,
           );
         }
@@ -660,11 +667,14 @@ export class AudioEngine {
         (track.gridMap.bridges && track.gridMap.bridges.length > 0) ||
         (track.gridMap.v2Layout && track.gridMap.v2Layout.length > 0))
     ) {
-      this.beatGrid = generateBeatGridFromDownbeats(track.gridMap, duration);
+      this.beatGrid = generateBeatGridFromDownbeats(
+        { ...track.gridMap, offset: track.baseOffset ?? track.offset ?? 0 },
+        duration,
+      );
     } else {
       this.beatGrid = generateFallbackBeatGrid(
         track.bpm || 120,
-        track.offset || 0,
+        track.baseOffset ?? track.offset ?? 0,
         duration,
       );
     }

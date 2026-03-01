@@ -8,6 +8,7 @@ import React, {
   useRef,
 } from "react";
 import { audioEngine } from "@/lib/audioEngine";
+import { usePlayerStore } from "@/store/playerStore";
 
 export interface LiveBeatInfo {
   time: number;
@@ -64,7 +65,7 @@ export function BridgeHereButton({
 
 interface LiveBeatProviderProps {
   isPlaying: boolean;
-  currentTrack: { offset: number } | null;
+  currentTrack: { id?: string | number; offset: number; baseOffset?: number } | null;
   children: React.ReactNode;
 }
 
@@ -75,6 +76,29 @@ export function LiveBeatProvider({
 }: LiveBeatProviderProps) {
   const [liveBeatInfo, setLiveBeatInfo] = useState<LiveBeatInfo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { currentTime } = usePlayerStore();
+
+  // При СТОП (0:00, не играет) — полоска битов в блоке мостиков возвращается в начало
+  useEffect(() => {
+    if (!currentTrack || currentTime !== 0 || isPlaying) return;
+    const grid = audioEngine.getBeatGrid();
+    if (grid && grid.length > 0) {
+      const first = grid[0];
+      setLiveBeatInfo({
+        time: first.time,
+        number: first.number,
+        isBridge: !!first.isBridge,
+      });
+    } else {
+      const offset =
+        currentTrack.baseOffset ?? currentTrack.offset ?? 0;
+      setLiveBeatInfo({
+        time: offset,
+        number: 1,
+        isBridge: false,
+      });
+    }
+  }, [currentTrack, currentTime, isPlaying]);
 
   // Синхронизация с дорожкой счёта плеера: при смене трека берём текущий бит из той же сетки, что и воспроизведение
   useEffect(() => {
@@ -94,12 +118,12 @@ export function LiveBeatProvider({
       });
     } else {
       setLiveBeatInfo({
-        time: currentTrack.offset,
+        time: currentTrack.baseOffset ?? currentTrack.offset,
         number: 1,
         isBridge: false,
       });
     }
-  }, [currentTrack?.id, currentTrack?.offset, currentTrack]);
+  }, [currentTrack?.id, currentTrack?.baseOffset, currentTrack?.offset, currentTrack]);
 
   // Тик только для блока счётчика — не трогает TrackInfo и анализ
   useEffect(() => {

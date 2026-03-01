@@ -132,7 +132,7 @@ export default function TrackInfoAdminPanel({
           .map((s: { time_start?: number }) => s.time_start ?? 0);
         const mergedGridMap: GridMap = {
           bpm: (data.bpm ?? freshTrack.bpm) as number,
-          offset: (data.song_start_time ?? freshTrack.offset ?? base.offset ?? 0) as number,
+          offset: (data.song_start_time ?? freshTrack.baseOffset ?? freshTrack.offset ?? base.offset ?? 0) as number,
           grid: (base.grid as GridMap["grid"]) ?? [],
           bridges: percBridgeTimes,
           duration: (data.duration ?? base.duration) as number | undefined,
@@ -143,8 +143,8 @@ export default function TrackInfoAdminPanel({
         };
         const updatedTrack = {
           ...freshTrack,
-          offset: (data.song_start_time ?? freshTrack.offset) as number,
-          baseOffset: (data.song_start_time ?? freshTrack.baseOffset) as number,
+          offset: (data.song_start_time ?? freshTrack.baseOffset ?? freshTrack.offset) as number,
+          baseOffset: (data.song_start_time ?? freshTrack.baseOffset ?? freshTrack.offset) as number,
           gridMap: mergedGridMap,
           ...(rowDominancePercent != null && { rowDominancePercent }),
         };
@@ -329,7 +329,8 @@ export default function TrackInfoAdminPanel({
           <span className="inline-flex items-center gap-1.5 rounded px-2 py-1 border border-[rgb(55_65_81/0.6)] bg-[rgb(55_65_81/0.6)]">
             <span className="text-sm font-medium text-gray-400">Offset:</span>
             <span className="text-white font-medium">
-              {startBeatId != null ? `бит #${startBeatId}` : `${currentTrack.offset.toFixed(3)}s`}
+              {(currentTrack.baseOffset ?? currentTrack.offset).toFixed(3)}s
+              {startBeatId != null ? ` (бит #${startBeatId})` : ""}
             </span>
           </span>
         </div>

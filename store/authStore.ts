@@ -4,6 +4,12 @@ interface AuthUser {
   id: number;
   email: string;
   role: string;
+  name?: string;
+  city?: string;
+  country?: string;
+  language?: string;
+  telegram?: string;
+  phone?: string;
 }
 
 interface AuthState {

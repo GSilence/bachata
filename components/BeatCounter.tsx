@@ -27,8 +27,11 @@ export default function BeatCounter({
   >("inline");
   const [isFullscreenOverlayVisible, setIsFullscreenOverlayVisible] =
     useState(false);
-  const { isPlaying, currentTrack } = usePlayerStore();
+  const { isPlaying, currentTrack, currentTime } = usePlayerStore();
   const beats = [1, 2, 3, 4, 5, 6, 7, 8];
+
+  // Сброс по Стоп: при 0:00 и не играет — не показывать счёт (только при паузе оставляем как есть)
+  const isStopped = currentTrack != null && currentTime === 0 && !isPlaying;
 
   // Используем внешний режим, если он передан, иначе внутренний
   const displayMode = externalDisplayMode ?? internalDisplayMode;
@@ -68,7 +71,19 @@ export default function BeatCounter({
         className="flex justify-between items-center w-full"
         data-component="beat-counter"
       >
-        {displayMode === "fullscreen" && !isPlaying && currentTrack ? (
+        {isStopped ? (
+          // После Стоп — цифры без выделения, чтобы не сбивать
+          beats.map((beat) => (
+            <div
+              key={beat}
+              data-beat={beat}
+              data-active={false}
+              className="flex-1 text-center text-gray-400 scale-100 text-2xl md:text-5xl"
+            >
+              {beat}
+            </div>
+          ))
+        ) : displayMode === "fullscreen" && !isPlaying && currentTrack ? (
           // Показываем "Запустить" в блоке beat-counter когда режим fullscreen и не играет
           <div
             onClick={(e) => {

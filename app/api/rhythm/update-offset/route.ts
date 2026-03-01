@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Track not found" }, { status: 404 });
     }
 
-    const oldOffset = track.offset;
+    const oldOffset = track.baseOffset ?? track.offset;
     const delta = newOffset - oldOffset;
 
     let gridMapData: GridMap | Record<string, unknown> | null =
@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
     const updated = await prisma.track.update({
       where: { id: trackId },
       data: {
+        baseOffset: newOffset,
         offset: newOffset,
         gridMap: gridMapData as object | null,
       },

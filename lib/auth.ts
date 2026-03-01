@@ -67,6 +67,19 @@ export function clearAuthCookie(response: NextResponse): void {
 
 // --- API Route Guards ---
 
+/** Требует любой авторизованный пользователь (по токену). Для доступа к музыке и т.п. */
+export async function requireAuth(request: NextRequest): Promise<JWTPayload> {
+  const token = request.cookies.get(COOKIE_NAME)?.value;
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+  const user = await verifyToken(token);
+  if (!user) {
+    throw new Error("Invalid token");
+  }
+  return user;
+}
+
 export async function requireAdmin(request: NextRequest): Promise<JWTPayload> {
   const token = request.cookies.get(COOKIE_NAME)?.value;
   if (!token) {

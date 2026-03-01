@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
   const token = request.cookies.get("auth-token")?.value;
@@ -8,12 +9,49 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ user: null });
   }
 
-  const user = await verifyToken(token);
-  if (!user) {
+  const payload = await verifyToken(token);
+  if (!payload) {
     return NextResponse.json({ user: null });
   }
 
+  if (!prisma) {
+    return NextResponse.json({
+      user: { id: payload.userId, email: payload.email, role: payload.role },
+    });
+  }
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      name: true,
+      city: true,
+      country: true,
+      language: true,
+      telegram: true,
+      phone: true,
+    },
+  });
+
+  if (!dbUser) {
+    return NextResponse.json({
+      user: { id: payload.userId, email: payload.email, role: payload.role },
+    });
+  }
+
   return NextResponse.json({
-    user: { id: user.userId, email: user.email, role: user.role },
+    user: {
+      id: dbUser.id,
+      email: dbUser.email,
+      role: dbUser.role,
+      name: dbUser.name ?? undefined,
+      city: dbUser.city ?? undefined,
+      country: dbUser.country ?? undefined,
+      language: dbUser.language ?? undefined,
+      telegram: dbUser.telegram ?? undefined,
+      phone: dbUser.phone ?? undefined,
+    },
   });
 }

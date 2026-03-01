@@ -63,4 +63,12 @@ model User {
   role      String   @default("user") // "admin" | "user"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Профиль (опционально; для существующих пользователей не заполнено — не мешает)
+  name      String?  @db.VarChar(200)
+  city      String?  @db.VarChar(120)
+  country   String?  @db.VarChar(120)
+  language  String?  @db.VarChar(20)
+  telegram  String?  @db.VarChar(100)
+  phone     String?  @db.VarChar(40)
 }

@@ -1,3 +1,8 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import { useAuthStore } from "@/store/authStore";
 import Sidebar from "@/components/Sidebar";
 
 export default function MainLayout({
@@ -5,6 +10,18 @@ export default function MainLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { user, isLoading } = useAuthStore();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      const redirect = encodeURIComponent(pathname || "/");
+      router.replace(`/login?redirect=${redirect}`);
+    }
+  }, [user, isLoading, router, pathname]);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar />
