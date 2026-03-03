@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { usePlayerStore } from "@/store/playerStore";
 import { audioEngine } from "@/lib/audioEngine";
@@ -26,6 +26,26 @@ export default function TrackInfoAdminPanel({
 }: TrackInfoAdminPanelProps) {
   const { updateCurrentTrack, setTracks } = usePlayerStore();
   const [v2Result, setV2Result] = useState<any>(null);
+
+  // История трека
+  const [trackLogs, setTrackLogs] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/log`, { cache: "no-store" });
+      if (res.ok) setTrackLogs(await res.json());
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [currentTrack.id]);
+
+  const toggleHistory = () => {
+    if (!showHistory) fetchHistory();
+    setShowHistory((v) => !v);
+  };
   const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
   const [v2Stage, setV2Stage] = useState("");
   const [bridges, setBridges] = useState<number[]>(
@@ -480,6 +500,48 @@ export default function TrackInfoAdminPanel({
           </LiveBeatProvider>
         </div>
       )}
+
+      {/* История трека */}
+      <div className="mt-4 border-t border-gray-700/50 pt-3">
+        <button
+          type="button"
+          onClick={toggleHistory}
+          className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          <svg className={`w-3 h-3 transition-transform ${showHistory ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          История трека
+          {loadingHistory && <span className="text-gray-600">...</span>}
+        </button>
+        {showHistory && (
+          <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto">
+            {trackLogs.length === 0 && !loadingHistory && (
+              <p className="text-xs text-gray-600 py-2">Нет событий</p>
+            )}
+            {trackLogs.map((log: any) => (
+              <div key={log.id} className="flex items-start gap-2 text-xs">
+                <span className="text-gray-600 whitespace-nowrap pt-0.5">
+                  {new Date(log.createdAt).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}{" "}
+                  {new Date(log.createdAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium border ${
+                  log.event === "mod_verdict_correct" ? "bg-green-900/50 text-green-400 border-green-800" :
+                  log.event === "mod_verdict_incorrect" ? "bg-amber-900/50 text-amber-400 border-amber-800" :
+                  log.event === "mod_verdict_incorrect_again" ? "bg-red-900/50 text-red-400 border-red-800" :
+                  log.event === "rows_swapped" ? "bg-orange-900/50 text-orange-400 border-orange-800" :
+                  log.event === "status_change" ? "bg-purple-900/50 text-purple-400 border-purple-800" :
+                  log.event === "analyzer_done" ? "bg-blue-900/50 text-blue-400 border-blue-800" :
+                  "bg-gray-800 text-gray-500 border-gray-700"
+                }`}>
+                  {log.event.replace(/_/g, " ")}
+                </span>
+                {log.userEmail && <span className="text-gray-600 truncate">{log.userEmail}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

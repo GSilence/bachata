@@ -75,5 +75,34 @@ export async function PATCH(
     select: { id: true, trackStatus: true, hasMambo: true, hasAccents: true },
   });
 
+  // Лог
+  const logEvent = layoutCorrect ? "mod_verdict_correct" : "mod_verdict_incorrect_again";
+  try {
+    await prisma.trackLog.create({
+      data: {
+        trackId,
+        userId: authUser.userId,
+        event: logEvent,
+        details: { email: authUser.email, layoutCorrect, hasMambo, hasAccents },
+      },
+    });
+    await prisma.trackLog.create({
+      data: {
+        trackId,
+        userId: authUser.userId,
+        event: "status_change",
+        details: { email: authUser.email, oldStatus: "unlistened", newStatus },
+      },
+    });
+  } catch {}
+
+  // Закрываем ModQueue
+  try {
+    await prisma.modQueue.updateMany({
+      where: { trackId, status: { not: "done" } },
+      data: { status: "done" },
+    });
+  } catch {}
+
   return NextResponse.json({ track: updated });
 }

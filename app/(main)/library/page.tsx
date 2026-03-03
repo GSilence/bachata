@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
+import { isAdminOrModerator } from "@/lib/roles";
 
 const CONCURRENCY = 2;
 
@@ -90,7 +91,7 @@ export default function LibraryPage() {
   }, [checkAuth]);
 
   useEffect(() => {
-    if (!isLoading && (!user || user.role !== "admin")) {
+    if (!isLoading && (!user || !isAdminOrModerator(user.role))) {
       router.push("/login?redirect=/library");
     }
   }, [user, isLoading, router]);
@@ -113,7 +114,7 @@ export default function LibraryPage() {
     );
   }
 
-  if (!user || user.role !== "admin") {
+  if (!user || !isAdminOrModerator(user.role)) {
     return null;
   }
 

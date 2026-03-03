@@ -10,8 +10,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let authUser: { userId: number; email: string; role: string };
   try {
-    await requireAdmin(request)
+    authUser = await requireAdmin(request)
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -66,11 +67,53 @@ export async function PATCH(
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: 'No allowed fields to update' }, { status: 400 })
   }
+
+  // Читаем текущий статус для лога (только если статус меняется)
+  const newStatus = data['trackStatus'] as string | undefined;
+  let oldStatus: string | undefined;
+  if (newStatus) {
+    const current = await prisma.track.findUnique({ where: { id: trackId }, select: { trackStatus: true } });
+    oldStatus = current?.trackStatus ?? undefined;
+  }
+
   type UpdateData = Parameters<typeof prisma.track.update>[0]['data']
   const updated = await prisma.track.update({
     where: { id: trackId },
     data: data as UpdateData,
   })
+
+  // Лог смены статуса
+  if (newStatus && newStatus !== oldStatus) {
+    try {
+      await prisma.trackLog.create({
+        data: {
+          trackId,
+          userId: authUser.userId,
+          event: 'status_change',
+          details: { email: authUser.email, oldStatus, newStatus },
+        },
+      });
+    } catch {}
+    if (newStatus !== 'unlistened') {
+      // Трек вышел из "unlistened" — закрываем ModQueue
+      try {
+        await prisma.modQueue.updateMany({
+          where: { trackId, status: { not: 'done' } },
+          data: { status: 'done' },
+        });
+      } catch {}
+    } else if (oldStatus && oldStatus !== 'unlistened') {
+      // Трек возвращён в "unlistened" — сбрасываем или создаём запись ModQueue
+      try {
+        await prisma.modQueue.upsert({
+          where: { trackId },
+          create: { trackId, status: 'pending', swapCount: 0 },
+          update: { status: 'pending', assignedTo: null, assignedAt: null, swapCount: 0 },
+        });
+      } catch {}
+    }
+  }
+
   return NextResponse.json({ track: updated })
 }
 

@@ -8,10 +8,12 @@ import { isAdmin } from "@/lib/roles";
 
 interface TrackStats {
   total: number;
-  processed: number;
+  newCount: number;
+  moderationCount: number;
+  approvedCount: number;
   withBridges: number;
-  withoutBridges: number;
-  avgBpm: number;
+  withAccents: number;
+  withMambo: number;
   minBpm: number;
   maxBpm: number;
 }
@@ -60,19 +62,16 @@ export default function SettingsPage() {
 
         if (data.length > 0) {
           const bpms = data.map((t: any) => t.bpm).filter((b: number) => b > 0);
-          const withBridges = data.filter(
-            (t: any) => (t.gridMap?.bridges?.length ?? 0) > 0,
-          ).length;
           setStats({
             total: data.length,
-            processed: data.filter((t: any) => t.isProcessed).length,
-            withBridges,
-            withoutBridges: data.length - withBridges,
-            avgBpm: bpms.length
-              ? Math.round(
-                  bpms.reduce((a: number, b: number) => a + b, 0) / bpms.length,
-                )
-              : 0,
+            newCount: data.filter((t: any) => t.trackStatus === "unlistened").length,
+            moderationCount: data.filter((t: any) => t.trackStatus === "moderation").length,
+            approvedCount: data.filter((t: any) => t.trackStatus === "approved").length,
+            withBridges: data.filter(
+              (t: any) => (t.gridMap?.bridges?.length ?? 0) > 0,
+            ).length,
+            withAccents: data.filter((t: any) => t.hasAccents).length,
+            withMambo: data.filter((t: any) => t.hasMambo).length,
             minBpm: bpms.length ? Math.min(...bpms) : 0,
             maxBpm: bpms.length ? Math.max(...bpms) : 0,
           });
@@ -178,7 +177,7 @@ export default function SettingsPage() {
     );
   }
 
-  if (!user || user.role !== "admin") {
+  if (!user || !isAdmin(user.role)) {
     return null;
   }
 
@@ -205,40 +204,42 @@ export default function SettingsPage() {
             </svg>
             Статистика библиотеки
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="text-2xl font-bold text-white">{stats.total}</div>
               <div className="text-sm text-gray-400">Всего треков</div>
             </div>
             <div className="bg-gray-700/50 rounded-lg p-4">
-              <div className="text-2xl font-bold text-green-400">
-                {stats.processed}
-              </div>
-              <div className="text-sm text-gray-400">Обработано</div>
+              <div className="text-2xl font-bold text-gray-300">{stats.newCount}</div>
+              <div className="text-sm text-gray-400">Новые</div>
             </div>
             <div className="bg-gray-700/50 rounded-lg p-4">
-              <div className="text-2xl font-bold text-yellow-400">
-                {stats.withBridges}
-              </div>
+              <div className="text-2xl font-bold text-yellow-400">{stats.moderationCount}</div>
+              <div className="text-sm text-gray-400">На модерации</div>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-green-400">{stats.approvedCount}</div>
+              <div className="text-sm text-gray-400">Согласовано</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-purple-400">{stats.withBridges}</div>
               <div className="text-sm text-gray-400">С мостиками</div>
             </div>
             <div className="bg-gray-700/50 rounded-lg p-4">
-              <div className="text-2xl font-bold text-cyan-400">
-                {stats.withoutBridges}
-              </div>
-              <div className="text-sm text-gray-400">Без мостиков</div>
-            </div>
-            <div className="bg-gray-700/50 rounded-lg p-4">
-              <div className="text-2xl font-bold text-purple-400">
-                {stats.avgBpm}
-              </div>
-              <div className="text-sm text-gray-400">Средний BPM</div>
-            </div>
-            <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="text-2xl font-bold text-blue-400">
-                {stats.minBpm} - {stats.maxBpm}
+                {stats.minBpm} – {stats.maxBpm}
               </div>
               <div className="text-sm text-gray-400">Диапазон BPM</div>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-cyan-400">{stats.withAccents}</div>
+              <div className="text-sm text-gray-400">С акцентом</div>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg p-4">
+              <div className="text-2xl font-bold text-orange-400">{stats.withMambo}</div>
+              <div className="text-sm text-gray-400">С мамбо</div>
             </div>
           </div>
         </div>

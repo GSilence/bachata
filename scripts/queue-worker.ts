@@ -223,6 +223,26 @@ async function processEntry(entry: any) {
   const reportPath = join(reportsDir, `${reportBaseName}_v2_analysis.json`);
   writeFileSync(reportPath, JSON.stringify({ success: true, trackId: track.id, track_title: track.title, track_artist: track.artist ?? null, ...result }, null, 2));
 
+  // ── ModQueue + TrackLog ──────────────────────────────────────────────
+  if (!isPopsa) {
+    try {
+      await prisma.modQueue.create({ data: { trackId: track.id } });
+    } catch {
+      // Игнорируем (unique constraint если уже есть)
+    }
+  }
+  try {
+    await prisma.trackLog.create({
+      data: {
+        trackId: track.id,
+        event: "analyzer_done",
+        details: { title: track.title, artist: track.artist ?? null, trackStatus: isPopsa ? "popsa" : "unlistened" },
+      },
+    });
+  } catch {
+    // Не критично
+  }
+
   log(`Done: Track #${track.id} "${track.title}"`);
   return track.id;
 }

@@ -58,6 +58,10 @@ export async function middleware(request: NextRequest) {
     if (user.role === "user") {
       return NextResponse.redirect(new URL("/coming-soon", request.url));
     }
+    // Роль "moderator" на "/" → страница модерации
+    if (user.role === "moderator" && pathname === "/") {
+      return NextResponse.redirect(new URL("/moderate", request.url));
+    }
     return NextResponse.next();
   }
 
@@ -70,6 +74,7 @@ export const config = {
     "/library/:path*",
     "/queue/:path*",
     "/admin/:path*",
+    "/moderate",
     "/music/:path*",
     "/uploads/:path*",
   ],

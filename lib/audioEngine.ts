@@ -762,7 +762,7 @@ export class AudioEngine {
 
   seek(time: number) {
     const dur = this.getDuration();
-    if (dur === 0) return;
+    if (dur <= 0) return; // <=0 covers both 0 (not loaded) and -1 (Howler not ready)
 
     // Сохраняем намерение воспроизведения, а не физическое состояние Howler
     const wasPlaying = this._isPlaying;

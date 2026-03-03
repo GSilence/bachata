@@ -61,6 +61,37 @@ model Track {
   playsMonthResetAt DateTime? // когда был сброшен счётчик за месяц
 
   playlistItems PlaylistItem[]
+  modQueue      ModQueue?
+  logs          TrackLog[]
+}
+
+// ─── Очередь модерации ──────────────────────────────────────────────────────
+model ModQueue {
+  id          Int       @id @default(autoincrement())
+  trackId     Int       @unique
+  track       Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  status      String    @default("pending") // pending | assigned | done
+  assignedTo  Int?      // userId модератора
+  assignedAt  DateTime?
+  swapCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─── Лог событий трека ──────────────────────────────────────────────────────
+model TrackLog {
+  id        Int      @id @default(autoincrement())
+  trackId   Int
+  track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  userId    Int?     // null = системное событие (воркер)
+  event     String   // analyzer_done | mod_assigned | mod_verdict_correct |
+                     // mod_verdict_incorrect | mod_verdict_incorrect_again |
+                     // rows_swapped | status_change | track_deleted | admin_released
+  details   Json?    // { email?, oldStatus?, newStatus?, etc. }
+  createdAt DateTime @default(now())
+
+  @@index([trackId])
+  @@index([createdAt])
 }
 
 model UserTrack {
