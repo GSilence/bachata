@@ -17,6 +17,9 @@ import os
 import json
 import warnings
 
+# Disable Numba JIT caching (causes "no locator available" on some Linux setups)
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+
 # --- CRITICAL PATCHES ---
 import collections
 import collections.abc
