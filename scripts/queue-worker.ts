@@ -81,7 +81,7 @@ async function processEntry(entry: any) {
   // ── Анализ v2 ──────────────────────────────────────────────────────────
   log(`Running v2 analysis: ${entry.filename}`);
   const { stdout, stderr } = await execAsync(
-    `"${PYTHON}" "${scriptPath}" "${queueFilePath}"`,
+    `NUMBA_DISABLE_JIT=1 "${PYTHON}" "${scriptPath}" "${queueFilePath}"`,
     { maxBuffer: 10 * 1024 * 1024, timeout: 300_000 },
   );
   if (stderr) log("v2 stderr:", stderr.slice(0, 500));
@@ -95,7 +95,7 @@ async function processEntry(entry: any) {
     const popsaScript = join(CWD, "scripts", "analyze-popsa.py");
     if (!existsSync(popsaScript)) throw new Error("analyze-popsa.py not found");
     const { stdout: popsaOut, stderr: popsaErr } = await execAsync(
-      `"${PYTHON}" "${popsaScript}" "${queueFilePath}"`,
+      `NUMBA_DISABLE_JIT=1 "${PYTHON}" "${popsaScript}" "${queueFilePath}"`,
       { maxBuffer: 10 * 1024 * 1024, timeout: 300_000 },
     );
     if (popsaErr) log("popsa stderr:", popsaErr.slice(0, 500));
