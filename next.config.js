@@ -2,6 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  // Не копировать uploads (MP3, отчёты, стемы) в .next/standalone/ при сборке.
+  // Эти файлы большие и должны обслуживаться напрямую с диска, а не дублироваться.
+  outputFileTracingExcludes: {
+    '*': [
+      './public/uploads/**/*',
+    ],
+  },
   // Временно отключаем ESLint во время сборки для развертывания
   // TODO: Исправить ошибки типизации и включить обратно
   eslint: {
