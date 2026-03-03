@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
 
 function LoginForm() {
@@ -111,10 +112,24 @@ function LoginForm() {
           >
             {isSubmitting ? "Вход..." : "Войти"}
           </button>
+
+          <div className="text-right">
+            <Link
+              href="/forgot-password"
+              className="text-sm text-gray-500 hover:text-purple-400 transition-colors"
+            >
+              Забыли пароль?
+            </Link>
+          </div>
         </form>
 
-        {/* Back link */}
-        <div className="text-center mt-4">
+        <div className="text-center mt-4 space-y-2">
+          <p className="text-sm text-gray-400">
+            Нет аккаунта?{" "}
+            <Link href="/register" className="text-purple-400 hover:text-purple-300 transition-colors">
+              Зарегистрироваться
+            </Link>
+          </p>
           <button
             onClick={() => router.push("/")}
             className="text-sm text-gray-500 hover:text-gray-300 transition-colors"

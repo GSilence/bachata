@@ -1,25 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir, rm } from "fs/promises";
+import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { writeFileSync, mkdirSync } from "fs";
 import { createHash } from "crypto";
-import { analyzeGenre } from "@/lib/analyzeGenre";
-import { requireAdmin } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 
-const execAsync = promisify(exec);
-
-// Настройки для работы с большими файлами и долгими операциями
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 600; // 10 минут таймаут для API route (Next.js 15)
+export const maxDuration = 60; // только загрузка файла, анализ — в воркере
 
-// Максимальный размер файла: 25MB
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-/** Нормализация для имени файла: нижний регистр, слова через дефис, только ASCII (a-z, 0-9, -). */
+/**
+ * Очистка строки метаданных из ID3-тегов:
+ * — удаляет HTML-теги и управляющие символы (null-байты и т.п.)
+ * — схлопывает лишние пробелы
+ * — обрезает до maxLen символов
+ * — если stripUrls=true — вырезает http(s)-ссылки (для metaComment)
+ */
+function sanitizeMeta(
+  value: string | null | undefined,
+  maxLen: number,
+  stripUrls = false,
+): string | null {
+  if (!value) return null;
+  let s = value
+    .replace(/<[^>]*>/g, "")                       // HTML-теги
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") // управляющие символы (кроме \t \n \r)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripUrls) {
+    s = s.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").trim();
+  }
+  return s.slice(0, maxLen) || null;
+}
+
+/** Нормализация для имени файла: нижний регистр, слова через дефис, только ASCII. */
 function normalizeFilename(name: string): string {
   const s = name
     .normalize("NFD")
@@ -30,7 +46,6 @@ function normalizeFilename(name: string): string {
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
-    // Только безопасный ASCII — без сломанной кодировки и странных символов (ð, ï и т.д.)
     .replace(/[^a-z0-9\-]/g, "")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
@@ -56,8 +71,10 @@ function getUniqueFilePath(
 }
 
 export async function POST(request: NextRequest) {
+  let currentUserId: number | null = null;
   try {
-    await requireAdmin(request);
+    const user = await requireAuth(request);
+    currentUserId = user.userId;
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -71,18 +88,10 @@ export async function POST(request: NextRequest) {
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
     const comment = formData.get("comment") as string | null;
-    /** При загрузке используем только анализ v2 (ряды + мостики). Остальные отключены. */
-    const analyzer = (formData.get("analyzer") as string) || "v2";
-    const useV2 = analyzer === "v2";
-    // BPM и Offset всегда определяются автоматически
-    const autoBpm = true;
-    const autoOffset = true;
 
-    // Валидация
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
-
     if (!title) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
@@ -90,380 +99,140 @@ export async function POST(request: NextRequest) {
     // Проверка типа файла: только аудио, без видео
     const lowerName = file.name.toLowerCase();
     const videoExtensions = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".flv", ".ogv"];
-    const isVideoByExt = videoExtensions.some((ext) => lowerName.endsWith(ext));
-    const isVideoByMime = file.type.startsWith("video/");
-    if (isVideoByExt || isVideoByMime) {
+    if (videoExtensions.some((ext) => lowerName.endsWith(ext)) || file.type.startsWith("video/")) {
       return NextResponse.json(
         { error: "Загрузка видео запрещена. Разрешены только аудиофайлы." },
         { status: 400 },
       );
     }
     const allowedAudioExtensions = [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac"];
-    const hasAudioExt = allowedAudioExtensions.some((ext) => lowerName.endsWith(ext));
-    const isAudioByMime = file.type.startsWith("audio/");
-    if (!hasAudioExt && !isAudioByMime) {
+    if (!allowedAudioExtensions.some((ext) => lowerName.endsWith(ext)) && !file.type.startsWith("audio/")) {
       return NextResponse.json(
         { error: "Разрешены только аудиофайлы (MP3, M4A, WAV и т.д.)." },
         { status: 400 },
       );
     }
 
-    // Проверка размера
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        {
-          error: `File size exceeds maximum of ${MAX_FILE_SIZE / 1024 / 1024}MB`,
-        },
+        { error: `File size exceeds maximum of ${MAX_FILE_SIZE / 1024 / 1024}MB` },
         { status: 400 },
       );
     }
 
-    // Читаем файл в буфер
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-
-    // Вычисляем MD5 хеш файла для проверки дубликатов
     const fileHash = createHash("md5").update(buffer).digest("hex");
 
-    // Импортируем Prisma для проверки дубликатов
     const { prisma } = await import("@/lib/prisma");
-
     if (!prisma) {
-      return NextResponse.json(
-        { error: "Database not available" },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: "Database not available" }, { status: 500 });
     }
 
-    // --- Проверка дубликатов ---
-    const dupResponse = (existing: { id: number; title: string; artist: string | null }, reason: string) =>
-      NextResponse.json(
-        {
-          error: reason,
-          duplicate: true,
-          existingTrack: { id: existing.id, title: existing.title, artist: existing.artist },
-        },
-        { status: 409 },
-      );
-
-    // 1. По MD5 хешу — побайтово одинаковый файл
-    const hashDuplicate = await prisma.track.findFirst({ where: { fileHash } });
-    if (hashDuplicate) {
-      return dupResponse(hashDuplicate, "Этот файл уже загружен (совпадение по содержимому)");
-    }
-
-    const trimmedTitle  = title.trim();
-    const trimmedArtist = artist?.trim() || null;
+    const trimmedTitle  = sanitizeMeta(title, 500) ?? title.trim();
+    const trimmedArtist = sanitizeMeta(artist, 500);
     const parsedYear    = year ? parseInt(year, 10) || null : null;
 
-    // 2. По metaTitle + metaArtist + metaYear — тот же трек из другого источника/рипа
-    //    Срабатывает только если все три поля присутствуют в загрузке
-    if (trimmedTitle && trimmedArtist && parsedYear) {
-      const metaDuplicate = await prisma.track.findFirst({
-        where: {
-          metaTitle:  trimmedTitle,
-          metaArtist: trimmedArtist,
-          metaYear:   parsedYear,
+    // --- Дедупликация по Track: возвращаем "already done" запись в очереди ---
+    const createInstantDone = async (existingTrackId: number) => {
+      const now = new Date();
+      // Создаём UserTrack, чтобы пользователь видел трек в своей библиотеке
+      if (currentUserId) {
+        await (prisma as any).userTrack.upsert({
+          where: { userId_trackId: { userId: currentUserId, trackId: existingTrackId } },
+          update: {},
+          create: { userId: currentUserId, trackId: existingTrackId },
+        });
+      }
+      const entry = await (prisma as any).uploadQueue.create({
+        data: {
+          filename: "__dup__",
+          originalName: file.name,
+          title: trimmedTitle,
+          artist: trimmedArtist,
+          fileHash,
+          status: "done",
+          trackId: existingTrackId,
+          uploadedBy: currentUserId,
+          startedAt: now,
+          finishedAt: now,
         },
       });
-      if (metaDuplicate) {
-        return dupResponse(
-          metaDuplicate,
-          `Трек "${metaDuplicate.title}" — ${metaDuplicate.artist || "Unknown"} (${parsedYear}) уже есть в базе`,
-        );
-      }
-    }
+      return NextResponse.json({ queued: true, queueId: entry.id, position: 0, message: "Трек уже в библиотеке" });
+    };
 
-    // 3. По title + artist — fallback, когда мета-поля в БД могут быть пустыми
+    const hashDuplicate = await prisma.track.findFirst({ where: { fileHash } });
+    if (hashDuplicate) return createInstantDone(hashDuplicate.id);
+
+    if (trimmedTitle && trimmedArtist && parsedYear) {
+      const metaDuplicate = await prisma.track.findFirst({
+        where: { metaTitle: trimmedTitle, metaArtist: trimmedArtist, metaYear: parsedYear },
+      });
+      if (metaDuplicate) return createInstantDone(metaDuplicate.id);
+    }
     const titleArtistDuplicate = await prisma.track.findFirst({
-      where: {
-        title: trimmedTitle,
-        ...(trimmedArtist ? { artist: trimmedArtist } : { artist: null }),
-      },
+      where: { title: trimmedTitle, ...(trimmedArtist ? { artist: trimmedArtist } : { artist: null }) },
     });
-    if (titleArtistDuplicate) {
-      return dupResponse(
-        titleArtistDuplicate,
-        `Трек "${titleArtistDuplicate.title}" — ${titleArtistDuplicate.artist || "Unknown"} уже существует`,
-      );
+    if (titleArtistDuplicate) return createInstantDone(titleArtistDuplicate.id);
+
+    // --- Дедупликация по UploadQueue (файл уже ждёт обработки) ---
+    const queueHashDuplicate = await (prisma as any).uploadQueue.findFirst({
+      where: { fileHash, status: { in: ["pending", "processing"] } },
+    });
+    if (queueHashDuplicate) {
+      // Показываем как "уже в очереди" — тоже успех для пользователя
+      return NextResponse.json({ queued: true, queueId: queueHashDuplicate.id, position: 1, message: "Уже в очереди" });
     }
 
-    // Создаем директории, если их нет
-    const uploadsDir = join(process.cwd(), "public", "uploads", "raw");
-
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true });
+    // Сохраняем файл во временную папку очереди
+    const queueDir = join(process.cwd(), "public", "uploads", "queue");
+    if (!existsSync(queueDir)) {
+      await mkdir(queueDir, { recursive: true });
     }
 
-    // Имя файла: название-трека-имя-автора (оба нормализованы, через дефис)
-    const titlePart = trimmedTitle
-      ? normalizeFilename(trimmedTitle)
-      : normalizeFilename(file.name.replace(/\.[^.]+$/, ""));
+    const titlePart = normalizeFilename(trimmedTitle || file.name.replace(/\.[^.]+$/, ""));
     const artistPart = trimmedArtist ? normalizeFilename(trimmedArtist) : "";
     const rawBase = (artistPart ? `${titlePart}-${artistPart}` : titlePart).slice(0, 200);
     const extFromName = (file.name.split(".").pop() || "mp3").toLowerCase();
     const fileExtension = /^[a-z0-9]+$/.test(extFromName) ? extFromName : "mp3";
-    const { filePath, fileName } = getUniqueFilePath(uploadsDir, rawBase, fileExtension);
+    const { filePath, fileName } = getUniqueFilePath(queueDir, rawBase, fileExtension);
 
-    console.log(`Processing track: ${title} by ${artist || "Unknown"}`);
-    console.log(
-      `File: ${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`,
-    );
-
-    // Сохраняем файл
     await writeFile(filePath, buffer);
+    console.log(`[process-track] Queued: ${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
 
-    console.log(`File saved: ${filePath}`);
-
-    // Определяем BPM и Offset (всегда автоматически)
-    let finalBpm = 120;
-    let finalOffset = 0;
-    let baseBpm: number | null = null;
-    let baseOffset: number | null = null;
-    let gridMap: any = null;
-    /** Полный результат v2 (для сохранения в отчёт — чтобы UI показывал те же квадраты, что и при загрузке) */
-    let v2ReportResult: Record<string, unknown> | null = null;
-
-    // ВСЕГДА анализируем аудио для получения gridMap, BPM и Offset
-    // gridMap нужен для корректного отслеживания битов с учетом мостиков
-    // Параллельно запускаем определение жанра
-    let genreResult: {
-      genre_hint: string;
-      confidence: number;
-      is_bachata_compatible: boolean;
-    } | null = null;
-
-    try {
-      console.log("\n" + "=".repeat(80));
-      console.log("Starting audio analysis (v2: rows + bridges)...");
-      console.log(`Audio file: ${filePath}`);
-      console.log("=".repeat(80) + "\n");
-
-      if (useV2) {
-        // Анализ v2: скрипт analyze-track-v2.py → gridMap с v2Layout и мостиками
-        const pythonPath = process.env.DEMUCS_PYTHON_PATH || "python";
-        const scriptPath = join(
-          process.cwd(),
-          "scripts",
-          "analyze-track-v2.py",
-        );
-        if (!existsSync(scriptPath)) {
-          throw new Error("V2 analysis script not found: " + scriptPath);
-        }
-        const command = `"${pythonPath}" "${scriptPath}" "${filePath}"`;
-        const { stdout, stderr } = await execAsync(command, {
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 300000,
-        });
-        if (stderr) console.log("[V2] stderr:", stderr);
-        const result = JSON.parse(stdout.trim());
-        if (result.error) throw new Error(result.error);
-
-        // Не загружаем треки, не являющиеся бачатой: 4 пика (попса) или расстояние между сильными рядами ≠ 4 бита
-        if (result.track_type === "popsa" || result.peaks_per_octave === 4) {
-          await rm(filePath).catch(() => {});
-          return NextResponse.json(
-            { error: "Трек не является Бачатой" },
-            { status: 400 },
-          );
-        }
-        const verdict = result.row_analysis_verdict;
-        const winningRows = Array.isArray(verdict?.winning_rows) ? verdict.winning_rows : null;
-        if (winningRows && winningRows.length === 2) {
-          const a = Number(winningRows[0]);
-          const b = Number(winningRows[1]);
-          if (Number.isFinite(a) && Number.isFinite(b)) {
-            const distance = (Math.max(a, b) - Math.min(a, b) + 8) % 8;
-            if (distance !== 4) {
-              await rm(filePath).catch(() => {});
-              return NextResponse.json(
-                { error: "Трек не является Бачатой" },
-                { status: 400 },
-              );
-            }
-          }
-        }
-
-        finalBpm = result.bpm ?? 120;
-        baseBpm = result.bpm ?? null;
-        finalOffset = result.song_start_time ?? 0;
-        baseOffset = result.song_start_time ?? null;
-        const layout = Array.isArray(result.layout) ? result.layout : [];
-        const bridges = Array.isArray(result.bridges) ? result.bridges : [];
-        gridMap = {
-          bpm: finalBpm,
-          offset: finalOffset,
-          grid: [],
-          duration: result.duration ?? undefined,
-          v2Layout: layout,
-          bridges: bridges.map((b: { time_sec?: number }) => b.time_sec ?? 0),
-        };
-        v2ReportResult = result;
-        console.log(
-          `V2: BPM=${finalBpm}, offset=${finalOffset}s, layout segments=${layout.length}, bridges=${bridges.length}`,
-        );
-      }
-
-      // Жанр — параллельно с v2 не запускаем, чтобы не удваивать время; можно запустить после при желании
-      const genreRes = await analyzeGenre(filePath).catch((err) => {
-        console.warn("Genre detection failed (non-critical):", err.message);
-        return null;
-      });
-      genreResult = genreRes;
-      if (genreResult) {
-        console.log(
-          `Genre detected: ${genreResult.genre_hint} (confidence: ${(genreResult.confidence * 100).toFixed(0)}%)`,
-        );
-      }
-
-      console.log("\n" + "=".repeat(80));
-      console.log("Audio analysis completed successfully!");
-      console.log("=".repeat(80) + "\n");
-    } catch (error: any) {
-      console.warn(
-        "Audio analysis failed, using provided/default values:",
-        error.message,
-      );
-      baseBpm = finalBpm;
-      baseOffset = finalOffset;
-    }
-
-    // Подготавливаем метаданные для сохранения
-    const metadata = {
-      album: album || null,
-      genre: genre || null,
-      year: year || null,
-      track: trackNumber || null,
-      comment: comment || null,
-      genreDetection: genreResult
-        ? {
-            hint: genreResult.genre_hint,
-            confidence: genreResult.confidence,
-            isBachataCompatible: genreResult.is_bachata_compatible,
-          }
-        : null,
-    };
-
-    // Создаем запись в БД (минимальный gridMap; для v2 сразу перезапишем как у кнопки «Анализ v2»)
-    const track = await prisma.track.create({
+    // Создаём запись в очереди
+    const entry = await (prisma as any).uploadQueue.create({
       data: {
-        title: title,
-        artist: artist || null,
         filename: fileName,
-        bpm: finalBpm,
-        offset: finalOffset,
-        baseBpm: baseBpm,
-        baseOffset: baseOffset,
-        isFree: true,
-        pathOriginal: `/uploads/raw/${fileName}`,
-        pathVocals: null,
-        pathDrums: null,
-        pathBass: null,
-        pathOther: null,
-        isProcessed: false,
-        analyzerType: useV2 ? "v2" : "basic",
-        fileHash: fileHash,
-        genreHint: genreResult?.genre_hint || null,
-        // Метаданные из ID3-тегов → выделенные колонки БД
-        metaTitle: title || null,
-        metaArtist: artist?.trim() || null,
-        metaAlbum: album?.trim() || null,
-        metaYear: year ? parseInt(year, 10) || null : null,
-        metaGenre: genre?.trim() || null,
-        metaComment: comment?.trim() || null,
-        metaTrackNum: trackNumber ? parseInt(trackNumber, 10) || null : null,
-        gridMap:
-          gridMap != null
-            ? JSON.parse(JSON.stringify({ ...gridMap, metadata }))
-            : { metadata },
+        originalName: file.name,
+        title: trimmedTitle,
+        artist: trimmedArtist,
+        album: sanitizeMeta(album, 500),
+        genre: sanitizeMeta(genre, 200),
+        year: parsedYear,
+        trackNumber: trackNumber ? parseInt(trackNumber, 10) || null : null,
+        comment: sanitizeMeta(comment, 1000, true),
+        fileHash,
+        status: "pending",
+        uploadedBy: currentUserId,
       },
     });
 
-    // Для v2: делаем 1 в 1 то же, что кнопка «Запустить анализ v2» — обновляем gridMap и сохраняем отчёт
-    if (useV2 && v2ReportResult) {
-      const result = v2ReportResult as Record<string, unknown>;
-      const existingGridMap = (track.gridMap as Record<string, unknown>) || {};
-      const v2LayoutRms = Array.isArray(result.layout) ? result.layout : [];
-      const v2LayoutPerc = Array.isArray(result.layout_perc) ? result.layout_perc : [];
-      // Визуальные маркеры мостиков = начала сегментов перцептивной (активной) раскладки
-      const v2BridgesTimes = (v2LayoutPerc.length > 1 ? v2LayoutPerc : v2LayoutRms)
-        .slice(1)
-        .map((s: unknown) => (s as { time_start?: number }).time_start ?? 0);
-      const squareAnalysis = result.square_analysis as
-        | { verdict?: string; row_dominance_pct?: number }
-        | undefined;
-      const verdict = result.row_analysis_verdict as
-        | { row_one?: number; winning_rows?: number[]; winning_row?: number }
-        | undefined;
-      const rowDominancePercent =
-        typeof squareAnalysis?.row_dominance_pct === "number"
-          ? squareAnalysis.row_dominance_pct
-          : undefined;
-      const mergedGridMap = {
-        ...existingGridMap,
-        bpm: (result.bpm as number) ?? track.bpm ?? existingGridMap.bpm,
-        offset: result.song_start_time ?? track.baseOffset ?? track.offset ?? existingGridMap.offset,
-        duration: (result.duration as number) ?? existingGridMap.duration,
-        v2Layout: v2LayoutPerc,       // активная сетка = Perceptual по умолчанию
-        v2LayoutRms,                  // RMS сетка
-        v2LayoutPerc,                 // перцептивная сетка
-        bridges: v2BridgesTimes,
-        ...(rowDominancePercent != null && { rowDominancePercent }),
-        ...(verdict?.row_one != null && { row_one: verdict.row_one }),
-        ...(Array.isArray(verdict?.winning_rows) && verdict.winning_rows.length >= 2 && {
-          winning_rows: verdict.winning_rows,
-        }),
-      };
-      await prisma.track.update({
-        where: { id: track.id },
-        data: {
-          gridMap: mergedGridMap as object,
-          hasBridges: v2BridgesTimes.length > 0,
-          ...(result.song_start_time != null && {
-            baseOffset: result.song_start_time as number,
-            offset: result.song_start_time as number,
-          }),
-        },
-      });
-
-      const audioBasename = fileName.replace(/\.[^.]+$/, "");
-      const reportsDir = join(process.cwd(), "public", "uploads", "reports");
-      if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
-      const reportPath = join(reportsDir, `${audioBasename}_v2_analysis.json`);
-      const toSave = {
-        success: true,
-        trackId: track.id,
-        track_title: track.title,
-        track_artist: track.artist ?? null,
-        ...v2ReportResult,
-      };
-      writeFileSync(reportPath, JSON.stringify(toSave, null, 2));
-      console.log("[process-track] V2: gridMap updated and report saved");
-
-      // Возвращаем трек с актуальным gridMap (как после кнопки «Анализ v2»)
-      const updatedTrack = await prisma.track.findUnique({
-        where: { id: track.id },
-      });
-      return NextResponse.json({
-        success: true,
-        track: updatedTrack ?? track,
-        message: "Track processed successfully",
-      });
-    }
+    // Позиция в очереди
+    const position = await (prisma as any).uploadQueue.count({
+      where: { status: { in: ["pending", "processing"] } },
+    });
 
     return NextResponse.json({
-      success: true,
-      track: track,
-      message: "Track processed successfully",
+      queued: true,
+      queueId: entry.id,
+      position,
+      message: `Трек добавлен в очередь (позиция #${position})`,
     });
   } catch (error: any) {
-    console.error("Error processing track:", error);
+    console.error("[process-track] Error:", error);
     return NextResponse.json(
-      {
-        error: error.message || "Failed to process track",
-        details:
-          process.env.NODE_ENV === "development" ? error.stack : undefined,
-      },
+      { error: error.message || "Failed to queue track" },
       { status: 500 },
     );
   }

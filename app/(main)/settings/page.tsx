@@ -84,14 +84,6 @@ export default function SettingsPage() {
   };
 
   const handleReanalyzeAll = async () => {
-    if (
-      !confirm(
-        "Перезапустить анализ для ВСЕХ треков? Это может занять несколько минут.",
-      )
-    ) {
-      return;
-    }
-
     // Используем уже загруженные треки или перезагружаем
     let allTracks = tracks;
     if (allTracks.length === 0) {
@@ -100,33 +92,52 @@ export default function SettingsPage() {
       allTracks = await r.json();
     }
 
+    // Только треки в статусе "Новое" (unlistened)
+    const unlistenedTracks = allTracks.filter((t: any) => t.trackStatus === "unlistened");
+    if (unlistenedTracks.length === 0) {
+      alert("Нет треков со статусом «Новое».");
+      return;
+    }
+
+    if (!confirm(`Переанализировать ${unlistenedTracks.length} треков со статусом «Новое» (по 2 за раз)?`)) {
+      return;
+    }
+
     setIsReanalyzing(true);
     setReanalyzeResult(null);
-    setReanalyzeProgress({ current: 0, total: allTracks.length, currentTitle: "" });
+    setReanalyzeProgress({ current: 0, total: unlistenedTracks.length, currentTitle: "" });
 
     let success = 0;
     let errors = 0;
+    let completed = 0;
 
-    // Анализируем по одному треку — каждый запрос короткий, не словит 504
-    for (let i = 0; i < allTracks.length; i++) {
-      const track = allTracks[i];
-      setReanalyzeProgress({ current: i + 1, total: allTracks.length, currentTitle: track.title });
+    const analyzeTrack = async (track: any) => {
       try {
         const r = await fetch(`/api/tracks/${track.id}/analyze-v2`, { method: "POST" });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          console.error(`[ReanalyzeAll] Error for ${track.title}:`, d.error);
-          errors++;
-        } else {
-          success++;
+        // Дожидаемся завершения SSE-стрима, чтобы Python-процесс закончил работу
+        if (r.body) {
+          const reader = r.body.getReader();
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
         }
+        if (r.ok) success++; else errors++;
       } catch (e: any) {
         console.error(`[ReanalyzeAll] Network error for ${track.title}:`, e.message);
         errors++;
       }
+      completed++;
+      setReanalyzeProgress({ current: completed, total: unlistenedTracks.length, currentTitle: track.title });
+    };
+
+    // По 2 трека параллельно
+    for (let i = 0; i < unlistenedTracks.length; i += 2) {
+      const batch = unlistenedTracks.slice(i, i + 2);
+      await Promise.all(batch.map(analyzeTrack));
     }
 
-    setReanalyzeResult({ success, errors, total: allTracks.length });
+    setReanalyzeResult({ success, errors, total: unlistenedTracks.length });
     setReanalyzeProgress(null);
     setIsReanalyzing(false);
     fetchStats();
@@ -472,7 +483,7 @@ export default function SettingsPage() {
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                   />
                 </svg>
-                Переанализировать все треки
+                Переанализировать «Новые» треки
               </>
             )}
           </button>

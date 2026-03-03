@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { isAdminOrModerator } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -39,11 +40,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.json([], { headers: NO_CACHE_HEADERS });
     }
 
-    const tracks = await prisma.track.findMany({
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const user = await getCurrentUser();
+
+    // Поля, которые не должны видеть обычные пользователи
+    const INTERNAL_FIELDS = [
+      "gridMap", "rowDominancePercent", "rowSwapped", "analyzerType",
+      "fileHash", "isProcessed", "pathVocals", "pathDrums", "pathBass", "pathOther",
+    ] as const;
+
+    let tracks: Record<string, unknown>[];
+
+    if (isAdminOrModerator(user!.role)) {
+      // Админ и модератор видят всё без ограничений
+      tracks = await prisma.track.findMany({ orderBy: { createdAt: "desc" } });
+    } else {
+      // Обычный пользователь — только approved треки, без внутренних полей
+      const raw = await prisma.track.findMany({
+        where: { trackStatus: "approved" },
+        orderBy: { createdAt: "desc" },
+      });
+      tracks = raw.map((t) => {
+        const sanitized: Record<string, unknown> = { ...t };
+        for (const field of INTERNAL_FIELDS) delete sanitized[field];
+        return sanitized;
+      });
+    }
 
     return NextResponse.json(tracks, { headers: NO_CACHE_HEADERS });
   } catch (error) {

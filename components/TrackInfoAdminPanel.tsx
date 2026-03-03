@@ -306,6 +306,7 @@ export default function TrackInfoAdminPanel({
             onClick={runV2Analysis}
             disabled={isAnalyzingV2}
             title="Запустить анализ v2 (ряды + мостики)"
+            data-action="analyze-v2"
             className="p-1.5 rounded bg-indigo-700 hover:bg-indigo-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label="Анализ v2"
           >

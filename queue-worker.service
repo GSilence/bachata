@@ -1,0 +1,35 @@
+[Unit]
+Description=Bachata Queue Worker
+Documentation=https://github.com/your-repo/bachata
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/bachata
+
+# Запуск воркера через npx tsx (или прямой путь к tsx)
+ExecStart=/usr/bin/npx tsx scripts/queue-worker.ts
+
+# Перезапускать при падении (но не при ручной остановке)
+Restart=on-failure
+RestartSec=10s
+
+# Отправляем SIGTERM при остановке — воркер дожидается окончания текущей задачи
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+# Переменные окружения
+Environment=NODE_ENV=production
+
+# Загружаем .env.local для DATABASE_URL, DEMUCS_PYTHON_PATH и т.д.
+EnvironmentFile=-/var/www/bachata/.env.local
+
+# Логи
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bachata-worker
+
+[Install]
+WantedBy=multi-user.target

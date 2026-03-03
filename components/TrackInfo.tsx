@@ -13,6 +13,7 @@ const TRACK_STATUS_OPTIONS: { value: TrackStatus; label: string }[] = [
   { value: "unlistened", label: "Не прослушана" },
   { value: "moderation", label: "На модерации" },
   { value: "approved", label: "Согласована" },
+  { value: "popsa", label: "Попса" },
 ];
 
 interface TrackInfoProps {}
@@ -32,6 +33,31 @@ export default function TrackInfo({}: TrackInfoProps) {
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isMarkingNotPopsa, setIsMarkingNotPopsa] = useState(false);
+
+  const handleMarkNotPopsa = async () => {
+    if (!currentTrack) return;
+    setIsMarkingNotPopsa(true);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackStatus: "unlistened" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || res.statusText);
+      }
+      const { track } = await res.json();
+      updateCurrentTrack(track);
+      setTracks(tracks.map((t) => (t.id === track.id ? track : t)));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setIsMarkingNotPopsa(false);
+    }
+  };
 
   // Admin: редактирование названия и метаданных
   const [isEditingMeta, setIsEditingMeta] = useState(false);
@@ -246,6 +272,16 @@ export default function TrackInfo({}: TrackInfoProps) {
             </div>
           )}
         </div>
+        {isAdminUser && currentTrack?.trackStatus === "popsa" && (
+          <button
+            onClick={handleMarkNotPopsa}
+            disabled={isMarkingNotPopsa}
+            className="px-2 py-1 text-xs text-orange-400 hover:text-orange-300 hover:bg-orange-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-orange-800/40"
+            title="Убрать метку попса — перевести в 'Не прослушана'"
+          >
+            {isMarkingNotPopsa ? "…" : "Не попса"}
+          </button>
+        )}
         {isAdminUser && (
           <button
             onClick={handleDelete}

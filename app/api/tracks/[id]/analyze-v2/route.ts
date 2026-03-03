@@ -306,7 +306,10 @@ export async function POST(
                   }
                 }
               }
-              const finalRowSwapped = result.row_swapped === true;
+              // Python row_swapped = "я исправил ошибку идентификации внутри себя".
+              // DB rowSwapped = "пользователь нажал кнопку Swap". Это разные вещи.
+              // После анализа offset и row_one уже корректны → rowSwapped всегда false.
+              const finalRowSwapped = false;
               // В ответе клиенту — тот же ключ, что в GET, чтобы админка обновила track.rowDominancePercent
               const payload: Record<string, unknown> = {
                 ...toSave,

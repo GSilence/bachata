@@ -4,13 +4,15 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { isAdmin } from "@/lib/roles";
+import { isAdmin, isModerator } from "@/lib/roles";
+import { useModeratorStore } from "@/store/moderatorStore";
 
 interface NavItem {
   name: string;
   href: string;
   icon: React.ReactNode;
   badge?: string;
+  dimmed?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -62,6 +64,16 @@ const adminNavItems: NavItem[] = [
     ),
   },
   {
+    name: "Промокоды",
+    href: "/admin/promo-codes",
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+      </svg>
+    ),
+  },
+  {
     name: "Настройки",
     href: "/settings",
     icon: (
@@ -93,14 +105,18 @@ export default function Sidebar() {
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { user, isLoading, checkAuth, logout } = useAuthStore();
-
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
 
   const isAdminUser = isAdmin(user?.role);
+  const isModeratorUser = isModerator(user?.role);
+
+  const { isModerating, enterModeratorMode, exitModeratorMode } =
+    useModeratorStore();
 
   const handleLogout = async () => {
+    exitModeratorMode();
     await logout();
     setIsMobileMenuOpen(false);
   };
@@ -108,6 +124,7 @@ export default function Sidebar() {
   const renderNavItems = (items: NavItem[]) =>
     items.map((item) => {
       const isActive = pathname === item.href;
+      const isDimmed = item.dimmed && !isActive;
       return (
         <li key={item.href}>
           <Link
@@ -118,6 +135,8 @@ export default function Sidebar() {
               ${
                 isActive
                   ? "bg-gray-800 text-white"
+                  : isDimmed
+                  ? "text-gray-600 hover:bg-gray-800 hover:text-gray-400"
                   : "text-gray-400 hover:bg-gray-800 hover:text-white"
               }
             `}
@@ -227,6 +246,32 @@ export default function Sidebar() {
               <div className="px-4 py-2 text-sm text-gray-400 truncate" title={user.email}>
                 {user.email}
               </div>
+
+              {/* Кнопка режима модератора */}
+              {isModeratorUser && (
+                isModerating ? (
+                  <button
+                    onClick={() => { exitModeratorMode(); setIsMobileMenuOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-yellow-400 hover:text-yellow-300 bg-yellow-400/10 hover:bg-yellow-400/20 rounded-lg transition-colors"
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <span>Выйти из режима</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { enterModeratorMode(); setIsMobileMenuOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 rounded-lg transition-colors"
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <span>Режим модератора</span>
+                  </button>
+                )
+              )}
+
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"

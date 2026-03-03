@@ -2,7 +2,7 @@ export type PlayMode = "sequential" | "random" | "loop";
 export type VoiceFilter = "mute" | "on1" | "on1times3" | "on1and5" | "full";
 export type VoiceLanguage = "en" | "pt";
 export type VoiceType = "human" | "cymbal" | "clap";
-export type TrackStatus = "unlistened" | "moderation" | "approved";
+export type TrackStatus = "unlistened" | "moderation" | "approved" | "popsa";
 export type PlaylistFilter = "free" | "my" | "all";
 /** Основная сортировка списка треков в плейлисте */
 export type PlaylistSortBy = "title" | "duration" | "date";

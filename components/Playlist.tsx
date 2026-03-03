@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { usePlayerStore } from "@/store/playerStore";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
@@ -13,6 +13,58 @@ interface PlaylistProps {
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
+
+  // ── Избранное ────────────────────────────────────────────────────────────
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
+  const [togglingFav, setTogglingFav] = useState<number | null>(null);
+
+  const fetchFavorites = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await fetch("/api/playlists/favorites/tracks");
+      if (res.ok) {
+        const data = await res.json();
+        setFavoriteIds(new Set(data.trackIds ?? []));
+      }
+    } catch {}
+  }, [user]);
+
+  useEffect(() => {
+    fetchFavorites();
+  }, [fetchFavorites]);
+
+  const toggleFavorite = async (e: React.MouseEvent, trackId: number) => {
+    e.stopPropagation();
+    if (togglingFav === trackId) return;
+    setTogglingFav(trackId);
+    const isFav = favoriteIds.has(trackId);
+    // Optimistic update
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (isFav) next.delete(trackId); else next.add(trackId);
+      return next;
+    });
+    try {
+      if (isFav) {
+        await fetch(`/api/playlists/favorites/tracks?trackId=${trackId}`, { method: "DELETE" });
+      } else {
+        await fetch("/api/playlists/favorites/tracks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trackId }),
+        });
+      }
+    } catch {
+      // Rollback on error
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (isFav) next.add(trackId); else next.delete(trackId);
+        return next;
+      });
+    } finally {
+      setTogglingFav(null);
+    }
+  };
   const {
     tracks,
     currentTrack,
@@ -25,6 +77,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     statusFilterUnlistened,
     statusFilterModeration,
     statusFilterApproved,
+    statusFilterPopsa,
     accentFilterOn,
     mamboFilterOn,
     playlistSortBy,
@@ -41,6 +94,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     setStatusFilterUnlistened,
     setStatusFilterModeration,
     setStatusFilterApproved,
+    setStatusFilterPopsa,
     setAccentFilterOn,
     setMamboFilterOn,
     setPlaylistSortBy,
@@ -70,7 +124,8 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       const match =
         (s === "unlistened" && statusFilterUnlistened) ||
         (s === "moderation" && statusFilterModeration) ||
-        (s === "approved" && statusFilterApproved);
+        (s === "approved" && statusFilterApproved) ||
+        (s === "popsa" && statusFilterPopsa);
       if (!match) return false;
     }
 
@@ -261,6 +316,18 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
           >
             Согласована
           </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilterPopsa(!statusFilterPopsa)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              statusFilterPopsa
+                ? "bg-orange-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+            }`}
+            title={statusFilterPopsa ? "Показать попсу" : "Скрыть попсу"}
+          >
+            Попса
+          </button>
         </div>
       )}
 
@@ -436,40 +503,68 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
               isSquare && pct != null
                 ? ` — ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`
                 : "";
+            const isFav = favoriteIds.has(track.id);
             return (
-              <button
-                key={track.id}
-                onClick={() => onTrackSelect(track)}
-                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                  isActive
-                    ? "bg-purple-600 border-2 border-purple-400 hover:bg-purple-700"
-                    : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
-                }`}
-              >
-                <div className="font-medium text-white">
-                  {track.title}
-                  {pctLabel && (
-                    <span className="text-gray-400 font-normal text-xs ml-1" title="% РАЗ (для фильтра)">
-                      {pctLabel}
+              <div key={track.id} className="relative group">
+                <button
+                  onClick={() => onTrackSelect(track)}
+                  className={`w-full text-left px-4 py-3 pr-10 rounded-lg transition-colors ${
+                    isActive
+                      ? "bg-purple-600 border-2 border-purple-400 hover:bg-purple-700"
+                      : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
+                  }`}
+                >
+                  <div className="font-medium text-white">
+                    {track.title}
+                    {pctLabel && (
+                      <span className="text-gray-400 font-normal text-xs ml-1" title="% РАЗ (для фильтра)">
+                        {pctLabel}
+                      </span>
+                    )}
+                  </div>
+                  {track.artist && (
+                    <div
+                      className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}
+                    >
+                      {track.artist}
+                    </div>
+                  )}
+                  {track.isProcessed && (
+                    <span
+                      className="text-xs text-green-400 mt-1 inline-block"
+                      title="Stems обработаны"
+                    >
+                      🎵
                     </span>
                   )}
-                </div>
-                {track.artist && (
-                  <div
-                    className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}
+                </button>
+
+                {/* Кнопка Избранное */}
+                <button
+                  onClick={(e) => toggleFavorite(e, track.id)}
+                  disabled={togglingFav === track.id}
+                  title={isFav ? "Убрать из Избранного" : "Добавить в Избранное"}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all ${
+                    isFav
+                      ? "text-pink-400 opacity-100"
+                      : "text-gray-500 opacity-0 group-hover:opacity-100 hover:text-pink-400"
+                  }`}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill={isFav ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
                   >
-                    {track.artist}
-                  </div>
-                )}
-                {track.isProcessed && (
-                  <span
-                    className="text-xs text-green-400 mt-1 inline-block"
-                    title="Stems обработаны"
-                  >
-                    🎵
-                  </span>
-                )}
-              </button>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                    />
+                  </svg>
+                </button>
+              </div>
             );
           })
         )}

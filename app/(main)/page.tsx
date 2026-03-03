@@ -17,6 +17,8 @@ import {
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
 import { useRouter } from "next/navigation";
+import { useModeratorStore } from "@/store/moderatorStore";
+import ModerationModal from "@/components/ModerationModal";
 import type { Track } from "@/types";
 
 export default function PlaybackPage() {
@@ -42,6 +44,8 @@ export default function PlaybackPage() {
     isPlaying,
   } = usePlayerStore();
 
+  const { isModerating } = useModeratorStore();
+
   const [isClient, setIsClient] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
   const [isBridgeBeat, setIsBridgeBeat] = useState(false);
@@ -64,8 +68,15 @@ export default function PlaybackPage() {
     try {
       // Subscribe to onTrackEnd ONCE - store will handle playNext
       audioEngine.setOnTrackEnd(() => {
-        const { playNext } = usePlayerStore.getState();
-        playNext();
+        const { isModerating, openRatingModal } = useModeratorStore.getState();
+        const { currentTrack: ct, playNext } = usePlayerStore.getState();
+
+        if (isModerating && ct) {
+          // В режиме модератора — показываем окно оценки, НЕ переключаем трек
+          openRatingModal(ct.id);
+        } else {
+          playNext();
+        }
       });
 
       // Save AudioEngine reference in store (for compatibility)
@@ -165,7 +176,7 @@ export default function PlaybackPage() {
     };
   }, [isClient, isPlaying]);
 
-  // Загрузка треков при монтировании
+  // Загрузка треков при монтировании (и при смене режима модератора)
   useEffect(() => {
     if (!isClient) return;
 
@@ -191,7 +202,11 @@ export default function PlaybackPage() {
         if (cancelled || data == null) return;
 
         if (Array.isArray(data)) {
-          setTracks(data);
+          // В режиме модератора показываем только непрослушанные треки
+          const filteredData = isModerating
+            ? data.filter((t: Track) => t.trackStatus === "unlistened")
+            : data;
+          setTracks(filteredData);
 
           // Только админ: подтянуть rowDominancePercent и hasBridges в БД (API защищены requireAdmin)
           const user = useAuthStore.getState().user;
@@ -284,7 +299,7 @@ export default function PlaybackPage() {
     return () => {
       cancelled = true;
     };
-  }, [isClient, setTracks, setCurrentTrack, loadTrack]);
+  }, [isClient, isModerating, setTracks, setCurrentTrack, loadTrack]);
 
   // Подписка на обновления битов через callback
   useEffect(() => {
@@ -348,6 +363,7 @@ export default function PlaybackPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8 relative">
+      <ModerationModal />
       {isReanalyzing && (
         <div
           className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm"

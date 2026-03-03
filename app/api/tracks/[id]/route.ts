@@ -52,7 +52,7 @@ export async function PATCH(
     } else if (key === 'metaGenre' && (body[key] === null || typeof body[key] === 'string')) {
       data['metaGenre'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 200) || null
     } else if (key === 'metaComment' && (body[key] === null || typeof body[key] === 'string')) {
-      data['metaComment'] = body[key] === null ? null : (body[key] as string).trim() || null
+      data['metaComment'] = body[key] === null ? null : (body[key] as string).trim().slice(0, 1000) || null
     } else if (key === 'metaTrackNum' && (body[key] === null || (typeof body[key] === 'number' && Number.isInteger(body[key])))) {
       data['metaTrackNum'] = body[key] as number | null
     } else if (key === 'hasAccents' && typeof body[key] === 'boolean') {

@@ -234,7 +234,7 @@ export default function V2AnalysisDisplay({
   return (
     <div className="space-y-4 text-sm">
       {/* Raw Analysis (8 рядов, Beats / Sum / Avg / Max + Perc sum/avg) */}
-      {data.track_type === "bachata" &&
+      {(data.track_type === "bachata" || data.track_type === "popsa") &&
         data.row_analysis &&
         Object.keys(data.row_analysis).length > 0 && (
           <details className="group" open>
@@ -362,7 +362,7 @@ export default function V2AnalysisDisplay({
                   })()}
                 </tbody>
               </table>
-              {data.row_analysis_verdict && (
+              {data.track_type === "bachata" && data.row_analysis_verdict && (
                 <div className="text-xs text-gray-400 mt-2 space-y-1">
                   {(() => {
                     const winningRows =

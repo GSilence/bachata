@@ -78,12 +78,11 @@ export async function GET(request: NextRequest) {
 
       if (rowDominancePercent == null) continue;
 
-      const rowSwapped = data.row_swapped === true;
-
-      // Пишем в отдельные колонки БД (не в gridMap JSON)
+      // rowSwapped НЕ перезаписываем: это пользовательский флаг ("нажата кнопка Swap").
+      // Python row_swapped = внутренняя коррекция алгоритма, к UI не относится.
       await prisma.track.update({
         where: { id: track.id },
-        data: { rowDominancePercent, rowSwapped },
+        data: { rowDominancePercent },
       });
       updated++;
     } catch {

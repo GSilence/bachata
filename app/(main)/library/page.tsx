@@ -195,13 +195,6 @@ export default function LibraryPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (data.duplicate) {
-          return {
-            id: item.id,
-            status: "duplicate" as const,
-            error: data.error || "Дубликат",
-          };
-        }
         return {
           id: item.id,
           status: "error",
@@ -267,10 +260,10 @@ export default function LibraryPage() {
   const progressLabel =
     total > 0
       ? isProcessing
-        ? `Обработано ${finishedCount} из ${total}`
+        ? `Добавлено в очередь: ${finishedCount} из ${total}`
         : allDone
-          ? `Готово: ${doneCount} успешно${dupCount ? `, ${dupCount} дубл.` : ""}${errorCount ? `, ${errorCount} ошибок` : ""}`
-          : `${total} файл(ов) в очереди`
+          ? `Готово: ${doneCount} в очереди${dupCount ? `, ${dupCount} дубл.` : ""}${errorCount ? `, ${errorCount} ошибок` : ""}`
+          : `${total} файл(ов) ожидают`
       : null;
 
   return (
@@ -300,7 +293,7 @@ export default function LibraryPage() {
               />
             </svg>
             <div>
-              <p className="text-white font-medium">Идёт обработка треков</p>
+              <p className="text-white font-medium">Добавляется в очередь</p>
               <p className="text-gray-400 text-sm">
                 {progressLabel || "Подождите, пожалуйста..."}
               </p>
@@ -311,12 +304,20 @@ export default function LibraryPage() {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold text-white">Медиатека</h1>
-          <Link
-            href="/"
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
-          >
-            ← Назад
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/queue"
+              className="px-4 py-2 bg-gray-800 text-gray-400 rounded-lg hover:bg-gray-700 hover:text-white transition-colors text-sm"
+            >
+              Очередь
+            </Link>
+            <Link
+              href="/"
+              className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              ← Назад
+            </Link>
+          </div>
         </div>
 
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
@@ -333,15 +334,15 @@ export default function LibraryPage() {
           {allDone && doneCount > 0 && (
             <div className="mb-4 p-4 bg-green-900/50 border border-green-700 rounded-lg text-green-200 flex items-center justify-between flex-wrap gap-2">
               <span>
-                Загрузка завершена. Успешно: {doneCount}
-                {errorCount > 0 ? `, с ошибками: ${errorCount}` : ""}.
+                Добавлено в очередь: {doneCount}
+                {errorCount > 0 ? `, с ошибками: ${errorCount}` : ""}. Анализ идёт в фоне.
               </span>
               <button
                 type="button"
-                onClick={() => router.push("/")}
+                onClick={() => router.push("/queue")}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
-                Перейти в плейлист
+                Смотреть очередь
               </button>
             </div>
           )}

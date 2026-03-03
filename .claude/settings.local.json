@@ -53,7 +53,10 @@
       "Bash(D:/Sites/bachata/venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(''scripts/analyze-track-v2.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
       "Bash(D:/Sites/bachata/venv/Scripts/python.exe:*)",
       "Bash(d:/Sites/bachata/venv/Scripts/python.exe:*)",
-      "Bash(D:/Sites/bachata/venv/Scripts/pip.exe show:*)"
+      "Bash(D:/Sites/bachata/venv/Scripts/pip.exe show:*)",
+      "Bash(node -e \":*)",
+      "Bash(node -e \"const { PrismaClient } = require\\(''@prisma/client''\\); const p = new PrismaClient\\(\\); p.track.findMany\\({select:{id:true,pathOriginal:true},orderBy:{id:''asc''},take:5}\\).then\\(r=>{console.log\\(JSON.stringify\\(r\\)\\);p.$disconnect\\(\\)}\\).catch\\(e=>console.error\\(e.message\\)\\)\")",
+      "Bash(head -30 \"d:/Sites/bachata/app/\\(main\\)/page.tsx\")"
     ]
   }
 }

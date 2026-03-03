@@ -40,7 +40,7 @@ model Track {
   hasBridges          Boolean  @default(false) // true если есть хотя бы один бридж (из анализа или добавлен админом)
 
   // Статус модерации
-  trackStatus  String  @default("unlistened") // "unlistened" | "moderation" | "approved"
+  trackStatus  String  @default("unlistened") // "unlistened" | "moderation" | "approved" | "popsa"
 
   // Пользовательские метки
   hasAccents  Boolean  @default(false) // есть акценты
@@ -54,21 +54,112 @@ model Track {
   metaGenre    String?  @db.VarChar(200)
   metaComment  String?  @db.Text
   metaTrackNum Int?
+
+  // Статистика прослушиваний
+  playsTotal        Int       @default(0) // всего прослушиваний
+  playsMonth        Int       @default(0) // прослушиваний в текущем месяце
+  playsMonthResetAt DateTime? // когда был сброшен счётчик за месяц
+
+  playlistItems PlaylistItem[]
+}
+
+model UserTrack {
+  id      Int      @id @default(autoincrement())
+  userId  Int
+  trackId Int
+  addedAt DateTime @default(now())
+
+  @@unique([userId, trackId])
+}
+
+model UploadQueue {
+  id           Int       @id @default(autoincrement())
+  filename     String    // временное имя файла в uploads/queue/
+  originalName String    // оригинальное имя из браузера
+  title        String
+  artist       String?
+  album        String?
+  genre        String?
+  year         Int?
+  trackNumber  Int?
+  comment      String?
+  fileHash     String
+  status       String    @default("pending") // pending | processing | done | failed
+  error        String?   @db.Text
+  trackId      Int?      // ID созданного Track (заполняется после done)
+  uploadedBy   Int?      // userId (для будущих личных кабинетов)
+  createdAt    DateTime  @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
 }
 
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
   password  String   // bcrypt hash
-  role      String   @default("user") // "admin" | "user"
+  role      String   @default("user") // "admin" | "moderator" | "user"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Профиль (опционально; для существующих пользователей не заполнено — не мешает)
+  // Профиль (String? — для совместимости с уже существующими admin-аккаунтами)
   name      String?  @db.VarChar(200)
   city      String?  @db.VarChar(120)
   country   String?  @db.VarChar(120)
   language  String?  @db.VarChar(20)
   telegram  String?  @db.VarChar(100)
   phone     String?  @db.VarChar(40)
+
+  // Блокировка
+  isBanned     Boolean  @default(false)
+  bannedReason String?  @db.VarChar(500)
+
+  // Email-верификация
+  // @default(true) — существующие пользователи считаются верифицированными;
+  // новые регистрации явно получают false в /api/auth/register
+  emailVerified        Boolean   @default(true)
+  emailVerifyToken     String?   @unique @db.VarChar(100)
+  emailVerifyExpiresAt DateTime?
+
+  // Сброс пароля
+  passwordResetToken     String?   @unique @db.VarChar(100)
+  passwordResetExpiresAt DateTime?
+
+  playlists Playlist[]
+}
+
+// ─── Промокоды (одноразовые, дают роль moderator) ─────────────────────────
+model PromoCode {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(64)
+  description String?  @db.VarChar(200) // заметка для админа: кому предназначен
+  createdAt   DateTime @default(now())
+}
+
+// ─── Плейлисты ──────────────────────────────────────────────────────────────
+model Playlist {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  name      String   @db.VarChar(200)
+  type      String   @default("custom") // "favorites" | "custom"
+  isSystem  Boolean  @default(false)    // системные нельзя удалить
+  createdAt DateTime @default(now())
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items PlaylistItem[]
+
+  @@index([userId])
+}
+
+model PlaylistItem {
+  id         Int      @id @default(autoincrement())
+  playlistId Int
+  trackId    Int
+  position   Int?     // для ручной сортировки в кастомных плейлистах
+  addedAt    DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track    Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, trackId])
+  @@index([playlistId])
 }

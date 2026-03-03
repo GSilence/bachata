@@ -33,6 +33,8 @@ export async function GET(request: NextRequest) {
         language: true,
         telegram: true,
         phone: true,
+        emailVerified: true,
+        isBanned: true,
       },
     });
 
@@ -40,6 +42,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         user: { id: payload.userId, email: payload.email, role: payload.role },
       });
+    }
+
+    // Не пускаем забаненных даже через cookie
+    if (dbUser.isBanned) {
+      return NextResponse.json({ user: null });
     }
 
     return NextResponse.json({
@@ -53,6 +60,7 @@ export async function GET(request: NextRequest) {
         language: dbUser.language ?? undefined,
         telegram: dbUser.telegram ?? undefined,
         phone: dbUser.phone ?? undefined,
+        emailVerified: dbUser.emailVerified,
       },
     });
   } catch (err) {

@@ -79,7 +79,7 @@ npm run check:demucs
 # Скачайте и запустите автоматический скрипт установки
 wget https://raw.githubusercontent.com/GSilence/bachata/master/install-bachata.sh -O install-bachata.sh
 chmod +x install-bachata.sh
-./install-bachata.sh
+./docs/install-bachata.sh
 ```
 
 **Особенности:**
@@ -97,7 +97,7 @@ chmod +x install-bachata.sh
 - [`docs/DEPLOYMENT_VDS.md`](./docs/DEPLOYMENT_VDS.md) - полная документация по развертыванию
 - [`docs/database-setup.md`](./docs/database-setup.md) - настройка базы данных
 - [`docs/DEMUCS_SETUP.md`](./docs/DEMUCS_SETUP.md) - установка Demucs
-- [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) - решение проблем
+- [`TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md) - решение проблем
 
 ## Технологии
 

@@ -98,6 +98,7 @@ export const usePlayerStore = create<PlayerState>()(
       statusFilterUnlistened: true,
       statusFilterModeration: true,
       statusFilterApproved: true,
+      statusFilterPopsa: true,
       accentFilterOn: false,
       mamboFilterOn: false,
       squareSortDirection: "none",
@@ -249,6 +250,7 @@ export const usePlayerStore = create<PlayerState>()(
       setStatusFilterUnlistened: (value) => set({ statusFilterUnlistened: value }),
       setStatusFilterModeration: (value) => set({ statusFilterModeration: value }),
       setStatusFilterApproved: (value) => set({ statusFilterApproved: value }),
+      setStatusFilterPopsa: (value) => set({ statusFilterPopsa: value }),
       setAccentFilterOn: (value) => set({ accentFilterOn: value }),
       setMamboFilterOn: (value) => set({ mamboFilterOn: value }),
       setSquareSortDirection: (dir) => set({ squareSortDirection: dir }),
@@ -312,6 +314,7 @@ export const usePlayerStore = create<PlayerState>()(
             statusFilterUnlistened,
             statusFilterModeration,
             statusFilterApproved,
+            statusFilterPopsa,
             accentFilterOn,
             mamboFilterOn,
             dominanceBucketNeg,
@@ -345,7 +348,8 @@ export const usePlayerStore = create<PlayerState>()(
               const match =
                 (s === "unlistened" && statusFilterUnlistened) ||
                 (s === "moderation" && statusFilterModeration) ||
-                (s === "approved" && statusFilterApproved);
+                (s === "approved" && statusFilterApproved) ||
+                (s === "popsa" && statusFilterPopsa);
               if (!match) return false;
             }
 
@@ -542,6 +546,7 @@ export const usePlayerStore = create<PlayerState>()(
             statusFilterUnlistened,
             statusFilterModeration,
             statusFilterApproved,
+            statusFilterPopsa,
             accentFilterOn,
             mamboFilterOn,
             dominanceBucketNeg,
@@ -563,7 +568,8 @@ export const usePlayerStore = create<PlayerState>()(
               const match =
                 (s === "unlistened" && statusFilterUnlistened) ||
                 (s === "moderation" && statusFilterModeration) ||
-                (s === "approved" && statusFilterApproved);
+                (s === "approved" && statusFilterApproved) ||
+                (s === "popsa" && statusFilterPopsa);
               if (!match) return false;
             }
             const isSwapped = track.rowSwapped; // колонка БД
@@ -706,6 +712,7 @@ export const usePlayerStore = create<PlayerState>()(
         statusFilterUnlistened: state.statusFilterUnlistened,
         statusFilterModeration: state.statusFilterModeration,
         statusFilterApproved: state.statusFilterApproved,
+        statusFilterPopsa: state.statusFilterPopsa,
         accentFilterOn: state.accentFilterOn,
         mamboFilterOn: state.mamboFilterOn,
         squareSortDirection: state.squareSortDirection,
@@ -747,6 +754,7 @@ export const usePlayerStore = create<PlayerState>()(
           statusFilterUnlistened: get("statusFilterUnlistened", currentState.statusFilterUnlistened),
           statusFilterModeration: get("statusFilterModeration", currentState.statusFilterModeration),
           statusFilterApproved: get("statusFilterApproved", currentState.statusFilterApproved),
+          statusFilterPopsa: get("statusFilterPopsa", currentState.statusFilterPopsa),
           accentFilterOn: get("accentFilterOn", currentState.accentFilterOn),
           mamboFilterOn: get("mamboFilterOn", currentState.mamboFilterOn),
           squareSortDirection: get(
