@@ -91,14 +91,16 @@ export default function SettingsPage() {
       allTracks = await r.json();
     }
 
-    // Только треки в статусе "Новое" (unlistened)
-    const unlistenedTracks = allTracks.filter((t: any) => t.trackStatus === "unlistened");
+    // Только треки в статусе "Новое" (unlistened) + с мостиками
+    const unlistenedTracks = allTracks.filter(
+      (t: any) => t.trackStatus === "unlistened" && (t.gridMap?.bridges?.length ?? 0) > 0,
+    );
     if (unlistenedTracks.length === 0) {
-      alert("Нет треков со статусом «Новое».");
+      alert("Нет треков со статусом «Новое» с мостиками.");
       return;
     }
 
-    if (!confirm(`Переанализировать ${unlistenedTracks.length} треков со статусом «Новое» (по 2 за раз)?`)) {
+    if (!confirm(`Переанализировать ${unlistenedTracks.length} треков со статусом «Новое» с мостиками (по 2 за раз)?`)) {
       return;
     }
 
