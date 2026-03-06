@@ -1,36 +1,23 @@
 /**
- * Email utility через nodemailer.
+ * Email utility через Resend API (HTTPS, порт 443).
  *
- * Переменные окружения (.env.local):
- *   SMTP_HOST      — хост SMTP-сервера (напр. smtp.gmail.com)
- *   SMTP_PORT      — порт (465 для SSL, 587 для TLS)
- *   SMTP_SECURE    — "true" для port 465, "false" для 587
- *   SMTP_USER      — логин/email отправителя
- *   SMTP_PASS      — пароль или app-password
- *   SMTP_FROM      — отображаемый адрес отправителя (напр. "Bachata <noreply@bachata.ru>")
- *   APP_URL        — базовый URL сайта (напр. https://bachata.ru) — для ссылок в письмах
+ * Переменные окружения (.env):
+ *   RESEND_API_KEY — API-ключ Resend (re_...)
+ *   SMTP_FROM      — отображаемый адрес отправителя (напр. "Bachata <noreply@bachata-music.com>")
+ *   APP_URL        — базовый URL сайта (напр. https://bachata-music.com) — для ссылок в письмах
  *
- * Если SMTP_HOST не задан — письма выводятся в консоль (dev-режим).
+ * Если RESEND_API_KEY не задан — письма выводятся в консоль (dev-режим).
  */
 
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 export const APP_URL =
   process.env.APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
 
-function createTransport() {
-  const host = process.env.SMTP_HOST;
-  if (!host) return null;
-
-  return nodemailer.createTransport({
-    host,
-    port: parseInt(process.env.SMTP_PORT || "587", 10),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: {
-      user: process.env.SMTP_USER || "",
-      pass: process.env.SMTP_PASS || "",
-    },
-  });
+function getResend(): Resend | null {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  return new Resend(key);
 }
 
 interface EmailOptions {
@@ -41,13 +28,13 @@ interface EmailOptions {
 }
 
 export async function sendEmail(options: EmailOptions): Promise<void> {
-  const transport = createTransport();
+  const resend = getResend();
   const from =
-    process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@bachata.local";
+    process.env.SMTP_FROM || "Bachata <noreply@bachata-music.com>";
 
-  if (!transport) {
+  if (!resend) {
     // Dev-режим: письмо в консоль
-    console.log("\n📧 [EMAIL DEV MODE]");
+    console.log("\n[EMAIL DEV MODE]");
     console.log(`To: ${options.to}`);
     console.log(`Subject: ${options.subject}`);
     console.log(`Text: ${options.text || "(html only)"}`);
@@ -55,13 +42,17 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
     return;
   }
 
-  await transport.sendMail({
+  const { error } = await resend.emails.send({
     from,
     to: options.to,
     subject: options.subject,
     html: options.html,
     text: options.text,
   });
+
+  if (error) {
+    throw new Error(`Resend error: ${error.message}`);
+  }
 }
 
 // ─── Шаблоны писем ──────────────────────────────────────────────────────────
