@@ -43,29 +43,50 @@ export async function GET(request: NextRequest) {
   // Проверяем: есть ли уже назначенный трек у этого пользователя
   const existing = await prisma.modQueue.findFirst({
     where: { assignedTo: authUser.userId, status: "assigned" },
-    include: { track: { select: TRACK_SELECT } },
   });
   if (existing) {
-    return NextResponse.json({
-      modQueueId: existing.id,
-      swapCount: existing.swapCount,
-      track: existing.track,
-    });
+    const track = await prisma.track.findUnique({ where: { id: existing.trackId }, select: TRACK_SELECT });
+    if (!track) {
+      // Сиротская запись — удаляем, продолжаем к назначению нового
+      await prisma.modQueue.delete({ where: { id: existing.id } }).catch(() => {});
+    } else {
+      return NextResponse.json({
+        modQueueId: existing.id,
+        swapCount: existing.swapCount,
+        track,
+      });
+    }
   }
 
-  // Берём первый pending в транзакции
-  const entry = await prisma.$transaction(async (tx) => {
-    const pending = await tx.modQueue.findFirst({
-      where: { status: "pending" },
-      orderBy: { createdAt: "asc" },
+  // Берём первый pending, пропуская сиротские записи (трек удалён)
+  let entry: any = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const result = await prisma.$transaction(async (tx) => {
+      const pending = await tx.modQueue.findFirst({
+        where: { status: "pending" },
+        orderBy: { createdAt: "asc" },
+      });
+      if (!pending) return null;
+
+      // Проверяем, существует ли трек
+      const track = await tx.track.findUnique({ where: { id: pending.trackId } });
+      if (!track) {
+        // Сиротская запись — удаляем и сигнализируем retry
+        await tx.modQueue.delete({ where: { id: pending.id } });
+        return "orphan";
+      }
+
+      return tx.modQueue.update({
+        where: { id: pending.id },
+        data: { status: "assigned", assignedTo: authUser.userId, assignedAt: new Date() },
+        include: { track: { select: TRACK_SELECT } },
+      });
     });
-    if (!pending) return null;
-    return tx.modQueue.update({
-      where: { id: pending.id },
-      data: { status: "assigned", assignedTo: authUser.userId, assignedAt: new Date() },
-      include: { track: { select: TRACK_SELECT } },
-    });
-  });
+
+    if (result === "orphan") continue; // пропускаем, берём следующий
+    entry = result;
+    break;
+  }
 
   if (!entry) {
     return NextResponse.json({ modQueueId: null, track: null });
