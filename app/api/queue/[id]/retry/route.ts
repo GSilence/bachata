@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { existsSync } from "fs";
 import { join } from "path";
+import { isS3Enabled } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -33,13 +34,15 @@ export async function POST(
     return NextResponse.json({ error: "Только failed-записи можно повторить" }, { status: 400 });
   }
 
-  // Проверяем, что файл ещё есть в queue/
-  const queueFile = join(process.cwd(), "public", "uploads", "queue", entry.filename);
-  if (!existsSync(queueFile)) {
-    return NextResponse.json(
-      { error: "Файл не найден в очереди (возможно, был удалён вручную)" },
-      { status: 400 },
-    );
+  // Проверяем наличие файла: в S3-режиме — пропускаем проверку (файл в облаке)
+  if (!isS3Enabled()) {
+    const queueFile = join(process.cwd(), "public", "uploads", "queue", entry.filename);
+    if (!existsSync(queueFile)) {
+      return NextResponse.json(
+        { error: "Файл не найден в очереди (возможно, был удалён вручную)" },
+        { status: 400 },
+      );
+    }
   }
 
   const updated = await (prisma as any).uploadQueue.update({
