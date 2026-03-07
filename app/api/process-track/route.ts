@@ -4,6 +4,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import { createHash } from "crypto";
 import { requireAuth } from "@/lib/auth";
+import { isS3Enabled, uploadBuffer } from "@/lib/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -184,21 +185,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ queued: true, queueId: queueHashDuplicate.id, position: 1, message: "Уже в очереди" });
     }
 
-    // Сохраняем файл во временную папку очереди
-    const queueDir = join(process.cwd(), "public", "uploads", "queue");
-    if (!existsSync(queueDir)) {
-      await mkdir(queueDir, { recursive: true });
-    }
-
     const titlePart = normalizeFilename(trimmedTitle || file.name.replace(/\.[^.]+$/, ""));
     const artistPart = trimmedArtist ? normalizeFilename(trimmedArtist) : "";
     const rawBase = (artistPart ? `${titlePart}-${artistPart}` : titlePart).slice(0, 200);
     const extFromName = (file.name.split(".").pop() || "mp3").toLowerCase();
     const fileExtension = /^[a-z0-9]+$/.test(extFromName) ? extFromName : "mp3";
-    const { filePath, fileName } = getUniqueFilePath(queueDir, rawBase, fileExtension);
 
-    await writeFile(filePath, buffer);
-    console.log(`[process-track] Queued: ${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    let fileName: string;
+
+    if (isS3Enabled()) {
+      // S3-режим: загружаем напрямую в бакет как queue/filename.mp3
+      // Имя уникализируем через хэш чтобы не конфликтовало
+      fileName = `${rawBase.slice(0, 180)}-${fileHash.slice(0, 8)}.${fileExtension}`;
+      await uploadBuffer(buffer, `queue/${fileName}`);
+      console.log(`[process-track] S3 queued: queue/${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    } else {
+      // Локальный режим: сохраняем в public/uploads/queue/
+      const queueDir = join(process.cwd(), "public", "uploads", "queue");
+      if (!existsSync(queueDir)) {
+        await mkdir(queueDir, { recursive: true });
+      }
+      const unique = getUniqueFilePath(queueDir, rawBase, fileExtension);
+      fileName = unique.fileName;
+      await writeFile(unique.filePath, buffer);
+      console.log(`[process-track] Local queued: ${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    }
 
     // Создаём запись в очереди
     const entry = await (prisma as any).uploadQueue.create({

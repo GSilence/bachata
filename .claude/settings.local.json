@@ -60,7 +60,10 @@
       "WebFetch(domain:www.cloudflare.com)",
       "WebFetch(domain:www.backblaze.com)",
       "WebFetch(domain:timeweb.com)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:cdn.bachata-music.com)",
+      "Bash(npm list @aws-sdk/client-s3)",
+      "Bash(npm list mime-types)"
     ]
   }
 }

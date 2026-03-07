@@ -17,19 +17,19 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, copyFileSync, rmSync } from "fs";
 import { join } from "path";
+import { uploadFile, isS3Enabled, getFileUrl, downloadFile, deleteFile as deleteS3File } from "../lib/storage";
 
 const execAsync = promisify(exec);
 
 // ─── Env ───────────────────────────────────────────────────────────────────
 
-function loadEnvLocal() {
-  const envPath = join(process.cwd(), ".env.local");
-  if (!existsSync(envPath)) return;
+function loadEnvFile(filePath: string) {
+  if (!existsSync(filePath)) return;
   try {
-    const lines = readFileSync(envPath, "utf-8").split("\n");
+    const lines = readFileSync(filePath, "utf-8").split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
+      if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("##")) continue;
       const [key, ...rest] = trimmed.split("=");
       if (!key) continue;
       const value = rest.join("=").trim().replace(/^["']|["']$/g, "");
@@ -38,7 +38,9 @@ function loadEnvLocal() {
   } catch {}
 }
 
-loadEnvLocal();
+// Сначала .env (базовые), потом .env.local (перезаписывает — приоритет выше)
+loadEnvFile(join(process.cwd(), ".env"));
+loadEnvFile(join(process.cwd(), ".env.local"));
 
 const PYTHON = (process.env.DEMUCS_PYTHON_PATH || "python").trim().replace(/^["']|["']$/g, "");
 const CWD    = process.cwd();
@@ -69,10 +71,22 @@ function log(...args: unknown[]) {
 // ─── Core: обработка одного трека ──────────────────────────────────────────
 
 async function processEntry(entry: any) {
-  const queueFilePath = join(CWD, "public", "uploads", "queue", entry.filename);
+  const s3Mode = isS3Enabled();
 
-  if (!existsSync(queueFilePath)) {
-    throw new Error(`Queue file not found: ${queueFilePath}`);
+  // В S3-режиме — скачиваем файл из S3 во временную папку для анализа
+  // В локальном режиме — берём из queue/ напрямую
+  const tempDir = join(CWD, "public", "uploads", "queue");
+  if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
+  const queueFilePath = join(tempDir, entry.filename);
+
+  if (s3Mode) {
+    log(`Downloading from S3: queue/${entry.filename}`);
+    await downloadFile(`queue/${entry.filename}`, queueFilePath);
+    log(`Downloaded to temp: ${queueFilePath}`);
+  } else {
+    if (!existsSync(queueFilePath)) {
+      throw new Error(`Queue file not found: ${queueFilePath}`);
+    }
   }
 
   const scriptPath = join(CWD, "scripts", "analyze-track-v2.py");
@@ -81,8 +95,8 @@ async function processEntry(entry: any) {
   // ── Анализ v2 ──────────────────────────────────────────────────────────
   log(`Running v2 analysis: ${entry.filename}`);
   const { stdout, stderr } = await execAsync(
-    `NUMBA_DISABLE_JIT=1 "${PYTHON}" "${scriptPath}" "${queueFilePath}"`,
-    { maxBuffer: 10 * 1024 * 1024, timeout: 300_000 },
+    `"${PYTHON}" "${scriptPath}" "${queueFilePath}"`,
+    { maxBuffer: 10 * 1024 * 1024, timeout: 300_000, env: { ...process.env, NUMBA_DISABLE_JIT: "1" } },
   );
   if (stderr) log("v2 stderr:", stderr.slice(0, 500));
 
@@ -95,8 +109,8 @@ async function processEntry(entry: any) {
     const popsaScript = join(CWD, "scripts", "analyze-popsa.py");
     if (!existsSync(popsaScript)) throw new Error("analyze-popsa.py not found");
     const { stdout: popsaOut, stderr: popsaErr } = await execAsync(
-      `NUMBA_DISABLE_JIT=1 "${PYTHON}" "${popsaScript}" "${queueFilePath}"`,
-      { maxBuffer: 10 * 1024 * 1024, timeout: 300_000 },
+      `"${PYTHON}" "${popsaScript}" "${queueFilePath}"`,
+      { maxBuffer: 10 * 1024 * 1024, timeout: 300_000, env: { ...process.env, NUMBA_DISABLE_JIT: "1" } },
     );
     if (popsaErr) log("popsa stderr:", popsaErr.slice(0, 500));
     const popsaResult = JSON.parse(popsaOut.trim());
@@ -147,18 +161,34 @@ async function processEntry(entry: any) {
     log("Genre failed (non-critical):", e.message);
   }
 
-  // ── Переносим файл queue/ → raw/ ──────────────────────────────────────
-  const rawDir = join(CWD, "public", "uploads", "raw");
-  if (!existsSync(rawDir)) mkdirSync(rawDir, { recursive: true });
-  const rawFilePath = join(rawDir, entry.filename);
-  try {
-    renameSync(queueFilePath, rawFilePath);
-  } catch {
-    // На Windows rename может упасть с EPERM если файл ещё занят — fallback: copy + delete
-    copyFileSync(queueFilePath, rawFilePath);
-    rmSync(queueFilePath);
+  // ── Финализируем файл: S3 или локально ────────────────────────────────
+  const s3Key = `raw/${entry.filename}`;
+
+  if (s3Mode) {
+    // S3: загружаем temp-файл в raw/, удаляем temp и queue/ из S3
+    log(`Uploading to S3: ${s3Key}`);
+    await uploadFile(queueFilePath, s3Key);
+    log(`S3 upload done: ${s3Key}`);
+    try { rmSync(queueFilePath); } catch {}  // удаляем temp
+    try { await deleteS3File(`queue/${entry.filename}`); } catch {}  // удаляем из S3 queue/
+    log(`Deleted from S3 queue: queue/${entry.filename}`);
+  } else {
+    // Локально: переносим queue/ → raw/
+    const rawDir = join(CWD, "public", "uploads", "raw");
+    if (!existsSync(rawDir)) mkdirSync(rawDir, { recursive: true });
+    const rawFilePath = join(rawDir, entry.filename);
+    try {
+      renameSync(queueFilePath, rawFilePath);
+    } catch {
+      if (existsSync(queueFilePath)) {
+        copyFileSync(queueFilePath, rawFilePath);
+        rmSync(queueFilePath);
+      } else if (!existsSync(rawFilePath)) {
+        throw new Error(`File disappeared during move: ${queueFilePath}`);
+      }
+    }
+    log(`Moved → raw/${entry.filename}`);
   }
-  log(`Moved → raw/${entry.filename}`);
 
   // ── Создаём Track ────────────────────────────────────────────────────
   const gridMap: Record<string, unknown> = {
@@ -187,7 +217,7 @@ async function processEntry(entry: any) {
       baseBpm:     finalBpm,
       baseOffset:  finalOffset,
       isFree:      true,
-      pathOriginal: `/uploads/raw/${entry.filename}`,
+      pathOriginal: getFileUrl(s3Key),
       isProcessed:  false,
       analyzerType: "v2",
       fileHash:     entry.fileHash,

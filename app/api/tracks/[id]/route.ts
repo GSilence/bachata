@@ -4,6 +4,7 @@ import { rm, readdir } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { requireAdmin } from '@/lib/auth'
+import { keyFromUrl, deleteFile as deleteS3File, isS3Enabled } from '@/lib/storage'
 
 /** PATCH /api/tracks/[id] — обновление названия и метаданных трека (только для админа). */
 export async function PATCH(
@@ -158,17 +159,22 @@ export async function DELETE(
 
     const publicDir = join(process.cwd(), 'public')
 
-    // Удаляем оригинальный аудиофайл
-    if (track.pathOriginal) {
-      const originalPath = join(publicDir, track.pathOriginal)
-      if (existsSync(originalPath)) {
-        try {
-          await rm(originalPath)
-          console.log(`Deleted original file: ${track.pathOriginal}`)
-        } catch (error: any) {
-          console.warn(`Error deleting original file: ${error.message}`)
+    // Хелпер: удаляет файл из S3 или локально (по URL или локальному пути)
+    const deleteAudioFile = async (urlOrPath: string) => {
+      const key = keyFromUrl(urlOrPath)
+      if (key && isS3Enabled()) {
+        try { await deleteS3File(key); console.log(`Deleted from S3: ${key}`) } catch (e: any) { console.warn(`S3 delete error: ${e.message}`) }
+      } else {
+        const localPath = urlOrPath.startsWith('/') ? join(publicDir, urlOrPath) : join(publicDir, urlOrPath)
+        if (existsSync(localPath)) {
+          try { await rm(localPath); console.log(`Deleted local: ${urlOrPath}`) } catch (e: any) { console.warn(`Local delete error: ${e.message}`) }
         }
       }
+    }
+
+    // Удаляем оригинальный аудиофайл
+    if (track.pathOriginal) {
+      await deleteAudioFile(track.pathOriginal)
     }
 
     // Удаляем report-файлы (все с префиксом {basename}_*)
@@ -221,15 +227,7 @@ export async function DELETE(
       ].filter(Boolean) as string[]
 
       for (const stemPath of stemFiles) {
-        const fullStemPath = join(publicDir, stemPath)
-        if (existsSync(fullStemPath)) {
-          try {
-            await rm(fullStemPath)
-            console.log(`Deleted stem file: ${stemPath}`)
-          } catch (error: any) {
-            console.warn(`Error deleting stem file ${stemPath}: ${error.message}`)
-          }
-        }
+        await deleteAudioFile(stemPath)
       }
     }
 

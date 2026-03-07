@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import SettingsPanel from "@/components/SettingsPanel";
 import { useAuthStore } from "@/store/authStore";
@@ -25,19 +25,12 @@ export default function SettingsPage() {
   const [stats, setStats] = useState<TrackStats | null>(null);
   const [tracks, setTracks] = useState<any[]>([]);
   const [showPreview, setShowPreview] = useState(false);
-  const [isReanalyzing, setIsReanalyzing] = useState(false);
-  const [reanalyzeResult, setReanalyzeResult] = useState<{
-    success: number;
-    errors: number;
-    total: number;
-  } | null>(null);
-  const [reanalyzeProgress, setReanalyzeProgress] = useState<{
-    current: number;
-    total: number;
-    currentTitle: string;
-  } | null>(null);
-  const [isBackfilling, setIsBackfilling] = useState(false);
-  const [backfillResult, setBackfillResult] = useState<{ added: number; total: number } | null>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationStopped, setMigrationStopped] = useState(false);
+  const migrationStopRef = useRef(false);
+  const [migrationStats, setMigrationStats] = useState<{ total: number; localCount: number; s3Count: number } | null>(null);
+  const [migrationProgress, setMigrationProgress] = useState<{ migrated: number; skipped: number; lastTitle: string } | null>(null);
+  const [migrationDone, setMigrationDone] = useState(false);
 
   // Auth check
   useEffect(() => {
@@ -84,68 +77,45 @@ export default function SettingsPage() {
     }
   };
 
-  const handleReanalyzeAll = async () => {
-    // Используем уже загруженные треки или перезагружаем
-    let allTracks = tracks;
-    if (allTracks.length === 0) {
-      const r = await fetch("/api/tracks", { cache: "no-store" });
-      if (!r.ok) { alert("Не удалось загрузить список треков"); return; }
-      allTracks = await r.json();
-    }
+  const fetchMigrationStats = async () => {
+    try {
+      const r = await fetch("/api/admin/migrate-to-s3");
+      if (r.ok) setMigrationStats(await r.json());
+    } catch {}
+  };
 
-    // Только треки в статусе "Новое" (unlistened) + с мостиками
-    const unlistenedTracks = allTracks.filter(
-      (t: any) => t.trackStatus === "unlistened" && (t.gridMap?.bridges?.length ?? 0) > 0,
-    );
-    if (unlistenedTracks.length === 0) {
-      alert("Нет треков со статусом «Новое» с мостиками.");
-      return;
-    }
+  useEffect(() => {
+    if (isAdmin(user?.role)) fetchMigrationStats();
+  }, [user]);
 
-    if (!confirm(`Переанализировать ${unlistenedTracks.length} треков со статусом «Новое» с мостиками (по 2 за раз)?`)) {
-      return;
-    }
+  const handleMigrate = async () => {
+    migrationStopRef.current = false;
+    setIsMigrating(true);
+    setMigrationStopped(false);
+    setMigrationDone(false);
+    setMigrationProgress({ migrated: 0, skipped: 0, lastTitle: "" });
 
-    setIsReanalyzing(true);
-    setReanalyzeResult(null);
-    setReanalyzeProgress({ current: 0, total: unlistenedTracks.length, currentTitle: "" });
+    let migrated = 0;
+    let skipped = 0;
 
-    let success = 0;
-    let errors = 0;
-    let completed = 0;
-
-    const analyzeTrack = async (track: any) => {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (migrationStopRef.current) break;
       try {
-        const r = await fetch(`/api/tracks/${track.id}/analyze-v2`, { method: "POST" });
-        // Дожидаемся завершения SSE-стрима, чтобы Python-процесс закончил работу
-        if (r.body) {
-          const reader = r.body.getReader();
-          while (true) {
-            const { done } = await reader.read();
-            if (done) break;
-          }
-        }
-        if (r.ok) success++; else errors++;
+        const r = await fetch("/api/admin/migrate-to-s3", { method: "POST" });
+        if (!r.ok) { alert("Ошибка миграции: " + (await r.text())); break; }
+        const data = await r.json();
+        if (data.skipped) skipped++; else migrated++;
+        setMigrationProgress({ migrated, skipped, lastTitle: data.title || "" });
+        if (data.done) { setMigrationDone(true); break; }
       } catch (e: any) {
-        console.error(`[ReanalyzeAll] Network error for ${track.title}:`, e.message);
-        errors++;
+        alert("Сетевая ошибка: " + e.message);
+        break;
       }
-      completed++;
-      setReanalyzeProgress({ current: completed, total: unlistenedTracks.length, currentTitle: track.title });
-    };
-
-    // По 2 трека параллельно
-    for (let i = 0; i < unlistenedTracks.length; i += 2) {
-      const batch = unlistenedTracks.slice(i, i + 2);
-      await Promise.all(batch.map(analyzeTrack));
     }
 
-    setReanalyzeResult({ success, errors, total: unlistenedTracks.length });
-    setReanalyzeProgress(null);
-    setIsReanalyzing(false);
-    fetchStats();
-    // Перезагружаем страницу чтобы Zustand подхватил новые gridMap из БД
-    setTimeout(() => router.push("/"), 1500);
+    setIsMigrating(false);
+    fetchMigrationStats();
   };
 
   const handleExport = async (format: "csv" | "json" | "manifest") => {
@@ -422,160 +392,95 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Переанализ всех треков (v2: ряды + мостики) */}
+      {/* Миграция треков в S3 */}
       <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg
-            className="w-5 h-5 text-purple-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
+          <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
           </svg>
-          Переанализ всех треков
+          Миграция треков в S3
         </h2>
         <p className="text-gray-400 text-sm mb-4">
-          Запускает текущий метод анализа (v2: ряды + мостики) для каждого трека
-          в библиотеке.
+          Переносит аудиофайлы с локального диска сервера в S3-хранилище (по одному треку).
+          После переноса обновляет ссылку в базе данных. Локальные файлы не удаляются — их можно удалить вручную после проверки.
         </p>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={handleReanalyzeAll}
-            disabled={isReanalyzing || !stats?.total}
-            className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            {isReanalyzing ? (
-              <>
-                <svg
-                  className="w-5 h-5 animate-spin"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  ></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-                Анализирую...
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-                Переанализировать «Новые» треки
-              </>
-            )}
-          </button>
-          {reanalyzeProgress && (
-            <span className="text-sm text-gray-300">
-              {reanalyzeProgress.current} / {reanalyzeProgress.total}
-              {reanalyzeProgress.currentTitle && (
-                <span className="text-gray-500 ml-2 max-w-xs truncate inline-block align-bottom">
-                  — {reanalyzeProgress.currentTitle}
-                </span>
-              )}
-            </span>
-          )}
-          {reanalyzeResult && !reanalyzeProgress && (
-            <span className="text-sm">
-              <span className="text-green-400">{reanalyzeResult.success}</span>
-              <span className="text-gray-500"> / {reanalyzeResult.total}</span>
-              {reanalyzeResult.errors > 0 && (
-                <span className="text-red-400 ml-2">
-                  ({reanalyzeResult.errors} ошибок)
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        {!stats?.total && (
-          <p className="text-yellow-500 text-sm mt-2">
-            В базе данных нет треков для анализа.
-          </p>
-        )}
-      </div>
 
-      {/* Добавить треки в очередь модерации */}
-      <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-          Очередь модерации
-        </h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Добавляет все треки со статусом «Новое» в очередь модерации (если они ещё не там).
-        </p>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={async () => {
-              if (!confirm("Добавить все «Новые» треки в очередь модерации?")) return;
-              setIsBackfilling(true);
-              setBackfillResult(null);
-              try {
-                const r = await fetch("/api/admin/mod-queue/backfill", { method: "POST" });
-                if (r.ok) {
-                  const data = await r.json();
-                  setBackfillResult(data);
-                } else {
-                  alert("Ошибка: " + (await r.text()));
-                }
-              } catch (e: any) {
-                alert("Сетевая ошибка: " + e.message);
-              }
-              setIsBackfilling(false);
-            }}
-            disabled={isBackfilling}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            {isBackfilling ? (
-              <>
-                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Добавляю...
-              </>
-            ) : (
-              <>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                Добавить в очередь модерации
-              </>
-            )}
-          </button>
-          {backfillResult && (
-            <span className="text-sm text-gray-300">
-              Добавлено: <span className="text-green-400">{backfillResult.added}</span>
-              {backfillResult.added === 0 && " (все уже в очереди)"}
+        {migrationStats && (
+          <div className="flex gap-4 mb-4">
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-white">{migrationStats.localCount}</span>
+              <span className="text-sm text-gray-400 ml-2">локальных</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-sky-400">{migrationStats.s3Count}</span>
+              <span className="text-sm text-gray-400 ml-2">в S3</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-gray-300">{migrationStats.total}</span>
+              <span className="text-sm text-gray-400 ml-2">всего</span>
+            </div>
+          </div>
+        )}
+
+        {migrationStats && migrationStats.localCount > 0 && (
+          <div className="mb-4">
+            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-sky-500 transition-all duration-300"
+                style={{ width: `${Math.round((migrationStats.s3Count / migrationStats.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {Math.round((migrationStats.s3Count / migrationStats.total) * 100)}% в S3
+            </p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4 flex-wrap">
+          {!isMigrating ? (
+            <button
+              onClick={handleMigrate}
+              disabled={!migrationStats || migrationStats.localCount === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              {migrationStats?.localCount === 0 ? "Все треки в S3" : `Начать миграцию (${migrationStats?.localCount ?? "…"})`}
+            </button>
+          ) : (
+            <button
+              onClick={() => { migrationStopRef.current = true; setMigrationStopped(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Остановить
+            </button>
+          )}
+
+          {isMigrating && migrationProgress && (
+            <span className="text-sm text-gray-300 flex items-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-sky-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Перенесено: <span className="text-sky-400">{migrationProgress.migrated}</span>
+              {migrationProgress.skipped > 0 && (
+                <span className="text-yellow-400 ml-1">(пропущено: {migrationProgress.skipped})</span>
+              )}
+              {migrationProgress.lastTitle && (
+                <span className="text-gray-500 max-w-xs truncate">— {migrationProgress.lastTitle}</span>
+              )}
             </span>
+          )}
+
+          {migrationDone && !isMigrating && (
+            <span className="text-green-400 text-sm">Миграция завершена!</span>
+          )}
+          {migrationStopped && !isMigrating && (
+            <span className="text-yellow-400 text-sm">Остановлено. Прогресс сохранён.</span>
           )}
         </div>
       </div>
