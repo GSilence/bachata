@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { existsSync, rmSync } from "fs";
 import { join } from "path";
+import { isS3Enabled, deleteFile as deleteS3File } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -71,11 +72,15 @@ export async function DELETE(
     return NextResponse.json({ error: "Нельзя удалить запись в процессе обработки" }, { status: 400 });
   }
 
-  // Удаляем временный файл из queue/ (если pending) или failed
+  // Удаляем файл из S3 или локально
   if (entry.status === "pending" || entry.status === "failed") {
-    const queueFile = join(process.cwd(), "public", "uploads", "queue", entry.filename);
-    if (existsSync(queueFile)) {
-      try { rmSync(queueFile); } catch {}
+    if (isS3Enabled()) {
+      try { await deleteS3File(`queue/${entry.filename}`); } catch {}
+    } else {
+      const queueFile = join(process.cwd(), "public", "uploads", "queue", entry.filename);
+      if (existsSync(queueFile)) {
+        try { rmSync(queueFile); } catch {}
+      }
     }
   }
 

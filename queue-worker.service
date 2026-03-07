@@ -5,8 +5,8 @@ After=network.target mysql.service
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=bachata
+Group=bachata
 WorkingDirectory=/opt/bachata
 
 # Запуск воркера через npx tsx (или прямой путь к tsx)
