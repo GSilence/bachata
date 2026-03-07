@@ -7,7 +7,7 @@ After=network.target mysql.service
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/bachata
+WorkingDirectory=/opt/bachata
 
 # Запуск воркера через npx tsx (или прямой путь к tsx)
 ExecStart=/usr/bin/npx tsx scripts/queue-worker.ts
@@ -24,7 +24,7 @@ TimeoutStopSec=300
 Environment=NODE_ENV=production
 
 # Загружаем .env.local для DATABASE_URL, DEMUCS_PYTHON_PATH и т.д.
-EnvironmentFile=-/var/www/bachata/.env.local
+EnvironmentFile=-/opt/bachata/.env.local
 
 # Логи
 StandardOutput=journal
