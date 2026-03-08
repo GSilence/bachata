@@ -65,14 +65,6 @@ const TrackItem = memo(function TrackItem({
   onSelect: (track: Track) => void;
   onToggleFav: (e: React.MouseEvent, trackId: number) => void;
 }) {
-  const pct = track.rowDominancePercent;
-  const trackHasBridges = track.hasBridges ?? false;
-  const isSquare = isAdminUser && !trackHasBridges && !track.rowSwapped;
-  const pctLabel =
-    isSquare && pct != null
-      ? ` — ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`
-      : "";
-
   return (
     <div className="relative group">
       <button
@@ -83,16 +75,8 @@ const TrackItem = memo(function TrackItem({
             : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
         }`}
       >
-        <div className="font-medium text-white">
+        <div className="text-sm text-white truncate" title={track.title}>
           {track.title}
-          {pctLabel && (
-            <span
-              className="text-gray-400 font-normal text-xs ml-1"
-              title="% РАЗ (для фильтра)"
-            >
-              {pctLabel}
-            </span>
-          )}
         </div>
         {track.artist && (
           <div
@@ -418,6 +402,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 64,
     overscan: 5,
+    measureElement: (el) => el.getBoundingClientRect().height,
   });
 
   // Infinite scroll: detect when near bottom
@@ -668,12 +653,13 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
               return (
                 <div
                   key={track.id}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualRow.index}
                   style={{
                     position: "absolute",
                     top: 0,
                     left: 0,
                     width: "100%",
-                    height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >

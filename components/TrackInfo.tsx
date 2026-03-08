@@ -259,7 +259,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                     alert(err instanceof Error ? err.message : "Ошибка");
                   }
                 }}
-                className={`text-lg leading-none transition-colors ${
+                className={`text-3xl leading-none transition-colors ${
                   currentTrack.isPrimary
                     ? "text-yellow-400 hover:text-yellow-300"
                     : "text-gray-600 hover:text-yellow-400/60"
