@@ -3,8 +3,43 @@ import { prisma } from '@/lib/prisma'
 import { rm, readdir } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, getCurrentUser } from '@/lib/auth'
 import { keyFromUrl, deleteFile as deleteS3File, isS3Enabled } from '@/lib/storage'
+
+/** GET /api/tracks/[id] — полный трек с gridMap (для воспроизведения). */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { id } = await params
+  const trackId = parseInt(id, 10)
+  if (isNaN(trackId)) {
+    return NextResponse.json({ error: 'Invalid track ID' }, { status: 400 })
+  }
+
+  if (!prisma) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
+  }
+
+  const track = await prisma.track.findUnique({ where: { id: trackId } })
+  if (!track) {
+    return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+  }
+
+  return NextResponse.json({
+    ...track,
+    fileSize: track.fileSize != null ? Number(track.fileSize) : null,
+  })
+}
 
 /** PATCH /api/tracks/[id] — обновление названия и метаданных трека (только для админа). */
 export async function PATCH(
@@ -34,7 +69,7 @@ export async function PATCH(
   const allowed: (keyof typeof body)[] = [
     'title', 'artist',
     'metaTitle', 'metaArtist', 'metaAlbum', 'metaYear', 'metaGenre', 'metaComment', 'metaTrackNum',
-    'hasAccents', 'hasMambo', 'trackStatus',
+    'hasAccents', 'hasMambo', 'trackStatus', 'isPrimary',
   ]
   const data: Record<string, unknown> = {}
   for (const key of allowed) {
@@ -63,6 +98,8 @@ export async function PATCH(
       data['hasMambo'] = body[key]
     } else if (key === 'trackStatus' && typeof body[key] === 'string' && ['unlistened', 'moderation', 'approved'].includes(body[key] as string)) {
       data['trackStatus'] = body[key] as string
+    } else if (key === 'isPrimary' && typeof body[key] === 'boolean') {
+      data['isPrimary'] = body[key]
     }
   }
   if (Object.keys(data).length === 0) {
@@ -115,7 +152,12 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ track: updated })
+  return NextResponse.json({
+    track: {
+      ...updated,
+      fileSize: updated.fileSize != null ? Number(updated.fileSize) : null,
+    },
+  })
 }
 
 export async function DELETE(

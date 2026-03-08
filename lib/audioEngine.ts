@@ -1143,6 +1143,9 @@ export class AudioEngine {
         });
       }
 
+      // Пропускаем, если время уже в прошлом (после seek на прогресс-баре)
+      if (whenWallSec < this.voiceCtx.currentTime) return;
+
       src.connect(this.voiceGain);
 
       // Добавляем в активные sources для возможности остановки

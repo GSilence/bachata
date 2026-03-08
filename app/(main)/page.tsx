@@ -23,28 +23,18 @@ import type { Track } from "@/types";
 
 export default function PlaybackPage() {
   const router = useRouter();
-  const {
-    currentTrack,
-    tracks,
-    currentTime,
-    duration,
-    voiceFilter,
-    stemsEnabled,
-    stemsVolume,
-    setCurrentTrack,
-    setTracks,
-    setIsPlaying,
-    playNext,
-    loadTrack,
-    setAudioEngine,
-    play,
-    pause,
-    stop,
-    isReanalyzing,
-    isPlaying,
-  } = usePlayerStore();
+  // ── Zustand selectors — подписка ТОЛЬКО на то, что нужно в рендере ──
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const isReanalyzing = usePlayerStore((s) => s.isReanalyzing);
+  const voiceFilter = usePlayerStore((s) => s.voiceFilter);
 
-  const { isModerating } = useModeratorStore();
+  // Actions — стабильные ссылки, не вызывают ре-рендер
+  const loadTrack = usePlayerStore((s) => s.loadTrack);
+  const setAudioEngine = usePlayerStore((s) => s.setAudioEngine);
+  const play = usePlayerStore((s) => s.play);
+  const pause = usePlayerStore((s) => s.pause);
+  const stop = usePlayerStore((s) => s.stop);
 
   const [isClient, setIsClient] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1); // Текущий бит (1-8)
@@ -133,16 +123,18 @@ export default function PlaybackPage() {
       audioEngine.stopSilentAnchor();
       return;
     }
-    setMediaSessionMetadata(currentTrack, currentTime, duration);
+    // currentTime/duration берём через getState — НЕ подписываемся (60fps не нужен для media session)
+    const { currentTime: ct, duration: dur } = usePlayerStore.getState();
+    setMediaSessionMetadata(currentTrack, ct, dur);
     setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
     // Якорь только при воспроизведении или паузе (позиция > 0). В режиме Stop (0:00) не держим.
-    const needAnchor = isPlaying || currentTime > 0;
+    const needAnchor = isPlaying || ct > 0;
     if (needAnchor) {
       audioEngine.startSilentAnchor();
     } else {
       audioEngine.stopSilentAnchor();
     }
-  }, [currentTrack, isPlaying, currentTime, duration]);
+  }, [currentTrack, isPlaying]);
 
   // Wake Lock: держим экран/процесс активным при воспроизведении (важно для фона на мобильных)
   useEffect(() => {
@@ -176,130 +168,51 @@ export default function PlaybackPage() {
     };
   }, [isClient, isPlaying]);
 
-  // Загрузка треков при монтировании (и при смене режима модератора)
+  // Восстановление сохранённого трека при монтировании
+  // Список треков загружается в Playlist (серверная пагинация).
+  // Здесь восстанавливаем только последний выбранный трек по savedTrackId.
   useEffect(() => {
     if (!isClient) return;
 
+    const { currentTrack: existing, savedTrackId } = usePlayerStore.getState();
+    if (existing || !savedTrackId) return;
+
     let cancelled = false;
 
-    fetch("/api/tracks", { cache: "no-store" })
+    // Загружаем сохранённый трек по ID (полный, с gridMap)
+    fetch(`/api/tracks/${savedTrackId}`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) {
           if (res.status === 401) {
-            const redirect = encodeURIComponent(typeof window !== "undefined" ? window.location.pathname || "/" : "/");
+            const redirect = encodeURIComponent(window.location.pathname || "/");
             router.replace(`/login?redirect=${redirect}`);
-            return null;
           }
-          if (res.status === 500) {
-            console.warn("Server returned 500, but continuing...");
-            return res.json().catch(() => []);
-          }
-          throw new Error(`HTTP error! status: ${res.status}`);
+          return null;
         }
         return res.json();
       })
-      .then((data) => {
-        if (cancelled || data == null) return;
-
-        if (Array.isArray(data)) {
-          // В режиме модератора показываем только непрослушанные треки
-          const filteredData = isModerating
-            ? data.filter((t: Track) => t.trackStatus === "unlistened")
-            : data;
-          setTracks(filteredData);
-
-          // Только админ: подтянуть rowDominancePercent и hasBridges в БД (API защищены requireAdmin)
-          const user = useAuthStore.getState().user;
-          if (isAdmin(user?.role)) {
-            fetch("/api/tracks/sync-dominance")
-              .then((r) => (r.ok ? r.json() : null))
-              .then((res) => {
-                if (!res || res.updated === 0 || cancelled) return;
-                fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((freshData) => {
-                    if (!cancelled && Array.isArray(freshData)) {
-                      setTracks(freshData);
-                    }
-                  })
-                  .catch(() => {});
-              })
-              .catch(() => {});
-
-            fetch("/api/tracks/sync-has-bridges")
-              .then((r) => (r.ok ? r.json() : null))
-              .then((res) => {
-                if (!res || res.updated === 0 || cancelled) return;
-                fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((freshData) => {
-                    if (!cancelled && Array.isArray(freshData)) {
-                      setTracks(freshData);
-                    }
-                  })
-                  .catch(() => {});
-              })
-              .catch(() => {});
-          }
-
-          const { currentTrack: currentTrackState } = usePlayerStore.getState();
-
-          if (data.length === 0) {
-            if (currentTrackState) {
-              console.log("Clearing currentTrack: no tracks available");
-              setCurrentTrack(null);
-            }
-            return;
-          }
-
-          const currentTrackInList = currentTrackState
-            ? data.some((t) => t.id === currentTrackState.id)
-            : false;
-
-          if (currentTrackState && !currentTrackInList) {
-            console.log("Current track not found in list, clearing it");
-            setCurrentTrack(null);
-          }
-
-          // Восстанавливаем или выбираем трек только если текущего нет — не перезаписываем выбор при обновлении списка
-          const { currentTrack: afterClear } = usePlayerStore.getState();
-          if (afterClear != null) {
-            return;
-          }
-
-          const { savedTrackId } = usePlayerStore.getState();
-          const restoredTrack = savedTrackId
-            ? (data.find((t) => t.id === savedTrackId) ?? null)
-            : null;
-          const trackToLoad: Track | null = restoredTrack || data[0];
-          if (trackToLoad) {
-            console.log("Loading initial track:", trackToLoad.title);
-            loadTrack(trackToLoad);
-          }
-        } else {
-          console.warn("API returned non-array data:", data);
-          setTracks([]);
-          const { currentTrack: currentTrackState } = usePlayerStore.getState();
-          if (currentTrackState) {
-            setCurrentTrack(null);
-          }
-        }
+      .then((track) => {
+        if (cancelled || !track) return;
+        const { currentTrack: current } = usePlayerStore.getState();
+        if (current) return; // уже выбрали трек пока шёл запрос
+        console.log("Restored saved track:", track.title);
+        loadTrack(track);
       })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error("Error loading tracks:", error);
-        setTracks([]);
-        // Очищаем currentTrack при ошибке
-        const { currentTrack: currentTrackState } = usePlayerStore.getState();
-        if (currentTrackState) {
-          setCurrentTrack(null);
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("Failed to restore saved track:", err);
         }
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isClient, isModerating, setTracks, setCurrentTrack, loadTrack]);
+    // Только админ: синхронизация метаданных в фоне
+    const user = useAuthStore.getState().user;
+    if (isAdmin(user?.role)) {
+      fetch("/api/tracks/sync-dominance").catch(() => {});
+      fetch("/api/tracks/sync-has-bridges").catch(() => {});
+    }
+
+    return () => { cancelled = true; };
+  }, [isClient, loadTrack, router]);
 
   // Подписка на обновления битов через callback
   useEffect(() => {
@@ -320,13 +233,7 @@ export default function PlaybackPage() {
     };
   }, [isClient]);
 
-  // При СТОП (0:00, не играет) — сбрасываем позицию счёта, чтобы при следующем Play не светилась цифра из середины
-  useEffect(() => {
-    if (currentTrack && currentTime === 0 && !isPlaying) {
-      setCurrentBeat(1);
-      setIsBridgeBeat(false);
-    }
-  }, [currentTrack, currentTime, isPlaying]);
+  // Сброс позиции счёта при стопе — выполняется в handleStop, НЕ через useEffect с currentTime
 
   // Синхронизация voiceFilter с audioEngine
   useEffect(() => {
@@ -352,13 +259,14 @@ export default function PlaybackPage() {
 
   const handleStop = () => {
     stop(); // Используем метод из store (он сам обновит isPlaying и currentTime)
+    setCurrentBeat(1);
+    setIsBridgeBeat(false);
   };
 
   const handleTrackSelect = (track: Track) => {
-    // Use store's loadTrack which includes mandatory Stop logic
+    // gridMap подгружается автоматически в setCurrentTrack если отсутствует
     loadTrack(track);
     stop(); // Stop playback when manually selecting track
-    // Zustand persist автоматически сохранит savedTrackId через partialize функцию
   };
 
   return (

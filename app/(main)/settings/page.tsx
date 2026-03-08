@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import SettingsPanel from "@/components/SettingsPanel";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
 
@@ -23,14 +22,20 @@ export default function SettingsPage() {
   const { user, isLoading, checkAuth } = useAuthStore();
   const [isExporting, setIsExporting] = useState(false);
   const [stats, setStats] = useState<TrackStats | null>(null);
-  const [tracks, setTracks] = useState<any[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationStopped, setMigrationStopped] = useState(false);
   const migrationStopRef = useRef(false);
   const [migrationStats, setMigrationStats] = useState<{ total: number; localCount: number; s3Count: number } | null>(null);
   const [migrationProgress, setMigrationProgress] = useState<{ migrated: number; skipped: number; lastTitle: string } | null>(null);
   const [migrationDone, setMigrationDone] = useState(false);
+
+  // Backfill metadata
+  const [backfillStats, setBackfillStats] = useState<{ total: number; missingFileSize: number; missingDuration: number } | null>(null);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const backfillStopRef = useRef(false);
+  const [backfillStopped, setBackfillStopped] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ processed: number; lastTitle: string } | null>(null);
+  const [backfillDone, setBackfillDone] = useState(false);
 
   // Auth check
   useEffect(() => {
@@ -50,10 +55,10 @@ export default function SettingsPage() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch("/api/tracks", { cache: "no-store" });
+      const response = await fetch("/api/tracks?pageSize=0", { cache: "no-store" });
       if (response.ok) {
-        const data = await response.json();
-        setTracks(data);
+        const json = await response.json();
+        const data: any[] = json.tracks ?? json;
 
         if (data.length > 0) {
           const bpms = data.map((t: any) => t.bpm).filter((b: number) => b > 0);
@@ -62,9 +67,7 @@ export default function SettingsPage() {
             newCount: data.filter((t: any) => t.trackStatus === "unlistened").length,
             moderationCount: data.filter((t: any) => t.trackStatus === "moderation").length,
             approvedCount: data.filter((t: any) => t.trackStatus === "approved").length,
-            withBridges: data.filter(
-              (t: any) => (t.gridMap?.bridges?.length ?? 0) > 0,
-            ).length,
+            withBridges: data.filter((t: any) => t.hasBridges).length,
             withAccents: data.filter((t: any) => t.hasAccents).length,
             withMambo: data.filter((t: any) => t.hasMambo).length,
             minBpm: bpms.length ? Math.min(...bpms) : 0,
@@ -87,6 +90,46 @@ export default function SettingsPage() {
   useEffect(() => {
     if (isAdmin(user?.role)) fetchMigrationStats();
   }, [user]);
+
+  const fetchBackfillStats = async () => {
+    try {
+      const r = await fetch("/api/admin/backfill-metadata");
+      if (r.ok) setBackfillStats(await r.json());
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (isAdmin(user?.role)) fetchBackfillStats();
+  }, [user]);
+
+  const handleBackfill = async () => {
+    backfillStopRef.current = false;
+    setIsBackfilling(true);
+    setBackfillStopped(false);
+    setBackfillDone(false);
+    setBackfillProgress({ processed: 0, lastTitle: "" });
+
+    let processed = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (backfillStopRef.current) break;
+      try {
+        const r = await fetch("/api/admin/backfill-metadata", { method: "POST" });
+        if (!r.ok) { alert("Ошибка: " + (await r.text())); break; }
+        const data = await r.json();
+        processed += data.processed || 1;
+        setBackfillProgress({ processed, lastTitle: data.lastTitle || "" });
+        if (data.done) { setBackfillDone(true); break; }
+      } catch (e: any) {
+        alert("Сетевая ошибка: " + e.message);
+        break;
+      }
+    }
+
+    setIsBackfilling(false);
+    fetchBackfillStats();
+  };
 
   const handleMigrate = async () => {
     migrationStopRef.current = false;
@@ -118,7 +161,7 @@ export default function SettingsPage() {
     fetchMigrationStats();
   };
 
-  const handleExport = async (format: "csv" | "json" | "manifest") => {
+  const handleExport = async (format: "csv" | "json") => {
     setIsExporting(true);
     try {
       const response = await fetch(`/api/tracks/export?format=${format}`);
@@ -128,9 +171,7 @@ export default function SettingsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const ext = format === "manifest" ? "csv" : format;
-      const name = format === "manifest" ? "tracks_manifest" : "tracks_export";
-      a.download = `${name}_${new Date().toISOString().split("T")[0]}.${ext}`;
+      a.download = `tracks_export_${new Date().toISOString().split("T")[0]}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -159,7 +200,7 @@ export default function SettingsPage() {
     <div className="p-6 lg:p-8 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold text-white mb-8">Настройки</h1>
 
-      {/* Статистика */}
+      {/* Статистика + экспорт */}
       {stats && (
         <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
           <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -196,7 +237,7 @@ export default function SettingsPage() {
               <div className="text-sm text-gray-400">Согласовано</div>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="text-2xl font-bold text-purple-400">{stats.withBridges}</div>
               <div className="text-sm text-gray-400">С мостиками</div>
@@ -216,184 +257,35 @@ export default function SettingsPage() {
               <div className="text-sm text-gray-400">С мамбо</div>
             </div>
           </div>
+
+          {/* Экспорт — CSV / JSON */}
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => handleExport("csv")}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              CSV
+            </button>
+            <button
+              onClick={() => handleExport("json")}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              JSON
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Экспорт данных */}
-      <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg
-            className="w-5 h-5 text-purple-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
-          </svg>
-          Экспорт данных
-        </h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Выгрузите список треков: название песни, имя файла на сервере и
-          таблицу Row Analysis (ряды и показатели корреляционного анализа с
-          главной страницы).
-        </p>
-        <p className="text-gray-400 text-xs mb-4">
-          Манифест — CSV с колонками id, title, artist, pathOriginal,
-          report_filename: для сопоставления названий треков и файлов отчётов
-          при переносе с сервера (например, чтобы знать, какой JSON-отчёт какому
-          треку принадлежит).
-        </p>
-
-        <div className="flex flex-wrap gap-3 mb-4">
-          <button
-            onClick={() => handleExport("manifest")}
-            disabled={isExporting || !stats?.total}
-            className="flex items-center gap-2 px-4 py-2 bg-cyan-600/80 hover:bg-cyan-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            {isExporting ? (
-              <svg
-                className="w-5 h-5 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            ) : (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-            )}
-            Скачать манифест (CSV)
-          </button>
-
-          <button
-            onClick={() => handleExport("csv")}
-            disabled={isExporting || !stats?.total}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            {isExporting ? (
-              <svg
-                className="w-5 h-5 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            ) : (
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
-            )}
-            Скачать CSV
-          </button>
-
-          <button
-            onClick={() => handleExport("json")}
-            disabled={isExporting || !stats?.total}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-              />
-            </svg>
-            Скачать JSON
-          </button>
-
-          <button
-            onClick={() => setShowPreview(!showPreview)}
-            disabled={!stats?.total}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-              />
-            </svg>
-            {showPreview ? "Скрыть" : "Просмотр"}
-          </button>
-        </div>
-
-        {!stats?.total && (
-          <p className="text-yellow-500 text-sm">
-            В базе данных нет треков для экспорта.
-          </p>
-        )}
-      </div>
-
       {/* Миграция треков в S3 */}
-      <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
+      <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
@@ -485,94 +377,82 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Превью данных */}
-      {showPreview && tracks.length > 0 && (
-        <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700 overflow-hidden">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Данные треков (как в экспорте)
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-400 border-b border-gray-700">
-                  <th className="pb-2 pr-4">Название</th>
-                  <th className="pb-2 pr-4">Файл (сервер)</th>
-                  <th className="pb-2 pr-4 text-center">Row Analysis</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tracks.slice(0, 20).map((track) => {
-                  const ca =
-                    track.gridMap &&
-                    typeof track.gridMap === "object" &&
-                    (track.gridMap as Record<string, unknown>)
-                      .correlationAnalysis;
-                  const verdict =
-                    ca &&
-                    typeof ca === "object" &&
-                    (ca as Record<string, unknown>).verdict;
-                  const winningRow =
-                    verdict &&
-                    typeof verdict === "object" &&
-                    (verdict as Record<string, unknown>).winning_row;
-                  return (
-                    <tr
-                      key={track.id}
-                      className="border-b border-gray-700/50 hover:bg-gray-700/30"
-                    >
-                      <td className="py-2 pr-4 text-white">{track.title}</td>
-                      <td className="py-2 pr-4 text-gray-400 font-mono text-xs">
-                        {track.filename || "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-center">
-                        {winningRow != null ? (
-                          <span className="text-green-400">
-                            Row {String(winningRow)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {tracks.length > 20 && (
-              <p className="text-gray-500 text-sm mt-4 text-center">
-                Показано 20 из {tracks.length} треков. В файле — полная таблица
-                Row Analysis (Beats, Sum, Avg, Max по каждому ряду).
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Настройки воспроизведения */}
-      <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+      {/* Бэкфилл fileSize / duration */}
+      <div className="bg-gray-800/50 rounded-xl p-6 mt-8 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg
-            className="w-5 h-5 text-purple-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
+          <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
           </svg>
-          Настройки воспроизведения
+          Заполнение метаданных (fileSize / duration)
         </h2>
-        <SettingsPanel />
+        <p className="text-gray-400 text-sm mb-4">
+          Для треков, у которых отсутствует размер файла или длительность — получает данные из S3 (HeadObject), локальных файлов или JSON-отчётов анализа.
+          Необходимо для корректной работы кластеризации дубликатов.
+        </p>
+
+        {backfillStats && (
+          <div className="flex gap-4 mb-4">
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-amber-400">{backfillStats.missingFileSize}</span>
+              <span className="text-sm text-gray-400 ml-2">без размера</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-amber-400">{backfillStats.missingDuration}</span>
+              <span className="text-sm text-gray-400 ml-2">без длительности</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-gray-300">{backfillStats.total}</span>
+              <span className="text-sm text-gray-400 ml-2">всего</span>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4 flex-wrap">
+          {!isBackfilling ? (
+            <button
+              onClick={handleBackfill}
+              disabled={!backfillStats || (backfillStats.missingFileSize === 0 && backfillStats.missingDuration === 0)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {backfillStats && backfillStats.missingFileSize === 0 && backfillStats.missingDuration === 0
+                ? "Все данные заполнены"
+                : `Заполнить (${(backfillStats?.missingFileSize ?? 0) + (backfillStats?.missingDuration ?? 0)} пропусков)`}
+            </button>
+          ) : (
+            <button
+              onClick={() => { backfillStopRef.current = true; setBackfillStopped(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Остановить
+            </button>
+          )}
+
+          {isBackfilling && backfillProgress && (
+            <span className="text-sm text-gray-300 flex items-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Обработано: <span className="text-amber-400">{backfillProgress.processed}</span>
+              {backfillProgress.lastTitle && (
+                <span className="text-gray-500 max-w-xs truncate">— {backfillProgress.lastTitle}</span>
+              )}
+            </span>
+          )}
+
+          {backfillDone && !isBackfilling && (
+            <span className="text-green-400 text-sm">Все данные заполнены!</span>
+          )}
+          {backfillStopped && !isBackfilling && (
+            <span className="text-yellow-400 text-sm">Остановлено. Прогресс сохранён.</span>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -63,7 +63,15 @@
       "WebSearch",
       "WebFetch(domain:cdn.bachata-music.com)",
       "Bash(npm list @aws-sdk/client-s3)",
-      "Bash(npm list mime-types)"
+      "Bash(npm list mime-types)",
+      "Read(//c/Program Files/MySQL/**)",
+      "Read(//c/Program Files \\(x86\\)/MySQL/**)",
+      "Bash(where.exe mysql)",
+      "Bash(node -e \"const{PrismaClient}=require\\(''@prisma/client''\\);const p=new PrismaClient\\(\\);p.track.count\\(\\).then\\(c=>{console.log\\(''Tracks:'',c\\);return p.$disconnect\\(\\)}\\)\")",
+      "Bash(node -e \"const{PrismaClient}=require\\(''@prisma/client''\\);const p=new PrismaClient\\(\\);p.track.count\\(\\).then\\(c=>{console.log\\(''Tracks:'',c\\);return p[''$disconnect'']\\(\\)}\\)\")",
+      "Bash(npm ls @tanstack/react-virtual)",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/zustand/package.json''\\).version\\)\")",
+      "Bash(node -e \"const z = require\\(''zustand/react/shallow''\\); console.log\\(''useShallow:'', typeof z.useShallow\\)\")"
     ]
   }
 }

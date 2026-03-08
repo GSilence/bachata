@@ -15,18 +15,17 @@ export default function PlayerControls({
   onPause,
   onStop,
 }: PlayerControlsProps) {
-  const {
-    currentTrack,
-    isPlaying,
-    currentTime,
-    duration,
-    playUntilSeconds,
-    musicVolume,
-    voiceVolume,
-    setCurrentTime,
-    setMusicVolume,
-    setVoiceVolume,
-  } = usePlayerStore();
+  // ── Zustand selectors — подписка только на нужные поля ──
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const currentTime = usePlayerStore((s) => s.currentTime);
+  const duration = usePlayerStore((s) => s.duration);
+  const playUntilSeconds = usePlayerStore((s) => s.playUntilSeconds);
+  const musicVolume = usePlayerStore((s) => s.musicVolume);
+  const voiceVolume = usePlayerStore((s) => s.voiceVolume);
+  const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
+  const setMusicVolume = usePlayerStore((s) => s.setMusicVolume);
+  const setVoiceVolume = usePlayerStore((s) => s.setVoiceVolume);
 
   const [isDragging, setIsDragging] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -196,7 +195,7 @@ export default function PlayerControls({
           className="w-full h-2 bg-gray-700 rounded-full cursor-pointer relative"
         >
           <div
-            className="absolute top-0 left-0 h-full bg-purple-600 rounded-full transition-all"
+            className="absolute top-0 left-0 h-full bg-purple-600 rounded-full"
             style={{ width: `${progressPercentage}%` }}
           />
         </div>

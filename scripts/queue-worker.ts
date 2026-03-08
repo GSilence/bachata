@@ -15,7 +15,7 @@
 
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, copyFileSync, rmSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, copyFileSync, rmSync, statSync } from "fs";
 import { join } from "path";
 import { uploadFile, isS3Enabled, getFileUrl, downloadFile, deleteFile as deleteS3File } from "../lib/storage";
 
@@ -71,6 +71,34 @@ function log(...args: unknown[]) {
 // ─── Core: обработка одного трека ──────────────────────────────────────────
 
 async function processEntry(entry: any) {
+  // ── Дедупликация перед анализом ──────────────────────────────────────────
+  // Повторно проверяем, не появился ли такой трек пока файл ждал в очереди
+  const linkToExisting = async (existingTrackId: number) => {
+    if (entry.uploadedBy) {
+      await prisma.userTrack.upsert({
+        where: { userId_trackId: { userId: entry.uploadedBy, trackId: existingTrackId } },
+        update: {},
+        create: { userId: entry.uploadedBy, trackId: existingTrackId },
+      });
+    }
+    log(`Dedup: entry #${entry.id} → existing Track #${existingTrackId}`);
+    return existingTrackId;
+  };
+
+  // По fileHash
+  if (entry.fileHash) {
+    const hashDup = await prisma.track.findFirst({ where: { fileHash: entry.fileHash } });
+    if (hashDup) return linkToExisting(hashDup.id);
+  }
+
+  // По title+artist
+  if (entry.title) {
+    const titleArtistDup = await prisma.track.findFirst({
+      where: { title: entry.title, ...(entry.artist ? { artist: entry.artist } : { artist: null }) },
+    });
+    if (titleArtistDup) return linkToExisting(titleArtistDup.id);
+  }
+
   const s3Mode = isS3Enabled();
 
   // В S3-режиме — скачиваем файл из S3 во временную папку для анализа
@@ -88,6 +116,9 @@ async function processEntry(entry: any) {
       throw new Error(`Queue file not found: ${queueFilePath}`);
     }
   }
+
+  // Сохраняем размер файла ДО анализа и возможного удаления temp-файла
+  const fileSizeBytes = existsSync(queueFilePath) ? BigInt(statSync(queueFilePath).size) : null;
 
   const scriptPath = join(CWD, "scripts", "analyze-track-v2.py");
   if (!existsSync(scriptPath)) throw new Error("analyze-track-v2.py not found");
@@ -233,6 +264,8 @@ async function processEntry(entry: any) {
       trackStatus:  isPopsa ? "popsa" : "unlistened",
       gridMap:      gridMap as object,
       ...(rowDominancePercent != null && { rowDominancePercent }),
+      ...(typeof result.duration === "number" && { duration: result.duration }),
+      ...(fileSizeBytes != null && { fileSize: fileSizeBytes }),
     },
   });
 

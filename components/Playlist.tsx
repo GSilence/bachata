@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { usePlayerStore } from "@/store/playerStore";
+import { useShallow } from "zustand/react/shallow";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
 import type { Track, PlaylistSortBy } from "@/types";
@@ -10,6 +12,211 @@ interface PlaylistProps {
   onTrackSelect: (track: Track) => void;
 }
 
+// ── Zustand selectors — подписка ТОЛЬКО на нужные поля ──────────────────────
+const useCurrentTrackId = () => usePlayerStore((s) => s.currentTrack?.id ?? null);
+const usePlaylistFilter = () => usePlayerStore((s) => s.playlistFilter);
+const useSearchQuery = () => usePlayerStore((s) => s.searchQuery);
+const useBridgeFilters = () =>
+  usePlayerStore(useShallow((s) => ({
+    bridgeFilterWith: s.bridgeFilterWith,
+    bridgeFilterWithout: s.bridgeFilterWithout,
+    bridgeFilterSwapped: s.bridgeFilterSwapped,
+  })));
+const useStatusFilters = () =>
+  usePlayerStore(useShallow((s) => ({
+    statusFilterUnlistened: s.statusFilterUnlistened,
+    statusFilterModeration: s.statusFilterModeration,
+    statusFilterApproved: s.statusFilterApproved,
+    statusFilterPopsa: (s as any).statusFilterPopsa ?? true,
+  })));
+const useTagFilters = () =>
+  usePlayerStore(useShallow((s) => ({
+    accentFilterOn: s.accentFilterOn,
+    mamboFilterOn: s.mamboFilterOn,
+  })));
+const useSortSettings = () =>
+  usePlayerStore(useShallow((s) => ({
+    playlistSortBy: s.playlistSortBy,
+    sortDirection: s.sortDirection,
+    squareSortDirection: s.squareSortDirection,
+  })));
+const useDominanceBuckets = () =>
+  usePlayerStore(useShallow((s) => ({
+    dominanceBucketNeg: s.dominanceBucketNeg,
+    dominanceBucketLow: s.dominanceBucketLow,
+    dominanceBucketHigh: s.dominanceBucketHigh,
+  })));
+
+// ── Мемоизированный элемент трека ───────────────────────────────────────────
+const TrackItem = memo(function TrackItem({
+  track,
+  isActive,
+  isAdminUser,
+  isFav,
+  togglingFav,
+  onSelect,
+  onToggleFav,
+}: {
+  track: Track;
+  isActive: boolean;
+  isAdminUser: boolean;
+  isFav: boolean;
+  togglingFav: boolean;
+  onSelect: (track: Track) => void;
+  onToggleFav: (e: React.MouseEvent, trackId: number) => void;
+}) {
+  const pct = track.rowDominancePercent;
+  const trackHasBridges = track.hasBridges ?? false;
+  const isSquare = isAdminUser && !trackHasBridges && !track.rowSwapped;
+  const pctLabel =
+    isSquare && pct != null
+      ? ` — ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`
+      : "";
+
+  return (
+    <div className="relative group">
+      <button
+        onClick={() => onSelect(track)}
+        className={`w-full text-left px-4 py-3 pr-10 rounded-lg transition-colors ${
+          isActive
+            ? "bg-purple-600 border-2 border-purple-400 hover:bg-purple-700"
+            : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
+        }`}
+      >
+        <div className="font-medium text-white">
+          {track.title}
+          {pctLabel && (
+            <span
+              className="text-gray-400 font-normal text-xs ml-1"
+              title="% РАЗ (для фильтра)"
+            >
+              {pctLabel}
+            </span>
+          )}
+        </div>
+        {track.artist && (
+          <div
+            className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}
+          >
+            {track.artist}
+          </div>
+        )}
+        {track.isProcessed && (
+          <span
+            className="text-xs text-green-400 mt-1 inline-block"
+            title="Stems обработаны"
+          >
+            🎵
+          </span>
+        )}
+      </button>
+
+      {/* Кнопка Избранное */}
+      <button
+        onClick={(e) => onToggleFav(e, track.id)}
+        disabled={togglingFav}
+        title={isFav ? "Убрать из Избранного" : "Добавить в Избранное"}
+        className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all ${
+          isFav
+            ? "text-pink-400 opacity-100"
+            : "text-gray-500 opacity-0 group-hover:opacity-100 hover:text-pink-400"
+        }`}
+      >
+        <svg
+          className="w-4 h-4"
+          fill={isFav ? "currentColor" : "none"}
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+          />
+        </svg>
+      </button>
+    </div>
+  );
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Builds URL query params from current Zustand filter state */
+function buildFilterParams(opts: {
+  page: number;
+  pageSize: number;
+  searchQuery: string;
+  playlistFilter: string;
+  isAdmin: boolean;
+  bridgeFilterWith: boolean;
+  bridgeFilterWithout: boolean;
+  bridgeFilterSwapped: boolean;
+  statusFilterUnlistened: boolean;
+  statusFilterModeration: boolean;
+  statusFilterApproved: boolean;
+  statusFilterPopsa: boolean;
+  accentFilterOn: boolean;
+  mamboFilterOn: boolean;
+  dominanceBucketNeg: boolean;
+  dominanceBucketLow: boolean;
+  dominanceBucketHigh: boolean;
+  playlistSortBy: string;
+  sortDirection: string;
+  squareSortDirection: string;
+}): string {
+  const sp = new URLSearchParams();
+  sp.set("page", String(opts.page));
+  sp.set("pageSize", String(opts.pageSize));
+
+  if (opts.searchQuery) sp.set("search", opts.searchQuery);
+  sp.set("filter", opts.playlistFilter);
+  sp.set("sort", opts.playlistSortBy);
+  sp.set("sortDir", opts.sortDirection);
+  if (opts.squareSortDirection !== "none") sp.set("squareSort", opts.squareSortDirection);
+
+  // Bridges
+  const bridges: string[] = [];
+  if (opts.bridgeFilterWith) bridges.push("with");
+  if (opts.bridgeFilterWithout) bridges.push("without");
+  if (opts.bridgeFilterSwapped) bridges.push("swapped");
+  if (bridges.length > 0 && bridges.length < 3) {
+    sp.set("bridges", bridges.join(","));
+  }
+
+  // Status (admin only)
+  if (opts.isAdmin) {
+    const statuses: string[] = [];
+    if (opts.statusFilterUnlistened) statuses.push("unlistened");
+    if (opts.statusFilterModeration) statuses.push("moderation");
+    if (opts.statusFilterApproved) statuses.push("approved");
+    if (opts.statusFilterPopsa) statuses.push("popsa");
+    if (statuses.length > 0 && statuses.length < 4) {
+      sp.set("status", statuses.join(","));
+    }
+  }
+
+  // Tags
+  if (opts.accentFilterOn) sp.set("accents", "1");
+  if (opts.mamboFilterOn) sp.set("mambo", "1");
+
+  // Dominance
+  if (opts.isAdmin) {
+    const dom: string[] = [];
+    if (opts.dominanceBucketNeg) dom.push("neg");
+    if (opts.dominanceBucketLow) dom.push("low");
+    if (opts.dominanceBucketHigh) dom.push("high");
+    if (dom.length > 0 && dom.length < 3) {
+      sp.set("dominance", dom.join(","));
+    }
+  }
+
+  return sp.toString();
+}
+
+const PAGE_SIZE = 40;
+
+// ── Playlist ────────────────────────────────────────────────────────────────
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
@@ -33,12 +240,11 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     fetchFavorites();
   }, [fetchFavorites]);
 
-  const toggleFavorite = async (e: React.MouseEvent, trackId: number) => {
+  const toggleFavorite = useCallback(async (e: React.MouseEvent, trackId: number) => {
     e.stopPropagation();
     if (togglingFav === trackId) return;
     setTogglingFav(trackId);
     const isFav = favoriteIds.has(trackId);
-    // Optimistic update
     setFavoriteIds((prev) => {
       const next = new Set(prev);
       if (isFav) next.delete(trackId); else next.add(trackId);
@@ -55,7 +261,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         });
       }
     } catch {
-      // Rollback on error
       setFavoriteIds((prev) => {
         const next = new Set(prev);
         if (isFav) next.add(trackId); else next.delete(trackId);
@@ -64,210 +269,173 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     } finally {
       setTogglingFav(null);
     }
-  };
-  const {
-    tracks,
-    currentTrack,
-    playlistFilter,
-    searchQuery,
-    bridgeFilterWith,
-    bridgeFilterWithout,
-    bridgeFilterSwapped,
-    setAdmin,
-    statusFilterUnlistened,
-    statusFilterModeration,
-    statusFilterApproved,
-    statusFilterPopsa,
-    accentFilterOn,
-    mamboFilterOn,
-    playlistSortBy,
-    sortDirection,
-    squareSortDirection,
-    dominanceBucketNeg,
-    dominanceBucketLow,
-    dominanceBucketHigh,
-    setPlaylistFilter,
-    setSearchQuery,
-    setBridgeFilterWith,
-    setBridgeFilterWithout,
-    setBridgeFilterSwapped,
-    setStatusFilterUnlistened,
-    setStatusFilterModeration,
-    setStatusFilterApproved,
-    setStatusFilterPopsa,
-    setAccentFilterOn,
-    setMamboFilterOn,
-    setPlaylistSortBy,
-    setSortDirection,
-    setSquareSortDirection,
-    setDominanceBucket,
-  } = usePlayerStore();
+  }, [togglingFav, favoriteIds]);
 
-  // Синхронизируем флаг админа в store для фильтра в playNext/playPrevious
+  // ── Zustand — только нужные поля ─────────────────────────────────────────
+  const currentTrackId = useCurrentTrackId();
+  const playlistFilter = usePlaylistFilter();
+  const searchQuery = useSearchQuery();
+  const { bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped } = useBridgeFilters();
+  const { statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa } = useStatusFilters();
+  const { accentFilterOn, mamboFilterOn } = useTagFilters();
+  const { playlistSortBy, sortDirection, squareSortDirection } = useSortSettings();
+  const { dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh } = useDominanceBuckets();
+
+  // Actions — стабильные ссылки, не вызывают ре-рендер
+  const setAdmin = usePlayerStore((s) => s.setAdmin);
+  const setPlaylistFilter = usePlayerStore((s) => s.setPlaylistFilter);
+  const setSearchQuery = usePlayerStore((s) => s.setSearchQuery);
+  const setBridgeFilterWith = usePlayerStore((s) => s.setBridgeFilterWith);
+  const setBridgeFilterWithout = usePlayerStore((s) => s.setBridgeFilterWithout);
+  const setBridgeFilterSwapped = usePlayerStore((s) => s.setBridgeFilterSwapped);
+  const setStatusFilterUnlistened = usePlayerStore((s) => s.setStatusFilterUnlistened);
+  const setStatusFilterModeration = usePlayerStore((s) => s.setStatusFilterModeration);
+  const setStatusFilterApproved = usePlayerStore((s) => s.setStatusFilterApproved);
+  const setStatusFilterPopsa = usePlayerStore((s) => (s as any).setStatusFilterPopsa);
+  const setAccentFilterOn = usePlayerStore((s) => s.setAccentFilterOn);
+  const setMamboFilterOn = usePlayerStore((s) => s.setMamboFilterOn);
+  const setPlaylistSortBy = usePlayerStore((s) => s.setPlaylistSortBy);
+  const setSortDirection = usePlayerStore((s) => s.setSortDirection);
+  const setSquareSortDirection = usePlayerStore((s) => s.setSquareSortDirection);
+  const setDominanceBucket = usePlayerStore((s) => s.setDominanceBucket);
+
   useEffect(() => {
     setAdmin(isAdminUser);
   }, [isAdminUser, setAdmin]);
 
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [showScrollIndicator, setShowScrollIndicator] = useState(false);
+  // ── Server-side paginated data ──────────────────────────────────────────
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [total, setTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const fetchVersionRef = useRef(0); // For cancelling stale fetches
 
-  // Фильтрация треков
-  let filteredTracks = (Array.isArray(tracks) ? tracks : []).filter((track) => {
-    // Фильтр по типу
-    if (playlistFilter === "free" && !track.isFree) {
-      return false;
-    }
+  // Debounced search: track the "committed" search value
+  const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-    // Базовый фильтр для админа: по статусу (хотя бы один выбран, трек должен попадать в выбранные)
-    if (isAdminUser) {
-      const s = track.trackStatus ?? "unlistened";
-      const match =
-        (s === "unlistened" && statusFilterUnlistened) ||
-        (s === "moderation" && statusFilterModeration) ||
-        (s === "approved" && statusFilterApproved) ||
-        (s === "popsa" && statusFilterPopsa);
-      if (!match) return false;
-    }
+  // Fetch tracks from API — ref always has latest closure values
+  const doFetchRef = useRef<(page: number, append: boolean) => Promise<void>>();
+  doFetchRef.current = async (page: number, append: boolean) => {
+    const version = ++fetchVersionRef.current;
+    setIsLoading(true);
 
-    // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
-    // hasBridges: из колонки БД, fallback на gridMap для старых записей
-    const hasBridges =
-      track.hasBridges ??
-      (() => {
-        const gm = track.gridMap;
-        if (!gm) return false;
-        if (Array.isArray(gm.bridges) && gm.bridges.length > 0) return true;
-        const pl = Array.isArray(gm.v2LayoutPerc) ? gm.v2LayoutPerc : gm.v2Layout;
-        return Array.isArray(pl) && pl.length > 1;
-      })();
-    // rowSwapped и rowDominancePercent теперь отдельные колонки БД
-    const isSwapped = track.rowSwapped;
-
-    const matchesBridgeWith = hasBridges && bridgeFilterWith;
-    const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
-    const matchesSwapped = isSwapped && bridgeFilterSwapped;
-    const includeSwapped = isAdminUser && matchesSwapped;
-    if (!matchesBridgeWith && !matchesBridgeWithout && !includeSwapped) return false;
-
-    // AND-фильтр по меткам: включённая кнопка = только треки с этой меткой
-    if (accentFilterOn && !track.hasAccents) return false;
-    if (mamboFilterOn && !track.hasMambo) return false;
-
-    // Фильтр по % доминирования РАЗ (только для админа, для всех треков)
-    if (isAdminUser) {
-      const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
-      const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
-      if (!noneSelected && !allSelected) {
-        // Один источник: БД (track.rowDominancePercent), fallback из gridMap если обновили трек из отчёта
-        const pct =
-          track.rowDominancePercent ??
-          (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
-          undefined;
-        if (pct == null) return false;
-        const inNeg = dominanceBucketNeg && pct < 0;
-        const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
-        const inHigh = dominanceBucketHigh && pct >= 5;
-        if (!inNeg && !inLow && !inHigh) return false;
-      }
-    }
-
-    // Поиск по названию
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesTitle = track.title.toLowerCase().includes(query);
-      const matchesArtist =
-        track.artist?.toLowerCase().includes(query) || false;
-      return matchesTitle || matchesArtist;
-    }
-
-    return true;
-  });
-
-  const collator = new Intl.Collator(undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
-  const dir = sortDirection === "desc" ? -1 : 1;
-  const sortByMain = (list: Track[]): Track[] =>
-    [...list].sort((a, b) => {
-      switch (playlistSortBy) {
-        case "title":
-          return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
-        case "duration": {
-          const da = a.gridMap?.duration ?? 0;
-          const db = b.gridMap?.duration ?? 0;
-          return (da !== db ? da - db : a.id - b.id) * dir;
-        }
-        case "date": {
-          const ta = new Date(a.createdAt).getTime();
-          const tb = new Date(b.createdAt).getTime();
-          // asc = oldest first, desc = newest first
-          return (ta !== tb ? ta - tb : a.id - b.id) * dir;
-        }
-        default:
-          return a.id - b.id;
-      }
+    const params = buildFilterParams({
+      page,
+      pageSize: PAGE_SIZE,
+      searchQuery: debouncedSearch,
+      playlistFilter,
+      isAdmin: isAdminUser,
+      bridgeFilterWith,
+      bridgeFilterWithout,
+      bridgeFilterSwapped,
+      statusFilterUnlistened,
+      statusFilterModeration,
+      statusFilterApproved,
+      statusFilterPopsa,
+      accentFilterOn,
+      mamboFilterOn,
+      dominanceBucketNeg,
+      dominanceBucketLow,
+      dominanceBucketHigh,
+      playlistSortBy,
+      sortDirection,
+      squareSortDirection,
     });
 
-  let sortedTracks = sortByMain(filteredTracks);
+    console.log("[Playlist] fetching with params:", params);
 
-  if (squareSortDirection !== "none") {
-    const gmHasBridges = (t: Track) => {
-      if (t.hasBridges != null) return t.hasBridges;
-      const pl = Array.isArray(t.gridMap?.v2LayoutPerc)
-        ? t.gridMap!.v2LayoutPerc!
-        : null;
-      return pl != null ? pl.length > 1 : false;
-    };
-    const getDominance = (t: Track) =>
-      t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
-    const squareTracks = sortedTracks.filter((t) => !gmHasBridges(t));
-    const bridgeTracks = sortedTracks.filter((t) => gmHasBridges(t));
-    const sortedSquare =
-      squareSortDirection === "desc"
-        ? [...squareTracks].sort((a, b) => {
-            const d = getDominance(b) - getDominance(a);
-            return d !== 0 ? d : a.id - b.id;
-          })
-        : [...squareTracks].sort((a, b) => {
-            const d = getDominance(a) - getDominance(b);
-            return d !== 0 ? d : a.id - b.id;
-          });
-    sortedTracks = [...sortedSquare, ...bridgeTracks];
-  }
+    try {
+      const res = await fetch(`/api/tracks?${params}`, { cache: "no-store" });
+      if (!res.ok || version !== fetchVersionRef.current) return;
 
-  // Проверяем, есть ли прокрутка
+      const data = await res.json();
+      if (version !== fetchVersionRef.current) return;
+
+      const newTracks: Track[] = data.tracks ?? [];
+      const newTotal: number = data.total ?? 0;
+      console.log("[Playlist] API response: total=", newTotal, "returned=", newTracks.length, "page=", page);
+
+      if (append) {
+        setTracks((prev) => [...prev, ...newTracks]);
+      } else {
+        setTracks(newTracks);
+      }
+      setTotal(newTotal);
+      setCurrentPage(page);
+      setHasMore(page * PAGE_SIZE < newTotal);
+
+      // Sync loaded tracks to playerStore (for saved track restore, etc.)
+      if (!append) {
+        usePlayerStore.getState().setTracks(newTracks);
+      } else {
+        // Append to store too
+        const existing = usePlayerStore.getState().tracks;
+        usePlayerStore.getState().setTracks([...existing, ...newTracks]);
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === "development") {
+        console.error("Playlist fetch error:", err);
+      }
+    } finally {
+      if (version === fetchVersionRef.current) {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  // Reset to page 1 when filters/sort change — direct deps, no useCallback indirection
   useEffect(() => {
-    const checkScroll = () => {
-      if (scrollContainerRef.current) {
-        const { scrollTop, scrollHeight, clientHeight } =
-          scrollContainerRef.current;
-        setShowScrollIndicator(scrollTop + clientHeight < scrollHeight - 10);
+    console.log("[Playlist] filter change → refetch page 1, accents=", accentFilterOn, "mambo=", mamboFilterOn, "bridgeWith=", bridgeFilterWith);
+    setCurrentPage(1);
+    setHasMore(true);
+    doFetchRef.current?.(1, false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    debouncedSearch, playlistFilter, isAdminUser,
+    bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
+    statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
+    accentFilterOn, mamboFilterOn,
+    dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh,
+    playlistSortBy, sortDirection, squareSortDirection,
+  ]);
+
+  // Load more pages
+  const loadMore = useCallback(() => {
+    if (isLoading || !hasMore) return;
+    doFetchRef.current?.(currentPage + 1, true);
+  }, [isLoading, hasMore, currentPage]);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // ── Виртуализация списка — в DOM только видимые элементы ──
+  const virtualizer = useVirtualizer({
+    count: tracks.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 64,
+    overscan: 5,
+  });
+
+  // Infinite scroll: detect when near bottom
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      // Load more when within 200px of bottom
+      if (scrollHeight - scrollTop - clientHeight < 200) {
+        loadMore();
       }
     };
 
-    checkScroll();
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener("scroll", checkScroll);
-      const resizeObserver = new ResizeObserver(checkScroll);
-      resizeObserver.observe(container);
-
-      return () => {
-        container.removeEventListener("scroll", checkScroll);
-        resizeObserver.disconnect();
-      };
-    }
-  }, [sortedTracks]);
-
-  const scrollToBottom = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        top: scrollContainerRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
-  };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [loadMore]);
 
   return (
     <div className="space-y-4">
@@ -436,7 +604,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         </div>
       )}
 
-      {/* Фильтр по меткам: Акценты / Мамбо — выбрано = только с меткой (AND к остальным) */}
+      {/* Фильтр по меткам: Акценты / Мамбо */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -464,133 +632,65 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         </button>
       </div>
 
-      {/* Список треков */}
+      {/* Счётчик треков */}
+      <div className="text-xs text-gray-500 text-right">
+        {tracks.length} из {total}
+        {isLoading && <span className="ml-2 text-purple-400">загрузка...</span>}
+      </div>
+
+      {/* Список треков — виртуализированный */}
       <div
         ref={scrollContainerRef}
-        className="space-y-2 max-h-96 overflow-y-auto scrollbar-hide relative"
+        className="max-h-96 overflow-y-auto scrollbar-hide relative"
         data-block="playlist"
         style={{
-          scrollbarWidth: "none" /* Firefox */,
-          msOverflowStyle: "none" /* IE and Edge */,
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
         }}
       >
-        {tracks.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-gray-400 mb-2">Плейлист пуст</p>
-            <p className="text-sm text-gray-500">
-              Загрузите треки в разделе "Медиатека"
-            </p>
-          </div>
-        ) : filteredTracks.length === 0 ? (
-          <p className="text-gray-400 text-center py-4">Треки не найдены</p>
-        ) : (
-          sortedTracks.map((track) => {
-            const isActive = currentTrack?.id === track.id;
-            const pct =
-              track.rowDominancePercent ??
-              (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent;
-            const trackHasBridges =
-              track.hasBridges ??
-              (() => {
-                const gm = track.gridMap;
-                if (!gm) return false;
-                if (Array.isArray((gm as { bridges?: unknown }).bridges) && (gm as { bridges: unknown[] }).bridges.length > 0) return true;
-                const pl = Array.isArray((gm as { v2LayoutPerc?: unknown }).v2LayoutPerc) ? (gm as { v2LayoutPerc: unknown[] }).v2LayoutPerc : (gm as { v2Layout?: unknown }).v2Layout;
-                return Array.isArray(pl) && pl.length > 1;
-              })();
-            const isSquare = isAdminUser && !trackHasBridges && !track.rowSwapped;
-            const pctLabel =
-              isSquare && pct != null
-                ? ` — ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`
-                : "";
-            const isFav = favoriteIds.has(track.id);
-            return (
-              <div key={track.id} className="relative group">
-                <button
-                  onClick={() => onTrackSelect(track)}
-                  className={`w-full text-left px-4 py-3 pr-10 rounded-lg transition-colors ${
-                    isActive
-                      ? "bg-purple-600 border-2 border-purple-400 hover:bg-purple-700"
-                      : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
-                  }`}
-                >
-                  <div className="font-medium text-white">
-                    {track.title}
-                    {pctLabel && (
-                      <span className="text-gray-400 font-normal text-xs ml-1" title="% РАЗ (для фильтра)">
-                        {pctLabel}
-                      </span>
-                    )}
-                  </div>
-                  {track.artist && (
-                    <div
-                      className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}
-                    >
-                      {track.artist}
-                    </div>
-                  )}
-                  {track.isProcessed && (
-                    <span
-                      className="text-xs text-green-400 mt-1 inline-block"
-                      title="Stems обработаны"
-                    >
-                      🎵
-                    </span>
-                  )}
-                </button>
-
-                {/* Кнопка Избранное */}
-                <button
-                  onClick={(e) => toggleFavorite(e, track.id)}
-                  disabled={togglingFav === track.id}
-                  title={isFav ? "Убрать из Избранного" : "Добавить в Избранное"}
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all ${
-                    isFav
-                      ? "text-pink-400 opacity-100"
-                      : "text-gray-500 opacity-0 group-hover:opacity-100 hover:text-pink-400"
-                  }`}
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill={isFav ? "currentColor" : "none"}
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-                    />
-                  </svg>
-                </button>
-              </div>
-            );
-          })
-        )}
-
-        {/* Индикатор прокрутки */}
-        {showScrollIndicator && (
-          <div
-            onClick={scrollToBottom}
-            className="sticky bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-gray-800/90 to-transparent cursor-pointer hover:from-gray-800/95 transition-opacity"
-          >
-            <div className="flex flex-col items-center gap-1 text-gray-400 hover:text-purple-400 transition-colors">
-              <span className="text-xs">Прокрутить вниз</span>
-              <svg
-                className="w-5 h-5 animate-bounce"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 14l-7 7m0 0l-7-7m7 7V3"
-                />
-              </svg>
+        {total === 0 && !isLoading ? (
+          tracks.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400 mb-2">Плейлист пуст</p>
+              <p className="text-sm text-gray-500">
+                Загрузите треки в разделе "Медиатека"
+              </p>
             </div>
+          ) : (
+            <p className="text-gray-400 text-center py-4">Треки не найдены</p>
+          )
+        ) : (
+          <div
+            style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const track = tracks[virtualRow.index];
+              return (
+                <div
+                  key={track.id}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <div className="pb-2">
+                    <TrackItem
+                      track={track}
+                      isActive={currentTrackId === track.id}
+                      isAdminUser={isAdminUser}
+                      isFav={favoriteIds.has(track.id)}
+                      togglingFav={togglingFav === track.id}
+                      onSelect={onTrackSelect}
+                      onToggleFav={toggleFavorite}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

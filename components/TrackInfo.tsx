@@ -19,16 +19,14 @@ const TRACK_STATUS_OPTIONS: { value: TrackStatus; label: string }[] = [
 interface TrackInfoProps {}
 
 export default function TrackInfo({}: TrackInfoProps) {
-  const {
-    currentTrack,
-    setCurrentTrack,
-    updateCurrentTrack,
-    tracks,
-    setTracks,
-    stop,
-    isPlaying,
-    isReanalyzing,
-  } = usePlayerStore();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const updateCurrentTrack = usePlayerStore((s) => s.updateCurrentTrack);
+  const tracks = usePlayerStore((s) => s.tracks);
+  const setTracks = usePlayerStore((s) => s.setTracks);
+  const stop = usePlayerStore((s) => s.stop);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const isReanalyzing = usePlayerStore((s) => s.isReanalyzing);
   const router = useRouter();
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
@@ -189,10 +187,11 @@ export default function TrackInfo({}: TrackInfoProps) {
   };
 
   const refetchTracks = () => {
-    fetch(`/api/tracks?t=${Date.now()}`, { cache: "no-store" })
+    fetch(`/api/tracks?pageSize=0&t=${Date.now()}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((freshData: any) => {
-        if (Array.isArray(freshData)) setTracks(freshData);
+      .then((json: any) => {
+        const data = json.tracks ?? json;
+        if (Array.isArray(data)) setTracks(data);
       })
       .catch(() => {});
   };
@@ -235,18 +234,17 @@ export default function TrackInfo({}: TrackInfoProps) {
             )}
           </div>
           {isAdminUser && (
-            <div className="mt-2">
-              <label className="block text-xs text-gray-500 mb-1">Статус</label>
-              <select
-                value={currentTrack.trackStatus ?? "unlistened"}
-                onChange={async (e) => {
-                  const value = e.target.value as TrackStatus;
-                  if (!currentTrack || value === (currentTrack.trackStatus ?? "unlistened")) return;
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!currentTrack) return;
+                  const newValue = !currentTrack.isPrimary;
                   try {
                     const res = await fetch(`/api/tracks/${currentTrack.id}`, {
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ trackStatus: value }),
+                      body: JSON.stringify({ isPrimary: newValue }),
                     });
                     if (!res.ok) {
                       const err = await res.json().catch(() => ({}));
@@ -258,17 +256,50 @@ export default function TrackInfo({}: TrackInfoProps) {
                     setTracks(list.map((t) => (t.id === track.id ? track : t)));
                   } catch (err) {
                     console.error(err);
-                    alert(err instanceof Error ? err.message : "Ошибка смены статуса");
+                    alert(err instanceof Error ? err.message : "Ошибка");
                   }
                 }}
-                className="px-2 py-1.5 text-sm rounded bg-gray-700 border border-gray-600 text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer"
+                className={`text-lg leading-none transition-colors ${
+                  currentTrack.isPrimary
+                    ? "text-yellow-400 hover:text-yellow-300"
+                    : "text-gray-600 hover:text-yellow-400/60"
+                }`}
+                title={currentTrack.isPrimary ? "Главный трек (снять)" : "Сделать главным"}
               >
-                {TRACK_STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                {currentTrack.isPrimary ? "\u2605" : "\u2606"}
+              </button>
+              <select
+                  value={currentTrack.trackStatus ?? "unlistened"}
+                  onChange={async (e) => {
+                    const value = e.target.value as TrackStatus;
+                    if (!currentTrack || value === (currentTrack.trackStatus ?? "unlistened")) return;
+                    try {
+                      const res = await fetch(`/api/tracks/${currentTrack.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ trackStatus: value }),
+                      });
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err?.error || res.statusText);
+                      }
+                      const { track } = await res.json();
+                      updateCurrentTrack(track);
+                      const list = usePlayerStore.getState().tracks;
+                      setTracks(list.map((t) => (t.id === track.id ? track : t)));
+                    } catch (err) {
+                      console.error(err);
+                      alert(err instanceof Error ? err.message : "Ошибка смены статуса");
+                    }
+                  }}
+                  className="px-2 py-1.5 text-sm rounded bg-gray-700 border border-gray-600 text-gray-200 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer"
+                >
+                  {TRACK_STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
             </div>
           )}
         </div>

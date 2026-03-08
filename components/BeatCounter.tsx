@@ -27,21 +27,25 @@ export default function BeatCounter({
   >("inline");
   const [isFullscreenOverlayVisible, setIsFullscreenOverlayVisible] =
     useState(false);
-  const { isPlaying, currentTrack, currentTime } = usePlayerStore();
+  // ── Zustand selectors — НЕ подписываемся на currentTime (60fps) ──
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const hasCurrentTrack = usePlayerStore((s) => s.currentTrack != null);
+  // boolean selector: перерисовка только при переходе 0↔non-zero, не каждый кадр
+  const isTimeZero = usePlayerStore((s) => s.currentTime === 0);
   const beats = [1, 2, 3, 4, 5, 6, 7, 8];
 
   // Сброс по Стоп: при 0:00 и не играет — не показывать счёт (только при паузе оставляем как есть)
-  const isStopped = currentTrack != null && currentTime === 0 && !isPlaying;
+  const isStopped = hasCurrentTrack && isTimeZero && !isPlaying;
 
   // Используем внешний режим, если он передан, иначе внутренний
   const displayMode = externalDisplayMode ?? internalDisplayMode;
 
   // Показываем оверлей когда начинается воспроизведение в режиме fullscreen
   useEffect(() => {
-    if (displayMode === "fullscreen" && isPlaying && currentTrack) {
+    if (displayMode === "fullscreen" && isPlaying && hasCurrentTrack) {
       setIsFullscreenOverlayVisible(true);
     }
-  }, [displayMode, isPlaying, currentTrack]);
+  }, [displayMode, isPlaying, hasCurrentTrack]);
 
   // Получаем текущий активный бит для озвучки
   const activeBeatNumber = beats[currentBeat];
@@ -83,7 +87,7 @@ export default function BeatCounter({
               {beat}
             </div>
           ))
-        ) : displayMode === "fullscreen" && !isPlaying && currentTrack ? (
+        ) : displayMode === "fullscreen" && !isPlaying && hasCurrentTrack ? (
           // Показываем "Запустить" в блоке beat-counter когда режим fullscreen и не играет
           <div
             onClick={(e) => {
@@ -107,7 +111,7 @@ export default function BeatCounter({
                 data-beat={beat}
                 data-active={isActive}
                 className={`
-                  flex-1 text-center transition-all duration-200
+                  flex-1 text-center transition-transform duration-200
                   ${
                     isActive
                       ? isBridge
@@ -127,7 +131,7 @@ export default function BeatCounter({
 
       {/* Режим "Во весь экран" - показываем оверлей когда играет */}
       {displayMode === "fullscreen" &&
-        currentTrack &&
+        hasCurrentTrack &&
         isFullscreenOverlayVisible && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300"

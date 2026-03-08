@@ -60,9 +60,20 @@ model Track {
   playsMonth        Int       @default(0) // прослушиваний в текущем месяце
   playsMonthResetAt DateTime? // когда был сброшен счётчик за месяц
 
+  // Кластеризация дублей
+  duration         Float?    // длительность трека в секундах (из v2-анализа)
+  fileSize         BigInt?   // размер файла в байтах
+  clusterId        Int?      // FK на кластер дублей
+  isPrimary        Boolean   @default(false) // главный трек в кластере
+  clusterExcluded  Boolean   @default(false) // исключён из кластеризации навсегда
+
+  cluster   Cluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+
   playlistItems PlaylistItem[]
   modQueue      ModQueue?
   logs          TrackLog[]
+
+  @@index([clusterId])
 }
 
 // ─── Очередь модерации ──────────────────────────────────────────────────────
@@ -156,6 +167,14 @@ model User {
   passwordResetExpiresAt DateTime?
 
   playlists Playlist[]
+}
+
+// ─── Кластеры дублей ──────────────────────────────────────────────────────
+model Cluster {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tracks    Track[]
 }
 
 // ─── Промокоды (одноразовые, дают роль moderator) ─────────────────────────

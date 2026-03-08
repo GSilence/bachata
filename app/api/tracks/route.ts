@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { isAdminOrModerator } from "@/lib/roles";
+import { buildTracksWhere, buildTracksOrderBy, LIGHT_SELECT, INTERNAL_FIELDS } from "@/lib/trackQuery";
 
 export const dynamic = "force-dynamic";
 
@@ -27,57 +28,80 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Динамический импорт Prisma, чтобы избежать ошибок при инициализации
     const { prisma } = await import("@/lib/prisma");
-
-    // Проверяем наличие Prisma Client перед использованием
     if (!prisma) {
       if (process.env.NODE_ENV === "development") {
-        console.warn(
-          "Prisma Client not initialized (DATABASE_URL not configured). Returning empty array.",
-        );
+        console.warn("Prisma Client not initialized. Returning empty result.");
       }
-      return NextResponse.json([], { headers: NO_CACHE_HEADERS });
+      return NextResponse.json(
+        { tracks: [], total: 0, page: 1, pageSize: 40 },
+        { headers: NO_CACHE_HEADERS }
+      );
     }
 
     const user = await getCurrentUser();
+    const admin = isAdminOrModerator(user!.role);
+    const sp = request.nextUrl.searchParams;
 
-    // Поля, которые не должны видеть обычные пользователи
-    const INTERNAL_FIELDS = [
-      "gridMap", "rowDominancePercent", "rowSwapped", "analyzerType",
-      "fileHash", "isProcessed", "pathVocals", "pathDrums", "pathBass", "pathOther",
-    ] as const;
+    // Pagination (pageSize=0 → без лимита, все треки)
+    const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10) || 1);
+    const rawPageSize = parseInt(sp.get("pageSize") ?? "40", 10);
+    const pageSize = rawPageSize === 0 ? 0 : Math.min(200, Math.max(1, rawPageSize || 40));
+
+    // Build WHERE clause
+    const where = buildTracksWhere(sp, admin);
+
+    // Build ORDER BY clause
+    const orderBy = buildTracksOrderBy(sp);
+
+    // DEBUG: trace filter pipeline
+    console.log("[tracks] params:", Object.fromEntries(sp.entries()));
+    console.log("[tracks] admin:", admin, "where:", JSON.stringify(where));
+
+    // Execute count + data in parallel
+    const [total, raw] = await Promise.all([
+      prisma.track.count({ where }),
+      prisma.track.findMany({
+        select: LIGHT_SELECT,
+        where,
+        orderBy,
+        ...(pageSize > 0 ? { skip: (page - 1) * pageSize, take: pageSize } : {}),
+      }),
+    ]);
 
     let tracks: Record<string, unknown>[];
-
-    if (isAdminOrModerator(user!.role)) {
-      // Админ и модератор видят всё без ограничений
-      tracks = await prisma.track.findMany({ orderBy: { createdAt: "desc" } });
+    if (admin) {
+      tracks = raw.map((t) => ({
+        ...t,
+        fileSize: t.fileSize != null ? Number(t.fileSize) : null,
+        gridMap: null,
+      }));
     } else {
-      // Обычный пользователь — только approved треки, без внутренних полей
-      const raw = await prisma.track.findMany({
-        where: { trackStatus: "approved" },
-        orderBy: { createdAt: "desc" },
-      });
       tracks = raw.map((t) => {
-        const sanitized: Record<string, unknown> = { ...t };
+        const sanitized: Record<string, unknown> = {
+          ...t,
+          fileSize: t.fileSize != null ? Number(t.fileSize) : null,
+          gridMap: null,
+        };
         for (const field of INTERNAL_FIELDS) delete sanitized[field];
         return sanitized;
       });
     }
 
-    return NextResponse.json(tracks, { headers: NO_CACHE_HEADERS });
+    console.log("[tracks] total:", total, "returned:", raw.length);
+
+    return NextResponse.json(
+      { tracks, total, page, pageSize },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (error) {
-    // Логируем только в development
     if (process.env.NODE_ENV === "development") {
       console.error("Error fetching tracks:", error);
     }
 
-    // Всегда возвращаем пустой массив при ошибке, чтобы приложение работало
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorCode = (error as { code?: string })?.code;
 
-    // Для ошибок подключения к БД просто возвращаем пустой массив
     if (
       errorCode === "P1001" ||
       errorCode === "P1000" ||
@@ -86,12 +110,13 @@ export async function GET(request: NextRequest) {
       errorMessage.includes("Can't reach database")
     ) {
       if (process.env.NODE_ENV === "development") {
-        console.warn("Database connection error. Returning empty array.");
+        console.warn("Database connection error. Returning empty result.");
       }
-      return NextResponse.json([], { headers: NO_CACHE_HEADERS });
     }
 
-    // Для всех других ошибок тоже возвращаем пустой массив
-    return NextResponse.json([], { headers: NO_CACHE_HEADERS });
+    return NextResponse.json(
+      { tracks: [], total: 0, page: 1, pageSize: 40 },
+      { headers: NO_CACHE_HEADERS }
+    );
   }
 }

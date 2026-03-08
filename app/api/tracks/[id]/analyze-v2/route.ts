@@ -332,6 +332,9 @@ export async function POST(
                       offset: result.song_start_time,
                       baseOffset: result.song_start_time,
                     }),
+                    ...(typeof result.duration === "number" && {
+                      duration: result.duration,
+                    }),
                   },
                 });
               }

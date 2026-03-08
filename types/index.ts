@@ -96,6 +96,12 @@ export interface Track {
   metaGenre: string | null;
   metaComment: string | null;
   metaTrackNum: number | null;
+  // Кластеризация
+  duration: number | null;
+  fileSize: number | null;
+  clusterId: number | null;
+  isPrimary: boolean;
+  clusterExcluded: boolean;
 }
 
 export interface PlayerState {
@@ -181,7 +187,7 @@ export interface PlayerState {
 
   // Actions
   setReanalyzing: (value: boolean) => void;
-  setCurrentTrack: (track: Track | null) => void;
+  setCurrentTrack: (track: Track | null, autoPlay?: boolean) => void;
   updateCurrentTrack: (track: Track) => void;
   setTracks: (tracks: Track[]) => void;
   setIsPlaying: (isPlaying: boolean) => void;

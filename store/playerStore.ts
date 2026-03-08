@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { audioEngine } from "@/lib/audioEngine";
 import { restoreUserSettings, saveUserSettings } from "@/lib/userSettings";
+import { fetchTrackFull } from "@/lib/fetchTrackFull";
+import { buildNavigateFilters } from "@/lib/buildNavigateFilters";
 import type {
   PlayerState,
   Track,
@@ -116,7 +118,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       // Actions
       setReanalyzing: (value) => set({ isReanalyzing: value }),
-      setCurrentTrack: (track) => {
+      setCurrentTrack: (track, autoPlay) => {
         if (!track) {
           set({
             currentTrack: null,
@@ -128,31 +130,59 @@ export const usePlayerStore = create<PlayerState>()(
         }
 
         // STEP 1: IMMEDIATELY reset state to prevent stale duration from corrupting seek calculations
-        // This ensures the UI renders "0:00 / 0:00" instead of using the previous track's timeline
         set({
           currentTrack: track,
           savedTrackId: track.id,
-          isPlaying: false, // Don't auto-play, let play() be called explicitly
+          isPlaying: false,
           currentTime: 0,
-          duration: 0, // Will be updated when track loads
+          duration: 0,
         });
 
-        // STEP 2: Stop playback explicitly (simulates user pressing Stop button)
+        // STEP 2: Stop playback explicitly
         audioEngine.stop();
 
-        // STEP 3: Load the new track with stems settings
-        const {
-          isStemsMode,
-          stemsEnabled,
-          stemsVolume,
-          musicVolume,
-          voiceVolume,
-        } = get();
-        audioEngine.loadTrack(track, isStemsMode, stemsEnabled, stemsVolume);
+        // Внутренний хелпер загрузки аудио
+        const doLoad = (t: Track) => {
+          const {
+            isStemsMode,
+            stemsEnabled,
+            stemsVolume,
+            musicVolume,
+            voiceVolume,
+          } = get();
+          // loadTrack: unload старый → создаёт новый Howl (musicTrack = null на мгновение)
+          audioEngine.loadTrack(t, isStemsMode, stemsEnabled, stemsVolume);
+          audioEngine.setMusicVolume(musicVolume);
+          audioEngine.setVoiceVolume(voiceVolume);
+          // autoPlay: ставим callback ПОСЛЕ loadTrack — старый трек уже unloaded,
+          // isTrackLoaded() не стрельнёт false-positive на старом треке.
+          // Если новый Howl уже загружен (из кэша), setOnTrackLoaded вызовет play() немедленно.
+          // Отправляем статистику прослушивания (fire-and-forget)
+          fetch(`/api/tracks/${t.id}/play`, { method: "POST" }).catch(() => {});
 
-        // STEP 4: Set volume from store
-        audioEngine.setMusicVolume(musicVolume);
-        audioEngine.setVoiceVolume(voiceVolume);
+          if (autoPlay) {
+            audioEngine.setOnTrackLoaded(() => {
+              const g = get();
+              if (g.currentTrack?.id === t.id) {
+                g.play();
+              }
+              audioEngine.setOnTrackLoaded(null);
+            });
+          }
+        };
+
+        // STEP 3: Если gridMap не загружена — подтянуть с сервера, иначе грузить сразу
+        if (track.gridMap == null) {
+          fetchTrackFull(track).then((fullTrack) => {
+            // Проверяем что пользователь не переключил трек пока шёл запрос
+            const current = get().currentTrack;
+            if (current?.id !== track.id) return;
+            set({ currentTrack: fullTrack });
+            doLoad(fullTrack);
+          });
+        } else {
+          doLoad(track);
+        }
       },
       updateCurrentTrack: (track) => {
         // Обновляет метаданные трека без перезагрузки аудио (для бриджей, offset и т.д.)
@@ -300,227 +330,54 @@ export const usePlayerStore = create<PlayerState>()(
             transitionLock = false;
           }, TRANSITION_LOCK_MS);
         };
-        try {
-          const {
-            currentTrack,
-            tracks,
-            playMode,
-            playlistFilter,
-            searchQuery,
-            bridgeFilterWith,
-            bridgeFilterWithout,
-            bridgeFilterSwapped,
-            isAdmin,
-            statusFilterUnlistened,
-            statusFilterModeration,
-            statusFilterApproved,
-            statusFilterPopsa,
-            accentFilterOn,
-            mamboFilterOn,
-            dominanceBucketNeg,
-            dominanceBucketLow,
-            dominanceBucketHigh,
-            isPlaying,
-          } = get();
-          if (!currentTrack || tracks.length === 0) {
-            releaseLock();
-            return;
-          }
 
-          // STEP 1: Save playing state before switching (for auto-play after track loads)
-          const wasPlaying = isPlaying;
+        const state = get();
+        const { currentTrack, playMode, isPlaying } = state;
 
-          // STEP 2: Set isPlaying to false BEFORE switching tracks
-          // This prevents double audio and ensures clean state
-          set({ isPlaying: false });
-
-          // Фильтруем треки по тем же правилам, что и в плейлисте
-          const filteredTracks = tracks.filter((track) => {
-            // Фильтр по типу
-            if (playlistFilter === "free" && !track.isFree) {
-              return false;
-            }
-            // TODO: 'my' и 'all' фильтры для будущей реализации
-
-            // Базовый фильтр для админа: по статусу (хотя бы один выбран, трек должен попадать в выбранные)
-            if (isAdmin) {
-              const s = track.trackStatus ?? "unlistened";
-              const match =
-                (s === "unlistened" && statusFilterUnlistened) ||
-                (s === "moderation" && statusFilterModeration) ||
-                (s === "approved" && statusFilterApproved) ||
-                (s === "popsa" && statusFilterPopsa);
-              if (!match) return false;
-            }
-
-            // OR-фильтр: трек показывается если подходит хотя бы под один активный тег
-            const isSwapped = track.rowSwapped; // колонка БД
-            const hasBridges =
-              track.hasBridges ??
-              (Array.isArray(track.gridMap?.v2LayoutPerc)
-                ? (track.gridMap!.v2LayoutPerc!.length > 1)
-                : Array.isArray(track.gridMap?.bridges) && track.gridMap!.bridges!.length > 0);
-            const matchesBridgeWith = hasBridges && bridgeFilterWith;
-            const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
-            const matchesSwapped = isSwapped && bridgeFilterSwapped;
-            if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
-
-            // AND-фильтр по меткам: если кнопка включена — только треки с этой меткой
-            if (accentFilterOn && !track.hasAccents) return false;
-            if (mamboFilterOn && !track.hasMambo) return false;
-
-            // Квадратные: фильтр по bucket'ам % доминирования (для всех треков)
-            const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
-            const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
-            if (!noneSelected && !allSelected) {
-              const pct =
-                track.rowDominancePercent ??
-                (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
-                undefined;
-              if (pct == null) return false;
-              const inNeg = dominanceBucketNeg && pct < 0;
-              const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
-              const inHigh = dominanceBucketHigh && pct >= 5;
-              if (!inNeg && !inLow && !inHigh) return false;
-            }
-
-            // Поиск по названию
-            if (searchQuery) {
-              const query = searchQuery.toLowerCase();
-              const matchesTitle = track.title.toLowerCase().includes(query);
-              const matchesArtist =
-                track.artist?.toLowerCase().includes(query) || false;
-              if (!matchesTitle && !matchesArtist) {
-                return false;
-              }
-            }
-
-            return true;
-          });
-
-          const playlistSortBy = get().playlistSortBy;
-          const sortDirection = get().sortDirection;
-          const squareSortDirection = get().squareSortDirection;
-
-          const sortByMain = (list: Track[]): Track[] => {
-            const collator = new Intl.Collator(undefined, {
-              sensitivity: "base",
-              numeric: true,
-            });
-            const dir = sortDirection === "desc" ? -1 : 1;
-            return [...list].sort((a, b) => {
-              switch (playlistSortBy) {
-                case "title":
-                  return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
-                case "duration": {
-                  const da = a.gridMap?.duration ?? 0;
-                  const db = b.gridMap?.duration ?? 0;
-                  return (da !== db ? da - db : a.id - b.id) * dir;
-                }
-                case "date": {
-                  const ta = new Date(a.createdAt).getTime();
-                  const tb = new Date(b.createdAt).getTime();
-                  return (ta !== tb ? ta - tb : a.id - b.id) * dir;
-                }
-                default:
-                  return a.id - b.id;
-              }
-            });
-          };
-
-          const baseSorted = sortByMain(filteredTracks);
-          const sortedForPlay =
-            squareSortDirection === "none"
-              ? baseSorted
-              : (() => {
-                  const tHasBridges = (t: Track) =>
-                    t.hasBridges ??
-                    (Array.isArray(t.gridMap?.v2LayoutPerc)
-                      ? t.gridMap!.v2LayoutPerc!.length > 1
-                      : Array.isArray(t.gridMap?.bridges) && (t.gridMap!.bridges!.length > 0));
-                  const getDominance = (t: Track) =>
-                    t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
-                  const squareTracks = baseSorted.filter((t) => !tHasBridges(t));
-                  const bridgeTracks = baseSorted.filter((t) => tHasBridges(t));
-                  const sortedSquare =
-                    squareSortDirection === "desc"
-                      ? [...squareTracks].sort((a, b) => {
-                          const d = getDominance(b) - getDominance(a);
-                          return d !== 0 ? d : a.id - b.id;
-                        })
-                      : [...squareTracks].sort((a, b) => {
-                          const d = getDominance(a) - getDominance(b);
-                          return d !== 0 ? d : a.id - b.id;
-                        });
-                  return [...sortedSquare, ...bridgeTracks];
-                })();
-
-          if (sortedForPlay.length === 0) return;
-
-          const currentIndex = sortedForPlay.findIndex(
-            (t) => t.id === currentTrack.id,
-          );
-
-          let nextTrack: Track | null = null;
-
-          if (playMode === "random") {
-            let randomIndex = Math.floor(Math.random() * sortedForPlay.length);
-            // Если только один трек, не выбираем его снова
-            if (sortedForPlay.length > 1 && randomIndex === currentIndex) {
-              randomIndex = (randomIndex + 1) % sortedForPlay.length;
-            }
-            nextTrack = sortedForPlay[randomIndex];
-            console.log(
-              `Random: selected index=${randomIndex}, track=${nextTrack?.title} (id=${nextTrack?.id})`,
-            );
-          } else if (playMode === "loop") {
-            // Остаемся на том же треке - перезагружаем его
-            console.log(
-              `Loop: restarting track=${currentTrack.title} (id=${currentTrack.id})`,
-            );
-            nextTrack = currentTrack;
-          } else {
-            // sequential
-            if (currentIndex === -1) {
-              // Текущий трек не найден в отфильтрованном списке - выбираем первый
-              console.warn(
-                "Current track not found in filtered list, selecting first track",
-              );
-              if (sortedForPlay.length > 0) {
-                nextTrack = sortedForPlay[0];
-              }
-            } else {
-              const nextIndex = (currentIndex + 1) % sortedForPlay.length;
-              nextTrack = sortedForPlay[nextIndex];
-              console.log(
-                `Sequential: currentIndex=${currentIndex}, nextIndex=${nextIndex}, total=${sortedForPlay.length}`,
-              );
-              console.log(
-                `Sequential: currentTrack=${currentTrack.title} (id=${currentTrack.id}), nextTrack=${nextTrack?.title} (id=${nextTrack?.id})`,
-              );
-            }
-          }
-
-          // STEP 3: Use setCurrentTrack which includes mandatory Stop logic
-          if (nextTrack) {
-            const { setCurrentTrack, play } = get();
-            setCurrentTrack(nextTrack);
-            if (wasPlaying) {
-              // Запуск по загрузке трека — без задержки, чтобы не терять аудиофокус на мобильных
-              audioEngine.setOnTrackLoaded(() => {
-                const g = get();
-                if (g.currentTrack?.id === nextTrack.id) {
-                  play();
-                }
-                audioEngine.setOnTrackLoaded(null);
-              });
-            }
-          } else {
-            console.warn("playNext: No next track found");
-          }
-        } finally {
+        if (!currentTrack) {
           releaseLock();
+          return;
         }
+
+        const wasPlaying = isPlaying;
+        set({ isPlaying: false });
+
+        // Loop mode: restart same track
+        if (playMode === "loop") {
+          const { setCurrentTrack } = get();
+          setCurrentTrack(currentTrack, wasPlaying);
+          releaseLock();
+          return;
+        }
+
+        // Server-side navigation: next/random
+        const direction = playMode === "random" ? "random" : "next";
+        const filters = buildNavigateFilters(state);
+
+        fetch("/api/tracks/navigate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            currentTrackId: currentTrack.id,
+            direction,
+            filters,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            const nextTrack = data.track as Track | null;
+            if (nextTrack) {
+              // Navigate endpoint returns full track with gridMap
+              const { setCurrentTrack } = get();
+              setCurrentTrack(nextTrack, wasPlaying);
+            } else {
+              console.warn("playNext: No next track found");
+            }
+          })
+          .catch((err) => {
+            console.error("playNext navigate error:", err);
+          })
+          .finally(releaseLock);
       },
 
       playPrevious: () => {
@@ -531,172 +388,48 @@ export const usePlayerStore = create<PlayerState>()(
             transitionLock = false;
           }, TRANSITION_LOCK_MS);
         };
-        try {
-          const {
-            currentTrack,
-            tracks,
-            playMode,
-            isPlaying,
-            playlistFilter,
-            searchQuery,
-            bridgeFilterWith,
-            bridgeFilterWithout,
-            bridgeFilterSwapped,
-            isAdmin,
-            statusFilterUnlistened,
-            statusFilterModeration,
-            statusFilterApproved,
-            statusFilterPopsa,
-            accentFilterOn,
-            mamboFilterOn,
-            dominanceBucketNeg,
-            dominanceBucketLow,
-            dominanceBucketHigh,
-          } = get();
-          if (!currentTrack || tracks.length === 0) {
-            releaseLock();
-            return;
-          }
 
-          const wasPlaying = isPlaying;
-          set({ isPlaying: false });
+        const state = get();
+        const { currentTrack, playMode, isPlaying } = state;
 
-          const filteredTracks = tracks.filter((track) => {
-            if (playlistFilter === "free" && !track.isFree) return false;
-            if (isAdmin) {
-              const s = track.trackStatus ?? "unlistened";
-              const match =
-                (s === "unlistened" && statusFilterUnlistened) ||
-                (s === "moderation" && statusFilterModeration) ||
-                (s === "approved" && statusFilterApproved) ||
-                (s === "popsa" && statusFilterPopsa);
-              if (!match) return false;
-            }
-            const isSwapped = track.rowSwapped; // колонка БД
-            const hasBridges =
-              track.hasBridges ??
-              (Array.isArray(track.gridMap?.v2LayoutPerc)
-                ? (track.gridMap!.v2LayoutPerc!.length > 1)
-                : Array.isArray(track.gridMap?.bridges) && track.gridMap!.bridges!.length > 0);
-            const matchesBridgeWith = hasBridges && bridgeFilterWith;
-            const matchesBridgeWithout = !hasBridges && bridgeFilterWithout;
-            const matchesSwapped = isSwapped && bridgeFilterSwapped;
-            if (!matchesBridgeWith && !matchesBridgeWithout && !matchesSwapped) return false;
-            if (accentFilterOn && !track.hasAccents) return false;
-            if (mamboFilterOn && !track.hasMambo) return false;
-            const noneSelected = !dominanceBucketNeg && !dominanceBucketLow && !dominanceBucketHigh;
-            const allSelected = dominanceBucketNeg && dominanceBucketLow && dominanceBucketHigh;
-            if (!noneSelected && !allSelected) {
-              const pct =
-                track.rowDominancePercent ??
-                (track.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ??
-                undefined;
-              if (pct == null) return false;
-              const inNeg = dominanceBucketNeg && pct < 0;
-              const inLow = dominanceBucketLow && pct >= 0 && pct < 5;
-              const inHigh = dominanceBucketHigh && pct >= 5;
-              if (!inNeg && !inLow && !inHigh) return false;
-            }
-            if (searchQuery) {
-              const q = searchQuery.toLowerCase();
-              const ok =
-                track.title.toLowerCase().includes(q) ||
-                (track.artist?.toLowerCase().includes(q) ?? false);
-              if (!ok) return false;
-            }
-            return true;
-          });
-
-          const playlistSortBy = get().playlistSortBy;
-          const sortDirection = get().sortDirection;
-          const squareSortDirection = get().squareSortDirection;
-          const collator = new Intl.Collator(undefined, {
-            sensitivity: "base",
-            numeric: true,
-          });
-          const sortByMain = (list: Track[]): Track[] => {
-            const dir = sortDirection === "desc" ? -1 : 1;
-            return [...list].sort((a, b) => {
-              switch (playlistSortBy) {
-                case "title":
-                  return (collator.compare(a.title, b.title) || a.id - b.id) * dir;
-                case "duration": {
-                  const da = a.gridMap?.duration ?? 0;
-                  const db = b.gridMap?.duration ?? 0;
-                  return (da !== db ? da - db : a.id - b.id) * dir;
-                }
-                case "date": {
-                  const ta = new Date(a.createdAt).getTime();
-                  const tb = new Date(b.createdAt).getTime();
-                  return (ta !== tb ? ta - tb : a.id - b.id) * dir;
-                }
-                default:
-                  return a.id - b.id;
-              }
-            });
-          };
-          const baseSorted = sortByMain(filteredTracks);
-          const sortedForPlay =
-            squareSortDirection === "none"
-              ? baseSorted
-              : (() => {
-                  const tHasBridges = (t: Track) =>
-                    t.hasBridges ??
-                    (Array.isArray(t.gridMap?.v2LayoutPerc)
-                      ? t.gridMap!.v2LayoutPerc!.length > 1
-                      : Array.isArray(t.gridMap?.bridges) && (t.gridMap!.bridges!.length > 0));
-                  const getDominance = (t: Track) =>
-                    t.rowDominancePercent ?? (t.gridMap as { rowDominancePercent?: number } | null)?.rowDominancePercent ?? -Infinity;
-                  const squareTracks = baseSorted.filter((t) => !tHasBridges(t));
-                  const bridgeTracks = baseSorted.filter((t) => tHasBridges(t));
-                  const sortedSquare =
-                    squareSortDirection === "desc"
-                      ? [...squareTracks].sort((a, b) => {
-                          const d = getDominance(b) - getDominance(a);
-                          return d !== 0 ? d : a.id - b.id;
-                        })
-                      : [...squareTracks].sort((a, b) => {
-                          const d = getDominance(a) - getDominance(b);
-                          return d !== 0 ? d : a.id - b.id;
-                        });
-                  return [...sortedSquare, ...bridgeTracks];
-                })();
-
-          const currentIndex = sortedForPlay.findIndex(
-            (t) => t.id === currentTrack.id,
-          );
-          let prevTrack: Track | null = null;
-
-          if (playMode === "random") {
-            const randomIndex = Math.floor(
-              Math.random() * sortedForPlay.length,
-            );
-            prevTrack = sortedForPlay[randomIndex];
-          } else if (playMode === "loop") {
-            releaseLock();
-            return;
-          } else {
-            const prevIndex =
-              currentIndex <= 0 ? sortedForPlay.length - 1 : currentIndex - 1;
-            prevTrack = sortedForPlay[prevIndex];
-          }
-
-          if (prevTrack) {
-            const { setCurrentTrack, play } = get();
-            setCurrentTrack(prevTrack);
-            if (wasPlaying) {
-              audioEngine.setOnTrackLoaded(() => {
-                const g = get();
-                if (g.currentTrack?.id === prevTrack.id) {
-                  play();
-                }
-                audioEngine.setOnTrackLoaded(null);
-              });
-            }
-          }
-        } finally {
+        if (!currentTrack) {
           releaseLock();
+          return;
         }
+
+        // Loop mode: do nothing
+        if (playMode === "loop") {
+          releaseLock();
+          return;
+        }
+
+        const wasPlaying = isPlaying;
+        set({ isPlaying: false });
+
+        const direction = playMode === "random" ? "random" : "prev";
+        const filters = buildNavigateFilters(state);
+
+        fetch("/api/tracks/navigate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            currentTrackId: currentTrack.id,
+            direction,
+            filters,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            const prevTrack = data.track as Track | null;
+            if (prevTrack) {
+              const { setCurrentTrack } = get();
+              setCurrentTrack(prevTrack, wasPlaying);
+            }
+          })
+          .catch((err) => {
+            console.error("playPrevious navigate error:", err);
+          })
+          .finally(releaseLock);
       },
     }),
     {
