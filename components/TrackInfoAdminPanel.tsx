@@ -23,6 +23,10 @@ export default function TrackInfoAdminPanel({
 }: TrackInfoAdminPanelProps) {
   const { updateCurrentTrack, setTracks } = usePlayerStore();
   const [v2Result, setV2Result] = useState<any>(null);
+  const [rawAnalysisOpen, setRawAnalysisOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("rawAnalysisOpen") !== "false";
+  });
 
   // История трека
   const [trackLogs, setTrackLogs] = useState<any[]>([]);
@@ -341,7 +345,11 @@ export default function TrackInfoAdminPanel({
 
         {/* Таблица лидирующих рядов (Raw Analysis) */}
         {v2Result && !v2Result.error && v2Result.row_analysis && Object.keys(v2Result.row_analysis).length > 0 && (
-          <details className="mt-3" open>
+          <details className="mt-3" open={rawAnalysisOpen} onToggle={(e) => {
+            const open = (e.target as HTMLDetailsElement).open;
+            setRawAnalysisOpen(open);
+            localStorage.setItem("rawAnalysisOpen", String(open));
+          }}>
             <summary className="text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
               Raw Analysis
             </summary>
