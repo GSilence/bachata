@@ -458,15 +458,11 @@ export const usePlayerStore = create<PlayerState>()(
       }),
       storage: trackStorage,
       merge: (persistedState: any, currentState: any) => {
-        // Формат в localStorage: { state: { ... }, version } или сразу { ... }
         const stored = persistedState?.state ?? persistedState ?? {};
-        const storedVersion = persistedState?.version ?? stored?.version ?? 0;
         const get = <T>(key: string, defaultVal: T): T =>
           Object.prototype.hasOwnProperty.call(stored, key)
             ? (stored[key] as T)
             : defaultVal;
-        // Сброс бакетов фильтра % при обновлении версии (избегаем старого инвертированного состояния)
-        const useDefaultBuckets = storedVersion < 2;
         return {
           ...currentState,
           savedTrackId: stored.savedTrackId ?? null,
@@ -499,9 +495,9 @@ export const usePlayerStore = create<PlayerState>()(
           ...(stored.playlistSortBy === "artist"
             ? { playlistSortBy: "title" as const }
             : {}),
-          dominanceBucketNeg: useDefaultBuckets ? currentState.dominanceBucketNeg : get("dominanceBucketNeg", currentState.dominanceBucketNeg),
-          dominanceBucketLow: useDefaultBuckets ? currentState.dominanceBucketLow : get("dominanceBucketLow", currentState.dominanceBucketLow),
-          dominanceBucketHigh: useDefaultBuckets ? currentState.dominanceBucketHigh : get("dominanceBucketHigh", currentState.dominanceBucketHigh),
+          dominanceBucketNeg: get("dominanceBucketNeg", currentState.dominanceBucketNeg),
+          dominanceBucketLow: get("dominanceBucketLow", currentState.dominanceBucketLow),
+          dominanceBucketHigh: get("dominanceBucketHigh", currentState.dominanceBucketHigh),
           playUntilSeconds: get(
             "playUntilSeconds",
             currentState.playUntilSeconds,

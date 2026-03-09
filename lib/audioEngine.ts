@@ -339,8 +339,8 @@ export class AudioEngine {
       onload: () => {
         this.fireTrackLoaded();
       },
-      onloaderror: (id, error) => {
-        console.error("Howl load error:", error);
+      onloaderror: (_id, error) => {
+        console.error("Howl load error:", error, track.pathOriginal);
       },
     });
   }

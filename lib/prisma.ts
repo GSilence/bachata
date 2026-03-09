@@ -1,5 +1,11 @@
 import { PrismaClient } from '@prisma/client'
 
+// BigInt не сериализуется в JSON по умолчанию — фикс для fileSize (BIGINT)
+// eslint-disable-next-line no-extend-native
+;(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
+  return Number(this)
+}
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
