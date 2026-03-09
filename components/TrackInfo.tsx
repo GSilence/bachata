@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { usePlayerStore } from "@/store/playerStore";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
-import { useRouter } from "next/navigation";
+
 import React from "react";
 import type { GridMap, TrackStatus } from "@/types";
 import TrackInfoAdminPanel from "./TrackInfoAdminPanel";
@@ -27,7 +27,6 @@ export default function TrackInfo({}: TrackInfoProps) {
   const stop = usePlayerStore((s) => s.stop);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const isReanalyzing = usePlayerStore((s) => s.isReanalyzing);
-  const router = useRouter();
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -170,10 +169,8 @@ export default function TrackInfo({}: TrackInfoProps) {
         throw new Error(error.error || "Failed to delete track");
       }
 
-      const updatedTracks = tracks.filter((t) => t.id !== currentTrack.id);
-      setTracks(updatedTracks);
       setCurrentTrack(null);
-      router.refresh();
+      (usePlayerStore.getState() as any).triggerPlaylistRefetch();
     } catch (error) {
       console.error("Error deleting track:", error);
       alert(
@@ -285,8 +282,7 @@ export default function TrackInfo({}: TrackInfoProps) {
                       }
                       const { track } = await res.json();
                       updateCurrentTrack(track);
-                      const list = usePlayerStore.getState().tracks;
-                      setTracks(list.map((t) => (t.id === track.id ? track : t)));
+                      (usePlayerStore.getState() as any).triggerPlaylistRefetch();
                     } catch (err) {
                       console.error(err);
                       alert(err instanceof Error ? err.message : "Ошибка смены статуса");

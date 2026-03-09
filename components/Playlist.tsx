@@ -353,13 +353,12 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       setCurrentPage(page);
       setHasMore(page * PAGE_SIZE < newTotal);
 
-      // Sync loaded tracks to playerStore (for saved track restore, etc.)
-      if (!append) {
-        usePlayerStore.getState().setTracks(newTracks);
-      } else {
-        // Append to store too
+      // Sync to playerStore
+      if (append) {
         const existing = usePlayerStore.getState().tracks;
         usePlayerStore.getState().setTracks([...existing, ...newTracks]);
+      } else {
+        usePlayerStore.getState().setTracks(newTracks);
       }
     } catch (err) {
       if (process.env.NODE_ENV === "development") {
@@ -388,6 +387,52 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     playlistSortBy, sortDirection, squareSortDirection,
   ]);
 
+  // Re-fetch при изменении трека (смена статуса, удаление) — с сохранением скролла
+  const refetchTrigger = usePlayerStore((s) => (s as any).playlistRefetchTrigger);
+  const refetchTriggerRef = useRef(refetchTrigger);
+  useEffect(() => {
+    if (refetchTriggerRef.current === refetchTrigger) return; // skip initial
+    refetchTriggerRef.current = refetchTrigger;
+    const scrollEl = scrollContainerRef.current;
+    const savedScroll = scrollEl?.scrollTop ?? 0;
+    // Перезапрашиваем все загруженные страницы одним запросом
+    const totalLoaded = currentPage * PAGE_SIZE;
+    const fetchAll = async () => {
+      const version = ++fetchVersionRef.current;
+      const params = buildFilterParams({
+        page: 1,
+        pageSize: totalLoaded,
+        searchQuery: debouncedSearch,
+        playlistFilter,
+        isAdmin: isAdminUser,
+        bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
+        statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
+        accentFilterOn, mamboFilterOn,
+        dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh,
+        playlistSortBy, sortDirection, squareSortDirection,
+      });
+      try {
+        const res = await fetch(`/api/tracks?${params}`, { cache: "no-store" });
+        if (!res.ok || version !== fetchVersionRef.current) return;
+        const data = await res.json();
+        if (version !== fetchVersionRef.current) return;
+        const newTracks: Track[] = data.tracks ?? [];
+        setTracks(newTracks);
+        setTotal(data.total ?? 0);
+        setHasMore(newTracks.length < (data.total ?? 0));
+        usePlayerStore.getState().setTracks(newTracks);
+        // Восстанавливаем скролл
+        requestAnimationFrame(() => {
+          if (scrollEl) scrollEl.scrollTop = savedScroll;
+        });
+      } catch (err) {
+        console.error("Playlist refetch error:", err);
+      }
+    };
+    fetchAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetchTrigger]);
+
   // Load more pages
   const loadMore = useCallback(() => {
     if (isLoading || !hasMore) return;
@@ -400,10 +445,15 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const virtualizer = useVirtualizer({
     count: tracks.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 64,
+    estimateSize: () => 56,
     overscan: 5,
     measureElement: (el) => el.getBoundingClientRect().height,
   });
+
+  // Сброс кеша измерений при смене списка треков
+  useEffect(() => {
+    virtualizer.measure();
+  }, [tracks, virtualizer]);
 
   // Infinite scroll: detect when near bottom
   useEffect(() => {

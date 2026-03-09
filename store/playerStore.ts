@@ -189,6 +189,8 @@ export const usePlayerStore = create<PlayerState>()(
         set({ currentTrack: track });
       },
       setTracks: (tracks) => set({ tracks }),
+      playlistRefetchTrigger: 0,
+      triggerPlaylistRefetch: () => set((s) => ({ playlistRefetchTrigger: (s as any).playlistRefetchTrigger + 1 })),
       setIsPlaying: (isPlaying) => {
         set({ isPlaying });
         // Sync with AudioEngine

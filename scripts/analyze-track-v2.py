@@ -2,14 +2,13 @@
 """
 Bachata Track Analysis v2
 =========================
-Новый алгоритм определения рядов и мостиков.
+Алгоритм определения рядов (РАЗ / ПЯТЬ).
 Основан на подсчёте доминирования Row 1 над Row 5.
 
 Фазы:
 0. Классификация (2 пика = бачата, 4 пика = попса)
 1. Вычисление Row 1 и Row 5 (поиск начала, проверка доминирования)
-2. Анализ КВАДРАТ (madmom по частям 1/1, 1/2, 1/3, 1/5)
-3. Анализ МОСТИК (индикаторы → фильтрация → проверка доминирования)
+2. Проверка свапа рядов по madmom diff
 """
 
 import sys
@@ -57,13 +56,9 @@ def load_config():
     defaults = {
         'energy_threshold_reduction': 0.30,
         'initial_quarters_count': 8,
-        'bridge_dominance_threshold': 0.03,
-        'indicator_window': 4,
         'popsa_peak_threshold': 0.70,
-        'perc_bridge_threshold': 0.05,  # 5% — порог look-ahead для перцептивных мостиков
         'perc_start_threshold': 0.20,   # 20% — порог: средняя по песне ниже среднего такта на N% → такт считаем РАЗ
-        'perceptual_window_sec': 0.05,   # окно для perceptual_energy (с). 0.08 = 80ms, 0.20 = 200ms (удобнее для уха). Откат: поставить 0.08
-        'beats_above_avg_plus_pct': 20,  # % над средним для порога «биты выше среднего + N%» (только статистика)
+        'perceptual_window_sec': 0.05,   # окно для perceptual_energy (с). 0.08 = 80ms, 0.20 = 200ms
     }
     try:
         if os.path.exists(config_path):

@@ -71,7 +71,9 @@
       "Bash(node -e \"const{PrismaClient}=require\\(''@prisma/client''\\);const p=new PrismaClient\\(\\);p.track.count\\(\\).then\\(c=>{console.log\\(''Tracks:'',c\\);return p[''$disconnect'']\\(\\)}\\)\")",
       "Bash(npm ls @tanstack/react-virtual)",
       "Bash(node -e \"console.log\\(require\\(''./node_modules/zustand/package.json''\\).version\\)\")",
-      "Bash(node -e \"const z = require\\(''zustand/react/shallow''\\); console.log\\(''useShallow:'', typeof z.useShallow\\)\")"
+      "Bash(node -e \"const z = require\\(''zustand/react/shallow''\\); console.log\\(''useShallow:'', typeof z.useShallow\\)\")",
+      "Read(//c/xampp/mysql/bin/**)",
+      "Read(//c/laragon/**)"
     ]
   }
 }

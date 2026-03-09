@@ -1,15 +1,12 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import dynamic from "next/dynamic";
+
 import { usePlayerStore } from "@/store/playerStore";
 import { audioEngine } from "@/lib/audioEngine";
 import type { GridMap } from "@/types";
 import { LiveBeatProvider, LiveBeatBlock, BridgeHereButton } from "./LiveBeatContext";
 
-const V2AnalysisDisplay = React.memo(
-  dynamic(() => import("./charts/V2AnalysisDisplay"), { ssr: false }),
-);
 
 export interface TrackInfoAdminPanelProps {
   currentTrack: NonNullable<ReturnType<typeof usePlayerStore.getState>["currentTrack"]>;
@@ -251,30 +248,6 @@ export default function TrackInfoAdminPanel({
     }
   };
 
-  const applyLayout = async (type: "rms" | "perc") => {
-    if (!currentTrack) return;
-    setIsSavingBridge(true);
-    try {
-      const res = await fetch("/api/rhythm/apply-layout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track_id: currentTrack.id, type }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка применения сетки");
-      if (data.track) {
-        updateCurrentTrack(data.track);
-        audioEngine.reloadBeatGrid(data.track);
-        setBridges((data.track.gridMap?.bridges as number[]) ?? []);
-      }
-    } catch (e) {
-      console.error("Apply layout failed:", e);
-      alert(`Ошибка: ${e instanceof Error ? e.message : "Unknown error"}`);
-    } finally {
-      setIsSavingBridge(false);
-    }
-  };
-
   const handleAddBridgeHere = (bridgeTime: number) => {
     if (!currentTrack || isSavingBridge) return;
     const beatInterval = 60 / currentTrack.bpm;
@@ -364,24 +337,127 @@ export default function TrackInfoAdminPanel({
           </span>
         </div>
 
-        {v2Result && !v2Result.error && (
-          <div className="mb-4">
-            <details open>
-              <summary className="text-lg font-semibold text-gray-300 cursor-pointer hover:text-white select-none">
-                Результаты анализа
-              </summary>
-              <div className="mt-2">
-                <V2AnalysisDisplay
-                  data={v2Result}
-                  trackId={currentTrack.id}
-                  trackTitle={currentTrack.title}
-                  trackRowSwapped={currentTrack.rowSwapped ?? false}
-                />
-              </div>
-            </details>
-          </div>
-        )}
         {v2Result?.error && <p className="text-red-400 text-xs mb-4">{v2Result.error}</p>}
+
+        {/* Таблица лидирующих рядов (Raw Analysis) */}
+        {v2Result && !v2Result.error && v2Result.row_analysis && Object.keys(v2Result.row_analysis).length > 0 && (
+          <details className="mt-3" open>
+            <summary className="text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">
+              Raw Analysis
+            </summary>
+            <div className="mt-1 overflow-x-auto">
+              {v2Result.row_analysis_verdict && (
+                <div className="text-xs text-gray-400 mb-1">
+                  {(v2Result.row_analysis_verdict.winning_rows ?? [v2Result.row_analysis_verdict.winning_row])
+                    .map((r: number, i: number) => {
+                      const rd = v2Result.row_analysis[`row_${r}`];
+                      return (
+                        <span key={r}>
+                          {i > 0 && " | "}
+                          <span className="text-green-400">Row {r}</span>: {(rd?.madmom_sum ?? 0).toFixed(3)}
+                        </span>
+                      );
+                    })}
+                </div>
+              )}
+              <table className="text-xs w-full border-collapse">
+                <thead>
+                  <tr className="text-gray-500 border-b border-gray-700">
+                    <th className="text-left py-1 px-2">Row</th>
+                    <th className="text-right py-1 px-2">Beats</th>
+                    <th className="text-right py-1 px-2">Sum</th>
+                    <th className="text-right py-1 px-2">Avg</th>
+                    <th className="text-right py-1 px-2">Max</th>
+                    <th className="text-left py-1 px-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const rowOne = v2Result.row_analysis_verdict?.row_one;
+                    const swapped = currentTrack.rowSwapped ?? false;
+                    const displayedRaz = swapped && rowOne != null && rowOne >= 1 && rowOne <= 8
+                      ? (rowOne <= 4 ? rowOne + 4 : rowOne - 4)
+                      : null;
+                    const winningRows = v2Result.row_analysis_verdict?.winning_rows
+                      ?? (v2Result.row_analysis_verdict?.winning_row != null
+                        ? [v2Result.row_analysis_verdict.winning_row] : []);
+                    return Object.entries(v2Result.row_analysis as Record<string, { count: number; madmom_sum: number; madmom_avg: number; madmom_max: number }>)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([key, row]) => {
+                        const rowNum = parseInt(key.replace("row_", ""), 10);
+                        const isWinner = winningRows.includes(rowNum);
+                        const isRowOne = rowOne != null && rowNum === rowOne;
+                        const isSwappedRaz = displayedRaz != null && rowNum === displayedRaz;
+                        return (
+                          <tr key={key} className={`border-b border-gray-800 ${
+                            isSwappedRaz ? "bg-orange-900/20 text-orange-300"
+                              : isWinner ? "bg-green-900/20 text-green-300"
+                              : "text-gray-300"
+                          }`}>
+                            <td className="py-1 px-2 font-mono">{rowNum}</td>
+                            <td className="py-1 px-2 text-right font-mono">{row.count}</td>
+                            <td className="py-1 px-2 text-right font-mono">{row.madmom_sum?.toFixed(3)}</td>
+                            <td className="py-1 px-2 text-right font-mono">{row.madmom_avg?.toFixed(3)}</td>
+                            <td className="py-1 px-2 text-right font-mono">{row.madmom_max?.toFixed(3)}</td>
+                            <td className="py-1 px-2">
+                              {isSwappedRaz ? <span className="text-orange-400 font-bold" title="Свапнутый ряд">&lt;&lt;</span>
+                                : isRowOne && !swapped ? "<<" : ""}
+                            </td>
+                          </tr>
+                        );
+                      });
+                  })()}
+                </tbody>
+              </table>
+              {/* Сравнение РАЗ vs ПЯТЬ */}
+              {v2Result.row_analysis_verdict && (() => {
+                const winningRows = v2Result.row_analysis_verdict.winning_rows
+                  ?? (v2Result.row_analysis_verdict.winning_row != null
+                    ? [v2Result.row_analysis_verdict.winning_row] : []);
+                if (winningRows.length < 2) return null;
+                const rowOne = v2Result.row_analysis_verdict.row_one;
+                const r1 = rowOne != null && winningRows.includes(rowOne) ? rowOne : winningRows[0];
+                const r2 = winningRows.find((r: number) => r !== r1) ?? winningRows[1];
+                const r1m = v2Result.row_analysis[`row_${r1}`]?.madmom_sum ?? 0;
+                const r2m = v2Result.row_analysis[`row_${r2}`]?.madmom_sum ?? 0;
+                const diff = r2m !== 0 ? ((r1m - r2m) / Math.abs(r2m)) * 100 : 0;
+                const fmt = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+                const cls = (n: number) => n >= 0 ? "text-green-400" : "text-red-400";
+                return (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Мадмом: РАЗ={r1m.toFixed(3)}, ПЯТЬ={r2m.toFixed(3)} → <span className={cls(diff)}>{fmt(diff)}</span>
+                  </p>
+                );
+              })()}
+              {v2Result.per_beat_data?.length > 0 && (
+                <button
+                  onClick={() => {
+                    const title = currentTrack.title
+                      .substring(0, 40).replace(/[^\w\s-]/g, "").trim()
+                      .replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").toLowerCase();
+                    const bom = "\ufeff";
+                    const header = "Beat,Time_sec,Energy,Perceptual_Energy,Madmom,Local_BPM\n";
+                    const rows = v2Result.per_beat_data
+                      .map((b: any) =>
+                        `${b.id},${b.time.toFixed(3)},${b.energy.toFixed(6)},${(b.perceptual_energy ?? 0).toFixed(3)},${b.madmom_score.toFixed(4)},${(b.local_bpm ?? 0).toFixed(1)}`)
+                      .join("\n");
+                    const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `beats_v2${title ? `_${title}` : ""}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="mt-1 px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer"
+                  title="Beat, Time_sec, Energy, Perceptual_Energy, Madmom, Local_BPM — UTF-8 с BOM"
+                >
+                  ↓ CSV побитов
+                </button>
+              )}
+            </div>
+          </details>
+        )}
       </div>
 
       {/* Редактирование счёта: Свайп + бриджи в строчку в прямоугольниках */}
@@ -445,32 +521,6 @@ export default function TrackInfoAdminPanel({
                 isSaving={isSavingBridge}
                 onAddBridge={handleAddBridgeHere}
               />
-              {v2Result && !v2Result.error && (
-                <>
-                  {v2Result.perc_confirmed_bridges?.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => applyLayout("perc")}
-                      disabled={isSavingBridge || isReanalyzing}
-                      title="Применить перцептивную сетку из v2"
-                      className="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50"
-                    >
-                      {isSavingBridge ? "Сохранение..." : `← Перц. (${v2Result.perc_confirmed_bridges.length})`}
-                    </button>
-                  )}
-                  {v2Result.bridges?.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => applyLayout("rms")}
-                      disabled={isSavingBridge || isReanalyzing}
-                      title="Применить RMS сетку из v2"
-                      className="text-xs px-3 py-1.5 rounded bg-gray-600 hover:bg-gray-500 text-white disabled:opacity-50"
-                    >
-                      {isSavingBridge ? "Сохранение..." : `← RMS (${v2Result.bridges.length})`}
-                    </button>
-                  )}
-                </>
-              )}
             </div>
 
             <LiveBeatBlock currentTrack={currentTrack} isReanalyzing={isReanalyzing} />
