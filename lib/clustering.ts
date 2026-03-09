@@ -3,6 +3,8 @@ export interface ClusterParams {
   fileSizePercent: number      // допуск в %
   durationEnabled: boolean
   durationSeconds: number      // допуск в секундах
+  bpmEnabled: boolean
+  bpmDelta: number             // допуск в BPM (абсолютное значение)
   artistEnabled: boolean       // точное совпадение (case-insensitive)
   titleEnabled: boolean        // общие слова
 }
@@ -11,6 +13,7 @@ export interface TrackForClustering {
   id: number
   title: string
   artist: string | null
+  bpm: number | null
   duration: number | null
   fileSize: bigint | number | null
   clusterId: number | null
@@ -97,6 +100,12 @@ function tracksMatch(a: TrackForClustering, b: TrackForClustering, params: Clust
   if (params.durationEnabled) {
     if (a.duration == null || b.duration == null) return false
     if (Math.abs(a.duration - b.duration) > params.durationSeconds) return false
+  }
+
+  // BPM: ±N
+  if (params.bpmEnabled) {
+    if (a.bpm == null || b.bpm == null) return false
+    if (Math.abs(a.bpm - b.bpm) > params.bpmDelta) return false
   }
 
   // Артист: точное совпадение

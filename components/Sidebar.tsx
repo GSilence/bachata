@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
@@ -134,10 +134,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { user, isLoading, checkAuth, logout } = useAuthStore();
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
+  const { user, isLoading, logout } = useAuthStore();
 
   const isAdminUser = isAdmin(user?.role);
   const isModeratorUser = isModerator(user?.role);
@@ -281,7 +278,7 @@ export default function Sidebar() {
               {isModeratorUser && (
                 isModerating ? (
                   <button
-                    onClick={() => { exitModeratorMode(); router.push("/library"); setIsMobileMenuOpen(false); }}
+                    onClick={() => { exitModeratorMode(); router.push("/"); setIsMobileMenuOpen(false); }}
                     className="w-full flex items-center gap-3 px-4 py-2 text-sm text-yellow-400 hover:text-yellow-300 bg-yellow-400/10 hover:bg-yellow-400/20 rounded-lg transition-colors"
                   >
                     <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

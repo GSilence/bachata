@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
@@ -16,15 +16,21 @@ function LoginForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const redirect = searchParams.get("redirect") || "/";
+  const didCheck = useRef(false);
+  const didRedirect = useRef(false);
 
   useEffect(() => {
-    checkAuth();
+    if (!didCheck.current) {
+      didCheck.current = true;
+      checkAuth();
+    }
   }, [checkAuth]);
 
-  // Если уже авторизован — редирект
+  // Если уже авторизован — редирект (один раз)
   useEffect(() => {
-    if (!isLoading && user) {
-      router.push(redirect);
+    if (!isLoading && user && !didRedirect.current) {
+      didRedirect.current = true;
+      router.replace(redirect);
     }
   }, [user, isLoading, router, redirect]);
 
@@ -35,7 +41,7 @@ function LoginForm() {
 
     try {
       await login(email, password);
-      router.push(redirect);
+      router.replace(redirect);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка входа");
     } finally {

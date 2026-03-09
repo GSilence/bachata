@@ -17,7 +17,7 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024;
  * — удаляет HTML-теги и управляющие символы (null-байты и т.п.)
  * — схлопывает лишние пробелы
  * — обрезает до maxLen символов
- * — если stripUrls=true — вырезает http(s)-ссылки (для metaComment)
+ * — если stripUrls=true — вырезает ссылки (http/https/www и домены .ru/.com/.org/...)
  */
 function sanitizeMeta(
   value: string | null | undefined,
@@ -31,7 +31,12 @@ function sanitizeMeta(
     .replace(/\s+/g, " ")
     .trim();
   if (stripUrls) {
-    s = s.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").trim();
+    s = s
+      .replace(/https?:\/\/\S+/gi, "")                           // http(s)://...
+      .replace(/www\.\S+/gi, "")                                  // www....
+      .replace(/\S+\.(ru|com|org|net|info|biz|me|pro|tv|cc|io|co|xyz|site|online|store|shop|club|top|link|space|live|music)\b\S*/gi, "") // bare domains
+      .replace(/\s+/g, " ")
+      .trim();
   }
   return s.slice(0, maxLen) || null;
 }
@@ -88,7 +93,7 @@ export async function POST(request: NextRequest) {
     const genre = formData.get("genre") as string | null;
     const year = formData.get("year") as string | null;
     const trackNumber = formData.get("track") as string | null;
-    const comment = formData.get("comment") as string | null;
+
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -130,8 +135,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Database not available" }, { status: 500 });
     }
 
-    const trimmedTitle  = sanitizeMeta(title, 500) ?? title.trim();
-    const trimmedArtist = sanitizeMeta(artist, 500);
+    const trimmedTitle  = sanitizeMeta(title, 500, true) ?? title.trim();
+    const trimmedArtist = sanitizeMeta(artist, 500, true);
     const parsedYear    = year ? parseInt(year, 10) || null : null;
 
     // --- Дедупликация по Track: возвращаем "already done" запись в очереди ---
@@ -218,11 +223,10 @@ export async function POST(request: NextRequest) {
         originalName: file.name,
         title: trimmedTitle,
         artist: trimmedArtist,
-        album: sanitizeMeta(album, 500),
+        album: sanitizeMeta(album, 500, true),
         genre: sanitizeMeta(genre, 200),
         year: parsedYear,
         trackNumber: trackNumber ? parseInt(trackNumber, 10) || null : null,
-        comment: sanitizeMeta(comment, 1000, true),
         fileHash,
         status: "pending",
         uploadedBy: currentUserId,

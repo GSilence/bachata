@@ -258,7 +258,6 @@ async function processEntry(entry: any) {
       metaAlbum:    entry.album || null,
       metaYear:     entry.year || null,
       metaGenre:    entry.genre || null,
-      metaComment:  entry.comment || null,
       metaTrackNum: entry.trackNumber || null,
       hasBridges:   v2BridgesTimes.length > 0,
       trackStatus:  isPopsa ? "popsa" : "unlistened",

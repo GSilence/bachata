@@ -77,6 +77,8 @@ export class AudioEngine {
   // Internal State
   // NEW: Явный флаг состояния, чтобы избежать гонки (race condition) с Howler
   private _isPlaying: boolean = false;
+  // Защита от двойного вызова play() (React StrictMode)
+  private _playInProgress: boolean = false;
 
   // Лимит воспроизведения (секунды). Проверяется в update() через setInterval,
   // поэтому работает при заблокированном экране и скрытой вкладке.
@@ -461,7 +463,9 @@ export class AudioEngine {
 
   // Централизованный обработчик окончания трека
   private handleTrackEnd() {
+    console.log(`[AE.handleTrackEnd] trackEndFired=${this.trackEndFired}, _isPlaying=${this._isPlaying}`);
     this._isPlaying = false;
+    this._playInProgress = false;
     this.stopUpdate(); // Останавливаем цикл
     // Защита от двойного срабатывания — только trackEndFired (как в оригинале).
     // atRealEnd-проверка убрана: на Android в фоне setInterval throttled до ~1s,
@@ -511,10 +515,26 @@ export class AudioEngine {
   }
 
   async play() {
+    // Защита от двойного вызова (React StrictMode double-mount)
+    if (this._playInProgress) {
+      console.warn(`[AE.play] SKIPPED — play already in progress`);
+      return;
+    }
+    this._playInProgress = true;
+
     // 1. Set INTENT to play immediately (fixes UI race condition)
     this._isPlaying = true;
+    this.trackEndFired = false; // Разрешаем повторный onTrackEnd после ручного play()
+
+    // DEBUG: позиция ДО play
+    const prePlayTime = this.getCurrentTime();
+    const prePlayDur = this.getDuration();
+    console.log(`[AE.play] BEFORE musicTrack.play() — time=${prePlayTime.toFixed(2)}, dur=${prePlayDur.toFixed(2)}, _isPlaying=${this._isPlaying}`);
 
     // 2. Trigger audio playback
+    // ВАЖНО: Howler с html5:true при play() после pause() может создать новый Sound с _seek=0.
+    // Фикс: устанавливаем _seek на внутреннем Sound-объекте Howler ДО вызова play(),
+    // чтобы строка `var seek = sound._seek > 0 ? sound._seek : ...` подхватила позицию.
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
         "vocals",
@@ -528,11 +548,71 @@ export class AudioEngine {
         }
       }
     } else if (this.musicTrack) {
-      this.musicTrack.play();
+      // Howler html5:true bug: play() после pause() может создать НОВЫЙ Sound с _seek=0,
+      // вместо того чтобы возобновить паузнутый. Фикс: находим паузнутый Sound и передаём
+      // его ID в play(id), чтобы Howler использовал _soundById(id) вместо _inactiveSound().
+      const howl = this.musicTrack as any;
+      const pausedSound = howl._sounds?.find(
+        (s: any) => s._paused && !s._ended
+      );
+      if (pausedSound) {
+        // Очистка: останавливаем и удаляем ВСЕ звуки кроме нашего паузнутого,
+        // чтобы не было "призрачных" звуков играющих параллельно.
+        if (howl._sounds && howl._sounds.length > 1) {
+          const toRemove = howl._sounds.filter((s: any) => s._id !== pausedSound._id);
+          for (const s of toRemove) {
+            if (s._node) {
+              try { s._node.pause(); } catch {}
+            }
+            s._ended = true;
+            s._paused = true;
+          }
+          howl._sounds = howl._sounds.filter((s: any) => s._id === pausedSound._id);
+          console.log(`[AE.play] Cleaned ${toRemove.length} stale sounds, keeping id=${pausedSound._id}`);
+        }
+        // Гарантируем что _seek содержит нужную позицию
+        if (prePlayTime > 0.1) {
+          pausedSound._seek = prePlayTime;
+        }
+        console.log(`[AE.play] Resuming paused sound id=${pausedSound._id}, _seek=${pausedSound._seek}`);
+        this.musicTrack.play(pausedSound._id);
+      } else {
+        // Нет паузнутого звука — первый запуск или после stop().
+        // Очистка: если есть старые ended звуки, удаляем их.
+        if (howl._sounds && howl._sounds.length > 0) {
+          for (const s of howl._sounds) {
+            if (s._node) {
+              try { s._node.pause(); } catch {}
+            }
+          }
+          howl._sounds = [];
+          console.log(`[AE.play] Cleared all stale sounds before fresh play`);
+        }
+        // Если prePlayTime > 0, нужно стартовать с этой позиции.
+        if (prePlayTime > 0.1) {
+          // Устанавливаем _seek на существующие sounds (Howler проверит при play)
+          if (howl._sounds) {
+            for (const s of howl._sounds) {
+              s._seek = prePlayTime;
+            }
+          }
+        }
+        this.musicTrack.play();
+        // Подстраховка: после разблокировки _playLock (событие 'play'), принудительно seek.
+        // 'play' event fires AFTER _playLock=false, так что seek() уже не будет заблокирован.
+        if (prePlayTime > 0.1) {
+          const mt = this.musicTrack;
+          mt.once("play", () => {
+            console.log(`[AE.play] once('play') fired — seeking to ${prePlayTime.toFixed(2)}`);
+            mt.seek(prePlayTime);
+          });
+        }
+      }
     }
 
     // 3. Sync and Start Loop
     const currentTime = this.getCurrentTime();
+    console.log(`[AE.play] AFTER play — currentTime=${currentTime.toFixed(2)} (prePlay=${prePlayTime.toFixed(2)})`);
 
     // Разблокируем Web Audio на жесте пользователя (нужно для iOS)
     // ВАЖНО: ждем завершения resume() перед воспроизведением!
@@ -543,19 +623,16 @@ export class AudioEngine {
         this.voiceCtx.state,
       );
     }
-    // Sync cursor
+    // Sync cursor — только позиционируем курсор, БЕЗ немедленного проигрывания бита.
+    // Голос озвучится через update loop / Web Audio scheduler при следующем бите.
+    // (Немедленный бит нужен только в seek(), где пользователь ожидает моментальный отклик.)
     const immediateBeatIndex = this.syncBeatCursor(currentTime);
-
-    // Play immediate beat logic
     if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
+      this.currentBeatIndex = immediateBeatIndex + 1;
+      // Обновляем UI-индикатор бита (без звука)
       const beat = this.beatGrid[immediateBeatIndex];
-      if (beat) {
-        this.playVoiceCount(beat.number, immediateBeatIndex);
-        if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
-        this.currentBeatIndex = immediateBeatIndex + 1;
-      }
+      if (beat && this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
     } else {
-      // Нет "немедленного" бита — всё равно синхронизируем UI с текущей позицией
       const beatInfo = this.getCurrentBeatInfo();
       if (beatInfo && this.onBeatUpdate)
         this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
@@ -566,10 +643,13 @@ export class AudioEngine {
 
     // 4. Start update loop (it will now stay alive because _isPlaying is true)
     this.startUpdate();
+    this._playInProgress = false;
   }
 
   pause() {
-    this._isPlaying = false; // Set INTENT to pause
+    console.log(`[AE.pause] time=${this.getCurrentTime().toFixed(2)}, dur=${this.getDuration().toFixed(2)}`);
+    this._isPlaying = false;
+    this._playInProgress = false;
 
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
@@ -593,7 +673,9 @@ export class AudioEngine {
   }
 
   stop() {
+    console.log(`[AE.stop] time=${this.getCurrentTime().toFixed(2)}`);
     this._isPlaying = false;
+    this._playInProgress = false;
 
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
@@ -762,7 +844,11 @@ export class AudioEngine {
 
   seek(time: number) {
     const dur = this.getDuration();
-    if (dur <= 0) return; // <=0 covers both 0 (not loaded) and -1 (Howler not ready)
+    console.log(`[AE.seek] requested=${time.toFixed(2)}, dur=${dur.toFixed(2)}, _isPlaying=${this._isPlaying}, trackEndFired=${this.trackEndFired}`);
+    if (dur <= 0) {
+      console.warn(`[AE.seek] SKIPPED — dur=${dur}`);
+      return;
+    }
 
     // Сохраняем намерение воспроизведения, а не физическое состояние Howler
     const wasPlaying = this._isPlaying;
@@ -789,20 +875,16 @@ export class AudioEngine {
       this.musicTrack.seek(clampedTime);
     }
 
-    const immediateBeatIndex = this.syncBeatCursor(clampedTime);
-    if (immediateBeatIndex >= 0 && immediateBeatIndex < this.beatGrid.length) {
-      const beat = this.beatGrid[immediateBeatIndex];
-      if (beat) {
-        this.playVoiceCount(beat.number, immediateBeatIndex);
-        if (this.onBeatUpdate) this.onBeatUpdate(beat.number, beat.isBridge);
-        this.currentBeatIndex = immediateBeatIndex + 1;
-      }
-    } else {
-      // Нет немедленного бита — синхронизируем UI со смотанной позицией
-      const beatInfo = this.getCurrentBeatInfo();
-      if (beatInfo && this.onBeatUpdate)
-        this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
-    }
+    // DEBUG: проверяем, что seek реально применился
+    const afterSeek = this.getCurrentTime();
+    console.log(`[AE.seek] AFTER musicTrack.seek(${clampedTime.toFixed(2)}) — getCurrentTime()=${afterSeek.toFixed(2)}, wasPlaying=${wasPlaying}`);
+
+    // Синхронизируем курсор бита с новой позицией (без озвучки —
+    // update loop сам проиграет следующий бит по сетке).
+    this.syncBeatCursor(clampedTime);
+    const beatInfo = this.getCurrentBeatInfo();
+    if (beatInfo && this.onBeatUpdate)
+      this.onBeatUpdate(beatInfo.number, beatInfo.isBridge);
 
     // Notify UI immediately (smooth scrubbing)
     if (this.onTimeUpdate) this.onTimeUpdate(clampedTime);
@@ -1183,7 +1265,9 @@ export class AudioEngine {
       const beat = this.beatGrid[i];
       if (beat.time > horizon) break;
       if (this.shouldPlayVoiceForBeat(beat.number, i)) {
-        this.scheduleVoiceAt(beat.number, nowWall + (beat.time - nowTrack));
+        const wallTime = nowWall + (beat.time - nowTrack);
+        console.log(`[AE.scheduleVoice] beat#${beat.number} idx=${i}, beatTime=${beat.time.toFixed(2)}, nowTrack=${nowTrack.toFixed(2)}, wallTime=${wallTime.toFixed(3)}, ctxTime=${nowWall.toFixed(3)}`);
+        this.scheduleVoiceAt(beat.number, wallTime);
       }
       this.lastScheduledVoiceBeatIndex = i;
     }

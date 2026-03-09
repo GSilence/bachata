@@ -38,9 +38,9 @@ export async function POST(
   }
 
   const body = await request.json().catch(() => ({}));
-  const { layoutCorrect, hasMambo, hasAccents } = body;
+  const { layoutCorrect, hasMambo, hasAccents, notBachata } = body;
 
-  if (typeof layoutCorrect !== "boolean") {
+  if (notBachata !== true && typeof layoutCorrect !== "boolean") {
     return NextResponse.json({ error: "layoutCorrect (boolean) обязателен" }, { status: 400 });
   }
 
@@ -61,6 +61,27 @@ export async function POST(
   }
 
   const trackId = entry.trackId;
+
+  // ── Не бачата → popsa ────────────────────────────────────────────────
+  if (notBachata === true) {
+    await prisma.track.update({
+      where: { id: trackId },
+      data: { trackStatus: "popsa" },
+    });
+    await prisma.modQueue.update({
+      where: { id: modQueueId },
+      data: { status: "done" },
+    });
+    try {
+      await prisma.trackLog.createMany({
+        data: [
+          { trackId, userId: authUser.userId, event: "mod_verdict_not_bachata", details: { email: authUser.email } },
+          { trackId, userId: authUser.userId, event: "status_change", details: { email: authUser.email, oldStatus: entry.track.trackStatus, newStatus: "popsa" } },
+        ],
+      });
+    } catch {}
+    return NextResponse.json({ action: "not_bachata" });
+  }
 
   if (layoutCorrect) {
     // ── ВЕРНО → approved ──────────────────────────────────────────────
@@ -113,6 +134,7 @@ export async function POST(
         id: updatedTrack.id,
         bpm: updatedTrack.bpm,
         offset: updatedTrack.offset,
+        baseOffset: updatedTrack.baseOffset,
         gridMap: updatedTrack.gridMap,
         rowSwapped: updatedTrack.rowSwapped,
       },

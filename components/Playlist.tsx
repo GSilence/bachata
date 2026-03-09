@@ -331,8 +331,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       squareSortDirection,
     });
 
-    console.log("[Playlist] fetching with params:", params);
-
     try {
       const res = await fetch(`/api/tracks?${params}`, { cache: "no-store" });
       if (!res.ok || version !== fetchVersionRef.current) return;
@@ -342,7 +340,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
       const newTracks: Track[] = data.tracks ?? [];
       const newTotal: number = data.total ?? 0;
-      console.log("[Playlist] API response: total=", newTotal, "returned=", newTracks.length, "page=", page);
 
       if (append) {
         setTracks((prev) => [...prev, ...newTracks]);
@@ -373,7 +370,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
   // Reset to page 1 when filters/sort change — direct deps, no useCallback indirection
   useEffect(() => {
-    console.log("[Playlist] filter change → refetch page 1, accents=", accentFilterOn, "mambo=", mamboFilterOn, "bridgeWith=", bridgeFilterWith);
     setCurrentPage(1);
     setHasMore(true);
     doFetchRef.current?.(1, false);
@@ -448,12 +444,19 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     estimateSize: () => 56,
     overscan: 5,
     measureElement: (el) => el.getBoundingClientRect().height,
+    // Ключ по ID трека — высоты кешируются по ключу, а не по индексу.
+    // При удалении трека из середины оставшиеся сохраняют свои измеренные высоты.
+    getItemKey: (index) => tracks[index]?.id ?? index,
   });
 
-  // Сброс кеша измерений при смене списка треков
+  // Автоскролл к текущему треку при смене (рандом, next/prev)
   useEffect(() => {
-    virtualizer.measure();
-  }, [tracks, virtualizer]);
+    if (currentTrackId == null || tracks.length === 0) return;
+    const idx = tracks.findIndex((t) => t.id === currentTrackId);
+    if (idx >= 0) {
+      virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+    }
+  }, [currentTrackId, tracks, virtualizer]);
 
   // Infinite scroll: detect when near bottom
   useEffect(() => {
@@ -674,9 +677,10 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       </div>
 
       {/* Список треков — виртуализированный */}
+      <div className="relative">
       <div
         ref={scrollContainerRef}
-        className="max-h-96 overflow-y-auto scrollbar-hide relative"
+        className="max-h-96 overflow-y-auto scrollbar-hide"
         data-block="playlist"
         style={{
           scrollbarWidth: "none",
@@ -729,6 +733,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
             })}
           </div>
         )}
+
+      </div>
+
+      {/* Индикатор прокрутки — поверх списка, прибит к низу */}
+      {tracks.length > 0 && hasMore && (
+        <div className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none bg-gradient-to-t from-gray-800 via-gray-800/80 to-transparent pt-5 pb-1.5">
+          <svg className="w-4 h-4 text-gray-400 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      )}
       </div>
     </div>
   );

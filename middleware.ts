@@ -8,7 +8,7 @@ const COOKIE_NAME = "auth-token";
 const AUTH_ONLY_PREFIXES = ["/music", "/uploads"];
 
 // Пути главного приложения — закрыты для роли "user" (временно, на период доработок)
-const APP_PREFIXES = ["/library", "/queue", "/admin"];
+const APP_PREFIXES = ["/library", "/queue", "/admin", "/moderate"];
 
 function isAuthOnlyPath(pathname: string): boolean {
   return AUTH_ONLY_PREFIXES.some((p) => pathname.startsWith(p));
@@ -57,10 +57,6 @@ export async function middleware(request: NextRequest) {
     // Роль "user" → coming-soon (без мелькания треков)
     if (user.role === "user") {
       return NextResponse.redirect(new URL("/coming-soon", request.url));
-    }
-    // Роль "moderator" на "/" → страница модерации
-    if (user.role === "moderator" && pathname === "/") {
-      return NextResponse.redirect(new URL("/moderate", request.url));
     }
     return NextResponse.next();
   }

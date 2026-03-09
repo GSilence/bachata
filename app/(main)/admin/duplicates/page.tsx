@@ -33,6 +33,8 @@ export default function DuplicatesPage() {
   const [fileSizePercent, setFileSizePercent] = useState(2);
   const [durationEnabled, setDurationEnabled] = useState(true);
   const [durationSeconds, setDurationSeconds] = useState(5);
+  const [bpmEnabled, setBpmEnabled] = useState(true);
+  const [bpmDelta, setBpmDelta] = useState(0);
   const [artistEnabled, setArtistEnabled] = useState(true);
   const [titleEnabled, setTitleEnabled] = useState(false);
 
@@ -89,6 +91,8 @@ export default function DuplicatesPage() {
           fileSizePercent,
           durationEnabled,
           durationSeconds,
+          bpmEnabled,
+          bpmDelta,
           artistEnabled,
           titleEnabled,
         }),
@@ -243,6 +247,26 @@ export default function DuplicatesPage() {
               className="w-20 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm disabled:opacity-40"
             />
             <span>сек</span>
+          </label>
+
+          {/* BPM */}
+          <label className="flex items-center gap-3 text-gray-300">
+            <input
+              type="checkbox"
+              checked={bpmEnabled}
+              onChange={(e) => setBpmEnabled(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+            />
+            <span>BPM ±</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={bpmDelta}
+              onChange={(e) => setBpmDelta(Number(e.target.value))}
+              disabled={!bpmEnabled}
+              className="w-20 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm disabled:opacity-40"
+            />
           </label>
 
           {/* Артист */}

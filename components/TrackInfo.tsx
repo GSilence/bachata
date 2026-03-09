@@ -67,7 +67,6 @@ export default function TrackInfo({}: TrackInfoProps) {
     metaAlbum: "",
     metaYear: "" as string,
     metaGenre: "",
-    metaComment: "",
     metaTrackNum: "" as string,
   });
   const fillMetaDraft = () => {
@@ -80,7 +79,6 @@ export default function TrackInfo({}: TrackInfoProps) {
       metaAlbum: currentTrack.metaAlbum ?? "",
       metaYear: currentTrack.metaYear != null ? String(currentTrack.metaYear) : "",
       metaGenre: currentTrack.metaGenre ?? "",
-      metaComment: currentTrack.metaComment ?? "",
       metaTrackNum: currentTrack.metaTrackNum != null ? String(currentTrack.metaTrackNum) : "",
     });
   };
@@ -106,7 +104,6 @@ export default function TrackInfo({}: TrackInfoProps) {
           metaAlbum: metaDraft.metaAlbum.trim() || null,
           metaYear: metaDraft.metaYear.trim() ? parseInt(metaDraft.metaYear, 10) || null : null,
           metaGenre: metaDraft.metaGenre.trim() || null,
-          metaComment: metaDraft.metaComment.trim() || null,
           metaTrackNum: metaDraft.metaTrackNum.trim() ? parseInt(metaDraft.metaTrackNum, 10) || null : null,
         }),
       });
@@ -417,15 +414,6 @@ export default function TrackInfo({}: TrackInfoProps) {
                   placeholder="число"
                 />
               </div>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-0.5">Комментарий</label>
-              <input
-                type="text"
-                value={metaDraft.metaComment}
-                onChange={(e) => setMetaDraft((d) => ({ ...d, metaComment: e.target.value }))}
-                className="w-full px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-sm"
-              />
             </div>
             <div className="flex gap-2 mt-2">
               <button

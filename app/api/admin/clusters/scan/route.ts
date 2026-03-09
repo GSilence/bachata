@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json() as ClusterParams
 
   // Валидация
-  if (!body.fileSizeEnabled && !body.durationEnabled && !body.artistEnabled && !body.titleEnabled) {
+  if (!body.fileSizeEnabled && !body.durationEnabled && !body.bpmEnabled && !body.artistEnabled && !body.titleEnabled) {
     return NextResponse.json({ error: 'Нужно включить хотя бы один критерий' }, { status: 400 })
   }
 
@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
       id: true,
       title: true,
       artist: true,
+      bpm: true,
       duration: true,
       fileSize: true,
       clusterId: true,

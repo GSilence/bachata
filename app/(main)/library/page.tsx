@@ -14,7 +14,6 @@ interface TrackMetadata {
   album?: string;
   year?: string;
   genre?: string;
-  comment?: string;
   trackNum?: string;
 }
 
@@ -35,6 +34,15 @@ interface QueueItem {
 async function extractMetadataFromFile(file: File): Promise<TrackMetadata> {
   try {
     const jsmediatags = await import("jsmediatags");
+    /** Убирает расширение, дефисы/подчёркивания → пробелы, лишние пробелы, номер трека в начале */
+    const prettifyFilename = (name: string) =>
+      name
+        .replace(/\.[^.]+$/, "")       // расширение
+        .replace(/[_]/g, " ")          // подчёркивания → пробелы
+        .replace(/\s*-\s*/g, " - ")    // нормализуем дефисы: "foo-bar" → "foo - bar"
+        .replace(/^\d+\s*-\s*/, "")    // номер трека в начале: "01 - ..."
+        .replace(/\s+/g, " ")          // схлопываем пробелы
+        .trim();
     return new Promise<TrackMetadata>((resolve) => {
       jsmediatags.default.read(file, {
         onSuccess: (tag: { tags?: Record<string, unknown> }) => {
@@ -47,28 +55,19 @@ async function extractMetadataFromFile(file: File): Promise<TrackMetadata> {
           if (tags.album) extracted.album = String(tags.album);
           if (tags.year) extracted.year = String(tags.year);
           if (tags.genre) extracted.genre = String(tags.genre);
-          if (tags.comment) {
-            const c = tags.comment;
-            extracted.comment =
-              typeof c === "object" && c !== null && "text" in c
-                ? String((c as { text: unknown }).text)
-                : String(c);
-          }
           if (tags.track) extracted.trackNum = String(tags.track);
           if (!extracted.title) {
-            extracted.title = stripTrackPrefix(
-              file.name.replace(/\.mp3$/i, ""),
-            );
+            extracted.title = prettifyFilename(file.name);
           }
           resolve(extracted);
         },
         onError: () => {
-          resolve({ title: file.name.replace(/\.mp3$/i, "") });
+          resolve({ title: prettifyFilename(file.name) });
         },
       });
     });
   } catch {
-    return { title: file.name.replace(/\.mp3$/i, "") };
+    return { title: file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").replace(/\s+/g, " ").trim() };
   }
 }
 
@@ -183,7 +182,6 @@ export default function LibraryPage() {
     if (m.album) formData.append("album", m.album);
     if (m.year) formData.append("year", m.year);
     if (m.genre) formData.append("genre", m.genre);
-    if (m.comment) formData.append("comment", m.comment);
     if (m.trackNum) formData.append("track", m.trackNum);
     formData.append("autoBpm", "true");
     formData.append("autoOffset", "true");
