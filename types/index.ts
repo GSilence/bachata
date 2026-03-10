@@ -175,6 +175,10 @@ export interface PlayerState {
 
   /** Ограничить воспроизведение трека до указанного времени (секунды). null = без ограничения */
   playUntilSeconds: number | null;
+  /** Начало цикла (секунды). null = с начала трека */
+  loopStartSeconds: number | null;
+  /** Пауза между циклами (секунды). null/0 = без паузы */
+  loopPauseSeconds: number | null;
 
   /** Скорость воспроизведения (0.5–1.5, по умолчанию 1) */
   playbackRate: number;
@@ -221,6 +225,8 @@ export interface PlayerState {
   setSortDirection: (dir: "asc" | "desc") => void;
   setDominanceBucket: (bucket: "neg" | "low" | "high", value: boolean) => void;
   setPlayUntilSeconds: (seconds: number | null) => void;
+  setLoopStartSeconds: (seconds: number | null) => void;
+  setLoopPauseSeconds: (seconds: number | null) => void;
   setPlaybackRate: (rate: number) => void;
   setAudioEngine: (engine: any | null) => void;
 

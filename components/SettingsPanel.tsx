@@ -19,16 +19,22 @@ export default function SettingsPanel({
     voiceLanguage,
     voiceType,
     playUntilSeconds,
+    loopStartSeconds,
+    loopPauseSeconds,
     setPlayMode,
     setVoiceFilter,
     setVoiceLanguage,
     setVoiceType,
     setPlayUntilSeconds,
+    setLoopStartSeconds,
+    setLoopPauseSeconds,
   } = usePlayerStore();
   const [mounted, setMounted] = useState(false);
   const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
   const [isVoiceFilterExpanded, setIsVoiceFilterExpanded] = useState(false);
+  const [loopStartInput, setLoopStartInput] = useState("");
   const [playUntilInput, setPlayUntilInput] = useState("");
+  const [loopPauseInput, setLoopPauseInput] = useState("");
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -38,14 +44,16 @@ export default function SettingsPanel({
   const activeVoiceFilter: VoiceFilter = mounted ? voiceFilter   : "full";
   const activePlayMode: PlayMode       = mounted ? playMode      : "sequential";
 
-  // Синхронизируем поле "воспроизводить до" с store (при загрузке из persist)
+  // Синхронизируем поля цикла с store (при загрузке из persist)
   useEffect(() => {
-    if (playUntilSeconds == null) {
-      setPlayUntilInput("");
-    } else {
-      setPlayUntilInput(String(Math.round(playUntilSeconds)));
-    }
+    setLoopStartInput(loopStartSeconds == null ? "" : String(Math.round(loopStartSeconds)));
+  }, [loopStartSeconds]);
+  useEffect(() => {
+    setPlayUntilInput(playUntilSeconds == null ? "" : String(Math.round(playUntilSeconds)));
   }, [playUntilSeconds]);
+  useEffect(() => {
+    setLoopPauseInput(loopPauseSeconds == null ? "" : String(Math.round(loopPauseSeconds)));
+  }, [loopPauseSeconds]);
 
   const playModes: { value: PlayMode; label: string }[] = [
     { value: "sequential", label: "Sequential (По порядку)" },
@@ -118,25 +126,48 @@ export default function SettingsPanel({
             ))}
           </div>
 
-          {/* Воспроизводить до (ограничение по времени) */}
+          {/* Цикл (Loop) — начало, конец, пауза */}
           <div className="pt-3 border-t border-gray-700/70 mt-3">
             <label className="block text-sm font-medium text-gray-400 mb-2">
-              Воспроизводить до
+              Цикл
             </label>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-xs text-gray-500 shrink-0">С</span>
+              <input
+                type="number"
+                min={0}
+                max={999}
+                step={1}
+                placeholder="сек"
+                value={loopStartInput}
+                onChange={(e) => setLoopStartInput(e.target.value)}
+                onBlur={() => {
+                  const trimmed = loopStartInput.trim();
+                  if (!trimmed) { setLoopStartSeconds(null); return; }
+                  const sec = parseInt(trimmed, 10);
+                  if (Number.isFinite(sec) && sec >= 0) {
+                    setLoopStartSeconds(sec);
+                    setLoopStartInput(String(sec));
+                  } else {
+                    setLoopStartSeconds(null);
+                    setLoopStartInput("");
+                  }
+                }}
+                className="w-14 px-1.5 py-1 rounded bg-gray-700 text-gray-200 text-sm text-center border border-gray-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label="Начало цикла (сек)"
+              />
+              <span className="text-xs text-gray-500 shrink-0">до</span>
               <input
                 type="number"
                 min={1}
+                max={999}
                 step={1}
                 placeholder="сек"
                 value={playUntilInput}
                 onChange={(e) => setPlayUntilInput(e.target.value)}
                 onBlur={() => {
                   const trimmed = playUntilInput.trim();
-                  if (!trimmed) {
-                    setPlayUntilSeconds(null);
-                    return;
-                  }
+                  if (!trimmed) { setPlayUntilSeconds(null); return; }
                   const sec = parseInt(trimmed, 10);
                   if (Number.isFinite(sec) && sec > 0) {
                     setPlayUntilSeconds(sec);
@@ -146,21 +177,53 @@ export default function SettingsPanel({
                     setPlayUntilInput("");
                   }
                 }}
-                className="w-24 px-2 py-1.5 rounded bg-gray-700 text-gray-200 text-sm border border-gray-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
-                aria-label="Секунды"
+                className="w-14 px-1.5 py-1 rounded bg-gray-700 text-gray-200 text-sm text-center border border-gray-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label="Конец цикла (сек)"
               />
-              <span className="text-sm text-gray-500">сек</span>
+              <span className="text-xs text-gray-500 shrink-0">сек</span>
               <button
                 type="button"
                 onClick={() => {
-                  setPlayUntilSeconds(null);
-                  setPlayUntilInput("");
+                  setLoopStartSeconds(null); setLoopStartInput("");
+                  setPlayUntilSeconds(null); setPlayUntilInput("");
+                  setLoopPauseSeconds(null); setLoopPauseInput("");
                 }}
-                className="px-2 py-1.5 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors"
+                className="px-2 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors ml-auto"
               >
                 Сбросить
               </button>
             </div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-xs text-gray-500 shrink-0">Интервал</span>
+              <input
+                type="number"
+                min={0}
+                max={999}
+                step={1}
+                placeholder="сек"
+                value={loopPauseInput}
+                onChange={(e) => setLoopPauseInput(e.target.value)}
+                onBlur={() => {
+                  const trimmed = loopPauseInput.trim();
+                  if (!trimmed) { setLoopPauseSeconds(null); return; }
+                  const sec = parseInt(trimmed, 10);
+                  if (Number.isFinite(sec) && sec >= 0) {
+                    setLoopPauseSeconds(sec);
+                    setLoopPauseInput(String(sec));
+                  } else {
+                    setLoopPauseSeconds(null);
+                    setLoopPauseInput("");
+                  }
+                }}
+                className="w-14 px-1.5 py-1 rounded bg-gray-700 text-gray-200 text-sm text-center border border-gray-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label="Пауза между циклами (сек)"
+              />
+              <span className="text-xs text-gray-500 shrink-0">сек</span>
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Выставьте нужный отрезок, и он будет играть бесконечно — удобно для заучивания хореографии и футворков.
+              Можно задать паузу между повторами. Не забудьте выбрать режим «Loop (Один трек)», чтобы повторялся один трек.
+            </p>
           </div>
         </div>
       )}

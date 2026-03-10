@@ -114,6 +114,8 @@ export const usePlayerStore = create<PlayerState>()(
       dominanceBucketLow: true,
       dominanceBucketHigh: true,
       playUntilSeconds: null,
+      loopStartSeconds: null,
+      loopPauseSeconds: null,
       playbackRate: 1,
       isReanalyzing: false,
       savedTrackId: null,
@@ -309,6 +311,8 @@ export const usePlayerStore = create<PlayerState>()(
         else set({ dominanceBucketHigh: value });
       },
       setPlayUntilSeconds: (seconds) => set({ playUntilSeconds: seconds }),
+      setLoopStartSeconds: (seconds) => set({ loopStartSeconds: seconds }),
+      setLoopPauseSeconds: (seconds) => set({ loopPauseSeconds: seconds }),
       setPlaybackRate: (rate) => {
         const clamped = Math.max(0.5, Math.min(1.5, rate));
         set({ playbackRate: clamped });
@@ -489,6 +493,8 @@ export const usePlayerStore = create<PlayerState>()(
         dominanceBucketLow: state.dominanceBucketLow,
         dominanceBucketHigh: state.dominanceBucketHigh,
         playUntilSeconds: state.playUntilSeconds,
+        loopStartSeconds: state.loopStartSeconds,
+        loopPauseSeconds: state.loopPauseSeconds,
         playbackRate: state.playbackRate,
       }),
       storage: trackStorage,
@@ -537,6 +543,8 @@ export const usePlayerStore = create<PlayerState>()(
             "playUntilSeconds",
             currentState.playUntilSeconds,
           ),
+          loopStartSeconds: get("loopStartSeconds", currentState.loopStartSeconds),
+          loopPauseSeconds: get("loopPauseSeconds", currentState.loopPauseSeconds),
           playbackRate: get("playbackRate", currentState.playbackRate),
           audioEngine: null,
         };

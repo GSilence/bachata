@@ -2,7 +2,7 @@
 
 import { usePlayerStore } from "@/store/playerStore";
 import { audioEngine } from "@/lib/audioEngine";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface PlayerControlsProps {
   onPlay: () => void;
@@ -21,6 +21,8 @@ export default function PlayerControls({
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
   const playUntilSeconds = usePlayerStore((s) => s.playUntilSeconds);
+  const loopStartSeconds = usePlayerStore((s) => s.loopStartSeconds);
+  const loopPauseSeconds = usePlayerStore((s) => s.loopPauseSeconds);
   const musicVolume = usePlayerStore((s) => s.musicVolume);
   const voiceVolume = usePlayerStore((s) => s.voiceVolume);
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
@@ -29,17 +31,28 @@ export default function PlayerControls({
   const playbackRate = usePlayerStore((s) => s.playbackRate);
   const setPlaybackRate = usePlayerStore((s) => s.setPlaybackRate);
 
+  const setLoopStartSeconds = usePlayerStore((s) => s.setLoopStartSeconds);
+  const setPlayUntilSeconds = usePlayerStore((s) => s.setPlayUntilSeconds);
+
   const [isDragging, setIsDragging] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
   const isInteractingRef = useRef(false);
   const limitTriggeredRef = useRef(false);
   const limitTriggeredForTrackIdRef = useRef<number | null>(null);
+  // Какой маркер тянем: "start" | "end" | null
+  const draggingMarkerRef = useRef<"start" | "end" | null>(null);
 
-  // Синхронизируем лимит с audioEngine — он проверяет его внутри setInterval(16ms),
+  // Синхронизируем параметры цикла с audioEngine — он проверяет их внутри setInterval(16ms),
   // который продолжает работать при заблокированном экране и скрытой вкладке.
   useEffect(() => {
     audioEngine.setPlayUntilSeconds(playUntilSeconds ?? null);
   }, [playUntilSeconds]);
+  useEffect(() => {
+    audioEngine.setLoopStartSeconds(loopStartSeconds ?? null);
+  }, [loopStartSeconds]);
+  useEffect(() => {
+    audioEngine.setLoopPauseSeconds(loopPauseSeconds ?? null);
+  }, [loopPauseSeconds]);
 
   // Smart Update Loop - Only updates when NOT interacting
   useEffect(() => {
@@ -62,13 +75,16 @@ export default function PlayerControls({
 
         const limit = state.playUntilSeconds;
         const dur = state.duration;
-        // Переключаем по лимиту только если длительность известна и лимит в пределах трека (защита от сброса/глюков)
+        const hasLoopStart = state.loopStartSeconds != null;
+        // Переключаем по лимиту только если длительность известна и лимит в пределах трека.
+        // Если задан loopStart — цикл обрабатывается в audioEngine, PlayerControls не вмешивается.
         if (
           limit != null &&
           limit > 0 &&
           dur >= limit &&
           time >= limit &&
-          !limitTriggeredRef.current
+          !limitTriggeredRef.current &&
+          !hasLoopStart
         ) {
           limitTriggeredRef.current = true;
           limitTriggeredForTrackIdRef.current = state.currentTrack?.id ?? null;
@@ -107,11 +123,7 @@ export default function PlayerControls({
     const x = e.clientX - rect.left;
     const width = rect.width;
     const percentage = Math.max(0, Math.min(1, x / width));
-    const endTime =
-      playUntilSeconds != null && playUntilSeconds > 0
-        ? Math.min(duration, playUntilSeconds)
-        : duration;
-    const newTime = Math.min(percentage * endTime, endTime);
+    const newTime = percentage * duration;
 
     // STEP 3: Optimistically update store (instant visual feedback)
     setCurrentTime(newTime);
@@ -126,23 +138,87 @@ export default function PlayerControls({
     }, 200);
   };
 
+  // ── Drag markers ──
+  const calcTimeFromX = useCallback(
+    (clientX: number): number => {
+      if (!progressRef.current || duration === 0) return 0;
+      const rect = progressRef.current.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return Math.round(pct * duration); // целые секунды
+    },
+    [duration],
+  );
+
+  const handleMarkerDragStart = useCallback(
+    (which: "start" | "end") => (e: React.MouseEvent | React.TouchEvent) => {
+      e.stopPropagation(); // не трогаем handleProgressClick
+      e.preventDefault();
+      draggingMarkerRef.current = which;
+      setIsDragging(true);
+      isInteractingRef.current = true;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const onMove = (clientX: number) => {
+      const which = draggingMarkerRef.current;
+      if (!which) return;
+      const time = calcTimeFromX(clientX);
+      if (which === "start") {
+        setLoopStartSeconds(time > 0 ? time : null);
+      } else {
+        setPlayUntilSeconds(time > 0 ? time : null);
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => onMove(e.clientX);
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0) onMove(e.touches[0].clientX);
+    };
+
+    const handleEnd = () => {
+      if (!draggingMarkerRef.current) return;
+      draggingMarkerRef.current = null;
+      setIsDragging(false);
+      setTimeout(() => { isInteractingRef.current = false; }, 200);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleEnd);
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("touchend", handleEnd);
+    window.addEventListener("touchcancel", handleEnd);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleEnd);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleEnd);
+      window.removeEventListener("touchcancel", handleEnd);
+    };
+  }, [calcTimeFromX, setLoopStartSeconds, setPlayUntilSeconds]);
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Effective end time: limit if "play until" is set, else full duration
-  const effectiveDuration =
-    playUntilSeconds != null && playUntilSeconds > 0
-      ? Math.min(duration, playUntilSeconds)
-      : duration;
-
-  // Simple render: Use currentTime directly from store; cap progress by effective duration
+  // Progress across full track duration
   const progressPercentage =
-    effectiveDuration > 0
-      ? Math.min(100, (currentTime / effectiveDuration) * 100)
+    duration > 0
+      ? Math.min(100, (currentTime / duration) * 100)
       : 0;
+
+  // Loop marker positions (percentage of full duration)
+  const loopStartPct =
+    loopStartSeconds != null && loopStartSeconds > 0 && duration > 0
+      ? Math.min(100, (loopStartSeconds / duration) * 100)
+      : null;
+  const loopEndPct =
+    playUntilSeconds != null && playUntilSeconds > 0 && duration > 0
+      ? Math.min(100, (playUntilSeconds / duration) * 100)
+      : null;
 
   return (
     <div className="space-y-4 sm:space-y-6" data-component="player-controls">
@@ -227,20 +303,69 @@ export default function PlayerControls({
       </div>
 
       {/* Progress Bar */}
-      <div className="space-y-2">
+      <div className="space-y-1">
         <div
           ref={progressRef}
           onClick={handleProgressClick}
           className="w-full h-2 bg-gray-700 rounded-full cursor-pointer relative"
         >
+          {/* Подсветка зоны цикла */}
+          {loopStartPct != null && loopEndPct != null && (
+            <div
+              className="absolute top-0 h-full bg-yellow-500/20 rounded-full"
+              style={{ left: `${loopStartPct}%`, width: `${loopEndPct - loopStartPct}%` }}
+            />
+          )}
+          {/* Прогресс */}
           <div
             className="absolute top-0 left-0 h-full bg-purple-600 rounded-full"
             style={{ width: `${progressPercentage}%` }}
           />
+          {/* Маркер начала цикла — draggable */}
+          {loopStartPct != null && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none z-10"
+              style={{ left: `${loopStartPct}%` }}
+              title={`Начало: ${formatTime(loopStartSeconds ?? 0)}`}
+              onMouseDown={handleMarkerDragStart("start")}
+              onTouchStart={handleMarkerDragStart("start")}
+            >
+              <div className="w-0.5 h-4 bg-yellow-400 rounded-full pointer-events-none" />
+            </div>
+          )}
+          {/* Маркер конца цикла — draggable */}
+          {loopEndPct != null && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none z-10"
+              style={{ left: `${loopEndPct}%` }}
+              title={`Конец: ${formatTime(playUntilSeconds ?? 0)}`}
+              onMouseDown={handleMarkerDragStart("end")}
+              onTouchStart={handleMarkerDragStart("end")}
+            >
+              <div className="w-0.5 h-4 bg-yellow-400 rounded-full pointer-events-none" />
+            </div>
+          )}
         </div>
-        <div className="flex justify-between text-sm text-gray-400">
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(effectiveDuration)}</span>
+        {/* Метки времени маркеров + текущее время / длительность */}
+        <div className="relative h-4">
+          <span className="absolute left-0 text-xs text-gray-400">{formatTime(currentTime)}</span>
+          <span className="absolute right-0 text-xs text-gray-400">{formatTime(duration)}</span>
+          {loopStartPct != null && (
+            <span
+              className="absolute text-[10px] text-yellow-400/60 -translate-x-1/2 whitespace-nowrap"
+              style={{ left: `${loopStartPct}%` }}
+            >
+              {formatTime(loopStartSeconds ?? 0)}
+            </span>
+          )}
+          {loopEndPct != null && (
+            <span
+              className="absolute text-[10px] text-yellow-400/60 -translate-x-1/2 whitespace-nowrap"
+              style={{ left: `${loopEndPct}%` }}
+            >
+              {formatTime(playUntilSeconds ?? 0)}
+            </span>
+          )}
         </div>
       </div>
 

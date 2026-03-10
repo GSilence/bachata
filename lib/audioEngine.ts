@@ -83,6 +83,9 @@ export class AudioEngine {
   // Лимит воспроизведения (секунды). Проверяется в update() через setInterval,
   // поэтому работает при заблокированном экране и скрытой вкладке.
   private _playUntilSeconds: number | null = null;
+  private _loopStartSeconds: number | null = null;
+  private _loopPauseSeconds: number | null = null;
+  private _loopPauseTimer: ReturnType<typeof setTimeout> | null = null;
   // Флаг: лимит достигнут — handleTrackEnd() должен переключить, минуя atRealEnd-проверку.
   private _limitReached: boolean = false;
   // Последняя известная позиция из update(). Нужна как fallback в handleTrackEnd(),
@@ -486,6 +489,12 @@ export class AudioEngine {
     this.stopUpdate();
     this._isPlaying = false;
 
+    // Очищаем таймер паузы цикла
+    if (this._loopPauseTimer) {
+      clearTimeout(this._loopPauseTimer);
+      this._loopPauseTimer = null;
+    }
+
     if (this.musicTrack) {
       this.musicTrack.stop();
       this.musicTrack.unload();
@@ -530,6 +539,25 @@ export class AudioEngine {
     // 1. Set INTENT to play immediately (fixes UI race condition)
     this._isPlaying = true;
     this.trackEndFired = false; // Разрешаем повторный onTrackEnd после ручного play()
+
+    // Если задан loopStart и мы в начале трека (или до loopStart) — seek на начало цикла
+    const rawTime = this.getCurrentTime();
+    if (
+      this._loopStartSeconds != null &&
+      this._loopStartSeconds > 0 &&
+      rawTime < this._loopStartSeconds
+    ) {
+      // Seek напрямую через Howler (без вызова this.seek() который stopUpdate/startUpdate)
+      const seekTo = this._loopStartSeconds;
+      if (this.isStemsMode && this.currentTrack?.isProcessed) {
+        const sKeys: Array<keyof typeof this.stemsTracks> = ["vocals", "drums", "bass", "other"];
+        for (const k of sKeys) { this.stemsTracks[k]?.seek(seekTo); }
+      } else if (this.musicTrack) {
+        this.musicTrack.seek(seekTo);
+      }
+      this.syncBeatCursor(seekTo);
+      this.lastScheduledVoiceBeatIndex = this.currentBeatIndex - 1;
+    }
 
     // DEBUG: позиция ДО play
     const prePlayTime = this.getCurrentTime();
@@ -681,6 +709,12 @@ export class AudioEngine {
     console.log(`[AE.stop] time=${this.getCurrentTime().toFixed(2)}`);
     this._isPlaying = false;
     this._playInProgress = false;
+
+    // Очищаем таймер паузы цикла
+    if (this._loopPauseTimer) {
+      clearTimeout(this._loopPauseTimer);
+      this._loopPauseTimer = null;
+    }
 
     if (this.isStemsMode && this.currentTrack?.isProcessed) {
       const stemKeys: Array<keyof typeof this.stemsTracks> = [
@@ -995,6 +1029,14 @@ export class AudioEngine {
     this._playUntilSeconds = seconds;
   }
 
+  setLoopStartSeconds(seconds: number | null) {
+    this._loopStartSeconds = seconds;
+  }
+
+  setLoopPauseSeconds(seconds: number | null) {
+    this._loopPauseSeconds = seconds;
+  }
+
   setPlaybackRate(rate: number) {
     this._playbackRate = Math.max(0.5, Math.min(1.5, rate));
 
@@ -1121,7 +1163,26 @@ export class AudioEngine {
       !this.trackEndFired &&
       currentTime >= this._playUntilSeconds
     ) {
-      // Ставим флаг и передаём управление handleTrackEnd() — там вся логика переключения.
+      // Если задан loopStart — это режим цикла: seek на начало отрезка (с паузой если задана)
+      const loopStart = this._loopStartSeconds ?? 0;
+      if (loopStart >= 0 && this._loopStartSeconds != null) {
+        const pauseSec = this._loopPauseSeconds ?? 0;
+        if (pauseSec > 0) {
+          // Пауза между циклами: останавливаем, ждём, seek + play
+          this.pause();
+          this._loopPauseTimer = setTimeout(() => {
+            this._loopPauseTimer = null;
+            this.seek(loopStart);
+            this.play();
+          }, pauseSec * 1000);
+        } else {
+          // Без паузы — мгновенный seek (seek() внутри сбрасывает beatCursor и voices)
+          this.seek(loopStart);
+        }
+        return;
+      }
+
+      // Нет loopStart — стандартное поведение: переключить трек
       // _limitReached=true позволяет handleTrackEnd() пропустить atRealEnd-проверку.
       // Намеренно НЕ вызываем pause() — audio продолжает играть ~100ms пока
       // playNext → loadTrack не остановит его. На iOS пауза в фоне убивает

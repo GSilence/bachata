@@ -73,7 +73,8 @@
       "Bash(node -e \"console.log\\(require\\(''./node_modules/zustand/package.json''\\).version\\)\")",
       "Bash(node -e \"const z = require\\(''zustand/react/shallow''\\); console.log\\(''useShallow:'', typeof z.useShallow\\)\")",
       "Read(//c/xampp/mysql/bin/**)",
-      "Read(//c/laragon/**)"
+      "Read(//c/laragon/**)",
+      "Bash(done)"
     ]
   }
 }
