@@ -576,3 +576,8 @@ export const restoreTrackFromStorage = (tracks: Track[]): Track | null => {
 
   return null;
 };
+
+// Экспортируем getState через window для audioEngine (синглтон без импорта store, чтобы избежать circular deps)
+if (typeof window !== "undefined") {
+  (window as any).__playerStoreGetState = usePlayerStore.getState;
+}

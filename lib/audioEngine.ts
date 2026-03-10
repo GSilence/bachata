@@ -1163,9 +1163,13 @@ export class AudioEngine {
       !this.trackEndFired &&
       currentTime >= this._playUntilSeconds
     ) {
-      // Если задан loopStart — это режим цикла: seek на начало отрезка (с паузой если задана)
+      // Если задан loopStart И режим «loop» — зацикливаем отрезок.
+      // В остальных режимах (sequential/random) — переключаем трек через handleTrackEnd().
       const loopStart = this._loopStartSeconds ?? 0;
-      if (loopStart >= 0 && this._loopStartSeconds != null) {
+      const playMode = (typeof window !== "undefined" && (window as any).__playerStoreGetState)
+        ? (window as any).__playerStoreGetState().playMode
+        : "loop"; // fallback: если store недоступен — зацикливаем (безопаснее)
+      if (loopStart >= 0 && this._loopStartSeconds != null && playMode === "loop") {
         const pauseSec = this._loopPauseSeconds ?? 0;
         if (pauseSec > 0) {
           // Пауза между циклами: останавливаем, ждём, seek + play
