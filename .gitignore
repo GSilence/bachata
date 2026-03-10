@@ -57,6 +57,9 @@ __pycache__/
 *.h5
 *.pb
 
+# Binary tools (fpcalc etc. — download separately per platform)
+/bin/
+
 # Audio processing temporary files
 /separated/
 

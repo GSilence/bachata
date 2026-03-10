@@ -37,6 +37,7 @@ export default function DuplicatesPage() {
   const [bpmDelta, setBpmDelta] = useState(0);
   const [artistEnabled, setArtistEnabled] = useState(true);
   const [titleEnabled, setTitleEnabled] = useState(false);
+  const [fingerprintEnabled, setFingerprintEnabled] = useState(false);
 
   // Состояние
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -95,6 +96,7 @@ export default function DuplicatesPage() {
           bpmDelta,
           artistEnabled,
           titleEnabled,
+          fingerprintEnabled,
         }),
       });
       const data = await res.json();
@@ -290,15 +292,26 @@ export default function DuplicatesPage() {
             />
             <span>Название (общие слова)</span>
           </label>
+
+          {/* Fingerprint */}
+          <label className="flex items-center gap-3 text-gray-300">
+            <input
+              type="checkbox"
+              checked={fingerprintEnabled}
+              onChange={(e) => setFingerprintEnabled(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
+            />
+            <span>Audio fingerprint (Chromaprint)</span>
+          </label>
         </div>
 
         <div className="mt-4 flex items-center gap-4">
           <button
             onClick={handleScan}
-            disabled={scanning}
+            disabled={scanning || (!fileSizeEnabled && !durationEnabled && !bpmEnabled && !artistEnabled && !titleEnabled && !fingerprintEnabled)}
             className="px-5 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            {scanning ? "Сканирование..." : "Сканировать"}
+            {scanning ? (fingerprintEnabled ? "Анализ аудио..." : "Сканирование...") : "Сканировать"}
           </button>
           {scanResult && (
             <span className="text-sm text-gray-400">{scanResult}</span>

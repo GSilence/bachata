@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -7,16 +6,12 @@ export const dynamic = "force-dynamic";
  * POST /api/tracks/[id]/play
  * Инкрементирует счётчик прослушиваний.
  * Месячный счётчик сбрасывается автоматически при смене месяца.
+ * Доступно для всех (включая гостей) — только подсчёт.
  */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  try {
-    await requireAuth(request);
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   const { id } = await params;
   const trackId = parseInt(id, 10);

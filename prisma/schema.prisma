@@ -60,6 +60,14 @@ model Track {
   playsMonth        Int       @default(0) // прослушиваний в текущем месяце
   playsMonthResetAt DateTime? // когда был сброшен счётчик за месяц
 
+  // Видимость трека
+  visibility  String  @default("public") // "public" | "private"
+  uploadedBy  Int?    // userId первого загрузившего (null = legacy/admin)
+
+  // Аудио-фингерпринт (Chromaprint)
+  audioFingerprint    String?  @db.Text  // сжатый fingerprint от fpcalc
+  fingerprintDuration Float?             // длительность (сек), используемая для сравнения fingerprint'ов
+
   // Кластеризация дублей
   duration         Float?    // длительность трека в секундах (из v2-анализа)
   fileSize         BigInt?   // размер файла в байтах
@@ -74,6 +82,8 @@ model Track {
   logs          TrackLog[]
 
   @@index([clusterId])
+  @@index([visibility])
+  @@index([uploadedBy])
 }
 
 // ─── Очередь модерации ──────────────────────────────────────────────────────
@@ -190,7 +200,7 @@ model Playlist {
   id        Int      @id @default(autoincrement())
   userId    Int
   name      String   @db.VarChar(200)
-  type      String   @default("custom") // "favorites" | "custom"
+  type      String   @default("custom") // "favorites" | "uploads" | "custom"
   isSystem  Boolean  @default(false)    // системные нельзя удалить
   createdAt DateTime @default(now())
 

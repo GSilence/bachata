@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import Sidebar from "@/components/Sidebar";
 
@@ -10,9 +9,7 @@ export default function MainLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const { user, isLoading, checkAuth } = useAuthStore();
+  const { isLoading, checkAuth } = useAuthStore();
   const didCheck = useRef(false);
 
   // Single checkAuth call for the entire (main) layout
@@ -23,16 +20,8 @@ export default function MainLayout({
     }
   }, [checkAuth]);
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (!user) {
-      const redirect = encodeURIComponent(pathname || "/");
-      router.replace(`/login?redirect=${redirect}`);
-    }
-  }, [user, isLoading, router, pathname]);
-
-  // Don't render anything until auth is resolved — prevents flash of content
-  if (isLoading || !user) {
+  // Show loading until auth check completes (user may or may not exist)
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-gray-400">Загрузка...</div>

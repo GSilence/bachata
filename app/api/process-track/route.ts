@@ -12,6 +12,25 @@ export const maxDuration = 60; // только загрузка файла, ан
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
+/** Ensure user has "uploads" playlist, add track to it */
+async function addToUploadsPlaylist(prisma: any, userId: number, trackId: number) {
+  let playlist = await prisma.playlist.findFirst({
+    where: { userId, type: "uploads", isSystem: true },
+  });
+  if (!playlist) {
+    playlist = await prisma.playlist.create({
+      data: { userId, name: "Загруженное", type: "uploads", isSystem: true },
+    });
+  }
+  try {
+    await prisma.playlistItem.create({
+      data: { playlistId: playlist.id, trackId },
+    });
+  } catch {
+    // unique constraint — уже в плейлисте
+  }
+}
+
 /**
  * Очистка строки метаданных из ID3-тегов:
  * — удаляет HTML-теги и управляющие символы (null-байты и т.п.)
@@ -142,13 +161,9 @@ export async function POST(request: NextRequest) {
     // --- Дедупликация по Track: возвращаем "already done" запись в очереди ---
     const createInstantDone = async (existingTrackId: number) => {
       const now = new Date();
-      // Создаём UserTrack, чтобы пользователь видел трек в своей библиотеке
+      // Добавляем трек в плейлист "Загруженное" пользователя
       if (currentUserId) {
-        await (prisma as any).userTrack.upsert({
-          where: { userId_trackId: { userId: currentUserId, trackId: existingTrackId } },
-          update: {},
-          create: { userId: currentUserId, trackId: existingTrackId },
-        });
+        await addToUploadsPlaylist(prisma, currentUserId, existingTrackId);
       }
       const entry = await (prisma as any).uploadQueue.create({
         data: {
@@ -164,7 +179,22 @@ export async function POST(request: NextRequest) {
           finishedAt: now,
         },
       });
-      return NextResponse.json({ queued: true, queueId: entry.id, position: 0, message: "Трек уже в библиотеке" });
+      // Подтягиваем название трека для сообщения
+      const existingTrack = await prisma.track.findUnique({
+        where: { id: existingTrackId },
+        select: { title: true, artist: true },
+      });
+      const trackLabel = existingTrack
+        ? `${existingTrack.title}${existingTrack.artist ? ` — ${existingTrack.artist}` : ""}`
+        : `#${existingTrackId}`;
+      return NextResponse.json({
+        queued: true,
+        queueId: entry.id,
+        position: 0,
+        duplicate: true,
+        existingTrackId,
+        message: `Трек уже в библиотеке: ${trackLabel}`,
+      });
     };
 
     const hashDuplicate = await prisma.track.findFirst({ where: { fileHash } });

@@ -74,7 +74,25 @@
       "Bash(node -e \"const z = require\\(''zustand/react/shallow''\\); console.log\\(''useShallow:'', typeof z.useShallow\\)\")",
       "Read(//c/xampp/mysql/bin/**)",
       "Read(//c/laragon/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "WebFetch(domain:manpages.debian.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api repos/acoustid/chromaprint/releases/latest --jq '.tag_name, .name, \\(.assets[] | \"\"\\\\\\(.name\\) — \\\\\\(.browser_download_url\\)\"\"\\)')",
+      "Bash(curl -s https://api.github.com/repos/acoustid/chromaprint/releases/latest)",
+      "Bash(curl -s https://raw.githubusercontent.com/acoustid/chromaprint/master/src/cmd/fpcalc.cpp)",
+      "Bash(curl -L -o /tmp/chromaprint.zip \"https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-windows-x86_64.zip\")",
+      "Bash(unzip -o /tmp/chromaprint.zip -d /tmp/chromaprint)",
+      "Read(//tmp/**)",
+      "Bash(cp /tmp/chromaprint/chromaprint-fpcalc-1.6.0-windows-x86_64/fpcalc.exe d:/Sites/bachata/bin/)",
+      "Bash(d:/Sites/bachata/bin/fpcalc.exe -h)",
+      "Bash(d:/Sites/bachata/bin/fpcalc.exe -json /tmp/test_tone.wav)",
+      "Bash(d:/Sites/bachata/bin/fpcalc.exe -json \"C:/Users/valer/AppData/Local/Temp/test_tone.wav\")",
+      "Read(//d/tmp/**)",
+      "Bash(\"d:/Sites/bachata/bin/fpcalc.exe\" -json \"C:\\\\Users\\\\valer\\\\AppData\\\\Local\\\\Temp\\\\test_tone.wav\")",
+      "Bash(\"d:/Sites/bachata/bin/fpcalc.exe\" -json -raw \"C:\\\\Users\\\\valer\\\\AppData\\\\Local\\\\Temp\\\\test_tone.wav\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api repos/acoustid/chromaprint/git/trees/master --jq '.tree[].path')",
+      "Bash(gh api repos/acoustid/chromaprint/contents/src --jq '.[].name')"
     ]
   }
 }

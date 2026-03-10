@@ -20,9 +20,6 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const body = await request.json();
     const { currentTrackId, direction, filters } = body as {
@@ -40,7 +37,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "DB unavailable" }, { status: 503 });
     }
 
-    const admin = isAdminOrModerator(user.role);
+    const admin = user ? isAdminOrModerator(user.role) : false;
 
     // Build URLSearchParams from filters object
     const sp = new URLSearchParams();
@@ -50,7 +47,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const where = buildTracksWhere(sp, admin);
+    const where = buildTracksWhere(
+      sp,
+      admin,
+      user ? { userId: user.userId, role: user.role } : undefined,
+    );
     const orderBy = buildTracksOrderBy(sp);
 
     if (direction === "random") {

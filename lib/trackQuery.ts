@@ -37,6 +37,8 @@ export const LIGHT_SELECT = {
   fileSize: true,
   clusterId: true,
   isPrimary: true,
+  visibility: true,
+  uploadedBy: true,
 } as const;
 
 // Поля, которые не должны видеть обычные пользователи
@@ -48,6 +50,11 @@ export const INTERNAL_FIELDS = [
 ] as const;
 
 type PrismaWhere = Record<string, unknown>;
+
+export interface TrackQueryUser {
+  userId: number;
+  role: string;
+}
 
 /**
  * Builds Prisma `where` clause from URLSearchParams.
@@ -64,8 +71,52 @@ type PrismaWhere = Record<string, unknown>;
 export function buildTracksWhere(
   sp: URLSearchParams,
   isAdmin: boolean,
+  user?: TrackQueryUser,
 ): PrismaWhere {
   const conditions: PrismaWhere[] = [];
+
+  // --- Visibility filter ---
+  // Admin sees everything. Moderator sees public + own + unlistened.
+  // Regular user sees public + tracks in their "uploads" playlist.
+  // Note: uploadedBy stores the first uploader. For dedup'd tracks shared
+  // between users, the playlist link (PlaylistItem) is the source of truth.
+  if (isAdmin && user?.role === "admin") {
+    // Admin: no visibility filter — sees all
+  } else if (isAdmin && user?.role === "moderator") {
+    // Moderator: public + own uploads playlist + all unlistened
+    conditions.push({
+      OR: [
+        { visibility: "public" },
+        ...(user?.userId
+          ? [{
+              playlistItems: {
+                some: {
+                  playlist: { userId: user.userId, type: "uploads" },
+                },
+              },
+            }]
+          : []),
+        { trackStatus: "unlistened" },
+      ],
+    });
+  } else if (user?.userId) {
+    // Regular user: public + tracks in their uploads playlist
+    conditions.push({
+      OR: [
+        { visibility: "public" },
+        {
+          playlistItems: {
+            some: {
+              playlist: { userId: user.userId, type: "uploads" },
+            },
+          },
+        },
+      ],
+    });
+  } else {
+    // Not logged in — only public
+    conditions.push({ visibility: "public" });
+  }
 
   // --- Text search ---
   const search = sp.get("search")?.trim();

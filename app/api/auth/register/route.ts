@@ -151,14 +151,12 @@ export async function POST(request: NextRequest) {
     select: { id: true, email: true },
   });
 
-  // ── Создаём системный плейлист "Избранное" ────────────────────────────────
-  await (prisma as any).playlist.create({
-    data: {
-      userId: user.id,
-      name: "Избранное",
-      type: "favorites",
-      isSystem: true,
-    },
+  // ── Создаём системные плейлисты ──────────────────────────────────────────
+  await (prisma as any).playlist.createMany({
+    data: [
+      { userId: user.id, name: "Избранное", type: "favorites", isSystem: true },
+      { userId: user.id, name: "Загруженное", type: "uploads", isSystem: true },
+    ],
   });
 
   // ── Отправляем письмо верификации ─────────────────────────────────────────

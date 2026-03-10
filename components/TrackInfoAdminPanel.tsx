@@ -49,6 +49,8 @@ export default function TrackInfoAdminPanel({
   };
   const [isAnalyzingV2, setIsAnalyzingV2] = useState(false);
   const [v2Stage, setV2Stage] = useState("");
+  const [isFingerprintLoading, setIsFingerprintLoading] = useState(false);
+  const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
   const [bridges, setBridges] = useState<number[]>(
     () => (currentTrack.gridMap as GridMap | null)?.bridges ?? [],
   );
@@ -84,6 +86,28 @@ export default function TrackInfoAdminPanel({
       })
       .catch(() => {});
   }, [currentTrack.id, updateCurrentTrack, setTracks]);
+
+  // Reset fingerprint status on track change
+  React.useEffect(() => {
+    setFingerprintStatus(null);
+    setIsFingerprintLoading(false);
+  }, [currentTrack.id]);
+
+  const runFingerprint = async () => {
+    if (!currentTrack || isFingerprintLoading) return;
+    setIsFingerprintLoading(true);
+    setFingerprintStatus(null);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/fingerprint`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setFingerprintStatus(`OK (${data.duration}s, ${data.fingerprintLength} frames)`);
+    } catch (err: any) {
+      setFingerprintStatus(`Ошибка: ${err.message}`);
+    } finally {
+      setIsFingerprintLoading(false);
+    }
+  };
 
   const analysisCompleted =
     currentTrack.analyzerType === "v2" ||
@@ -298,26 +322,53 @@ export default function TrackInfoAdminPanel({
       <div className="relative">
         <div className="flex items-center justify-between gap-2 mb-2">
           <span className="text-sm font-medium text-gray-400">Анализ</span>
-          <button
-            type="button"
-            onClick={runV2Analysis}
-            disabled={isAnalyzingV2}
-            title="Запустить анализ v2 (ряды + мостики)"
-            data-action="analyze-v2"
-            className="p-1.5 rounded bg-indigo-700 hover:bg-indigo-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            aria-label="Анализ v2"
-          >
-            {isAnalyzingV2 ? (
-              <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            )}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Fingerprint */}
+            <button
+              type="button"
+              onClick={runFingerprint}
+              disabled={isFingerprintLoading}
+              title={fingerprintStatus || "Сгенерировать Chromaprint fingerprint"}
+              className="p-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label="Fingerprint"
+            >
+              {isFingerprintLoading ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
+                </svg>
+              )}
+            </button>
+            {/* V2 Analysis */}
+            <button
+              type="button"
+              onClick={runV2Analysis}
+              disabled={isAnalyzingV2}
+              title="Запустить анализ v2 (ряды + мостики)"
+              data-action="analyze-v2"
+              className="p-1.5 rounded bg-indigo-700 hover:bg-indigo-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label="Анализ v2"
+            >
+              {isAnalyzingV2 ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
+        {fingerprintStatus && (
+          <p className={`text-xs truncate mb-1 ${fingerprintStatus.startsWith("OK") ? "text-emerald-400" : "text-red-400"}`}>
+            FP: {fingerprintStatus}
+          </p>
+        )}
         {isAnalyzingV2 && v2Stage && (
           <p className="text-xs text-indigo-300 truncate mb-2" title={v2Stage}>{v2Stage}</p>
         )}

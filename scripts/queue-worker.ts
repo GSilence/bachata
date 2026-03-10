@@ -18,6 +18,7 @@ import { promisify } from "util";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, copyFileSync, rmSync, statSync } from "fs";
 import { join } from "path";
 import { uploadFile, isS3Enabled, getFileUrl, downloadFile, deleteFile as deleteS3File } from "../lib/storage";
+import { generateFingerprint, findDuplicateByFingerprint } from "../lib/fingerprint";
 
 const execAsync = promisify(exec);
 
@@ -68,30 +69,49 @@ function log(...args: unknown[]) {
   console.log(`[worker] ${new Date().toISOString()}`, ...args);
 }
 
+// ─── Плейлист "Загруженное" ────────────────────────────────────────────────
+
+/**
+ * Ensure user has an "uploads" system playlist, then add the track to it.
+ */
+async function addToUploadsPlaylist(userId: number, trackId: number) {
+  // Upsert системный плейлист "Загруженное"
+  let playlist = await prisma.playlist.findFirst({
+    where: { userId, type: "uploads", isSystem: true },
+  });
+  if (!playlist) {
+    playlist = await prisma.playlist.create({
+      data: { userId, name: "Загруженное", type: "uploads", isSystem: true },
+    });
+  }
+  // Добавляем трек (ignore если уже есть)
+  try {
+    await prisma.playlistItem.create({
+      data: { playlistId: playlist.id, trackId },
+    });
+  } catch {
+    // unique constraint — трек уже в плейлисте
+  }
+}
+
 // ─── Core: обработка одного трека ──────────────────────────────────────────
 
 async function processEntry(entry: any) {
-  // ── Дедупликация перед анализом ──────────────────────────────────────────
-  // Повторно проверяем, не появился ли такой трек пока файл ждал в очереди
+  // ── Helper: привязать пользователя к существующему треку ────────────────
   const linkToExisting = async (existingTrackId: number) => {
     if (entry.uploadedBy) {
-      await prisma.userTrack.upsert({
-        where: { userId_trackId: { userId: entry.uploadedBy, trackId: existingTrackId } },
-        update: {},
-        create: { userId: entry.uploadedBy, trackId: existingTrackId },
-      });
+      await addToUploadsPlaylist(entry.uploadedBy, existingTrackId);
     }
     log(`Dedup: entry #${entry.id} → existing Track #${existingTrackId}`);
     return existingTrackId;
   };
 
-  // По fileHash
+  // ── Дедупликация перед анализом (быстрые проверки: hash, title+artist) ──
   if (entry.fileHash) {
     const hashDup = await prisma.track.findFirst({ where: { fileHash: entry.fileHash } });
     if (hashDup) return linkToExisting(hashDup.id);
   }
 
-  // По title+artist
   if (entry.title) {
     const titleArtistDup = await prisma.track.findFirst({
       where: { title: entry.title, ...(entry.artist ? { artist: entry.artist } : { artist: null }) },
@@ -115,6 +135,32 @@ async function processEntry(entry: any) {
     if (!existsSync(queueFilePath)) {
       throw new Error(`Queue file not found: ${queueFilePath}`);
     }
+  }
+
+  // ── Fingerprint дедупликация (после скачивания, до анализа) ────────────
+  let audioFingerprint: string | null = null;
+  let fingerprintDuration: number | null = null;
+  try {
+    log(`Generating fingerprint: ${entry.filename}`);
+    const fpResult = await generateFingerprint(queueFilePath);
+    audioFingerprint = JSON.stringify(fpResult.fingerprint);
+    fingerprintDuration = fpResult.duration;
+    log(`Fingerprint generated (${fpResult.duration}s, ${fpResult.fingerprint.length} frames)`);
+
+    const fpMatch = await findDuplicateByFingerprint(prisma, fpResult.fingerprint, undefined, fpResult.duration);
+    if (fpMatch) {
+      log(`Fingerprint match: Track #${fpMatch.trackId} (BER: ${fpMatch.ber.toFixed(4)})`);
+      // Удаляем скачанный файл, он не нужен
+      if (s3Mode) {
+        try { rmSync(queueFilePath); } catch {}
+        try { await deleteS3File(`queue/${entry.filename}`); } catch {}
+      } else {
+        try { rmSync(queueFilePath); } catch {}
+      }
+      return linkToExisting(fpMatch.trackId);
+    }
+  } catch (fpErr: any) {
+    log(`Fingerprint failed (non-critical): ${fpErr.message}`);
   }
 
   // Сохраняем размер файла ДО анализа и возможного удаления temp-файла
@@ -238,6 +284,11 @@ async function processEntry(entry: any) {
     }),
   };
 
+  // Visibility: если загружает админ → public, иначе → private
+  const isAdminUpload = entry.uploadedBy
+    ? (await prisma.user.findUnique({ where: { id: entry.uploadedBy }, select: { role: true } }))?.role === "admin"
+    : true; // legacy/no user → treat as admin
+
   const track = await prisma.track.create({
     data: {
       title:       entry.title,
@@ -262,20 +313,20 @@ async function processEntry(entry: any) {
       hasBridges:   v2BridgesTimes.length > 0,
       trackStatus:  isPopsa ? "popsa" : "unlistened",
       gridMap:      gridMap as object,
+      visibility:   isAdminUpload ? "public" : "private",
+      uploadedBy:   entry.uploadedBy || null,
+      ...(audioFingerprint && { audioFingerprint }),
+      ...(fingerprintDuration != null && { fingerprintDuration }),
       ...(rowDominancePercent != null && { rowDominancePercent }),
       ...(typeof result.duration === "number" && { duration: result.duration }),
       ...(fileSizeBytes != null && { fileSize: fileSizeBytes }),
     },
   });
 
-  // ── UserTrack: связываем трек с загрузившим пользователем ─────────────
+  // ── Плейлист "Загруженное": связываем трек с загрузившим пользователем ─
   if (entry.uploadedBy) {
-    await (prisma as any).userTrack.upsert({
-      where: { userId_trackId: { userId: entry.uploadedBy, trackId: track.id } },
-      update: {},
-      create: { userId: entry.uploadedBy, trackId: track.id },
-    });
-    log(`UserTrack created: user #${entry.uploadedBy} → track #${track.id}`);
+    await addToUploadsPlaylist(entry.uploadedBy, track.id);
+    log(`Added to uploads playlist: user #${entry.uploadedBy} → track #${track.id}`);
   }
 
   // ── Сохраняем JSON-отчёт ─────────────────────────────────────────────

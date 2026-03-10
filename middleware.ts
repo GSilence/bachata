@@ -7,16 +7,15 @@ const COOKIE_NAME = "auth-token";
 // Пути только для авторизованных (любая роль)
 const AUTH_ONLY_PREFIXES = ["/music", "/uploads"];
 
-// Пути главного приложения — закрыты для роли "user" (временно, на период доработок)
-const APP_PREFIXES = ["/library", "/queue", "/admin", "/moderate"];
+// Пути только для админов/модераторов — закрыты для неавторизованных и для role="user"
+const ADMIN_PREFIXES = ["/library", "/queue", "/admin", "/moderate", "/settings"];
 
 function isAuthOnlyPath(pathname: string): boolean {
   return AUTH_ONLY_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
-function isAppPath(pathname: string): boolean {
-  if (pathname === "/") return true;
-  return APP_PREFIXES.some((p) => pathname.startsWith(p));
+function isAdminPath(pathname: string): boolean {
+  return ADMIN_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
 export async function middleware(request: NextRequest) {
@@ -40,9 +39,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ── Главное приложение: пользователи (role=user) → coming-soon ───────
-  if (isAppPath(pathname)) {
-    // Незалогиненные → логин
+  // ── Админские пути: только admin/moderator ────────────────────────────
+  if (isAdminPath(pathname)) {
     if (!token) {
       const login = new URL("/login", request.url);
       login.searchParams.set("redirect", pathname);
@@ -61,6 +59,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // ── "/" (главная): доступна всем (и незалогиненным) ────────────────────
   return NextResponse.next();
 }
 
@@ -71,6 +70,7 @@ export const config = {
     "/queue/:path*",
     "/admin/:path*",
     "/moderate",
+    "/settings",
     "/music/:path*",
     "/uploads/:path*",
   ],

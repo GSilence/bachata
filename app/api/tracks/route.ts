@@ -13,21 +13,6 @@ const NO_CACHE_HEADERS = {
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json(
-        { error: "Войдите в аккаунт, чтобы видеть музыку" },
-        { status: 401, headers: NO_CACHE_HEADERS }
-      );
-    }
-  } catch {
-    return NextResponse.json(
-      { error: "Войдите в аккаунт, чтобы видеть музыку" },
-      { status: 401, headers: NO_CACHE_HEADERS }
-    );
-  }
-
-  try {
     const { prisma } = await import("@/lib/prisma");
     if (!prisma) {
       if (process.env.NODE_ENV === "development") {
@@ -40,7 +25,7 @@ export async function GET(request: NextRequest) {
     }
 
     const user = await getCurrentUser();
-    const admin = isAdminOrModerator(user!.role);
+    const admin = user ? isAdminOrModerator(user.role) : false;
     const sp = request.nextUrl.searchParams;
 
     // Pagination (pageSize=0 → без лимита, все треки)
@@ -49,14 +34,18 @@ export async function GET(request: NextRequest) {
     const pageSize = rawPageSize === 0 ? 0 : Math.min(200, Math.max(1, rawPageSize || 40));
 
     // Build WHERE clause
-    const where = buildTracksWhere(sp, admin);
+    const where = buildTracksWhere(
+      sp,
+      admin,
+      user ? { userId: user.userId, role: user.role } : undefined,
+    );
 
     // Build ORDER BY clause
     const orderBy = buildTracksOrderBy(sp);
 
     // DEBUG: trace filter pipeline
     console.log("[tracks] params:", Object.fromEntries(sp.entries()));
-    console.log("[tracks] admin:", admin, "where:", JSON.stringify(where));
+    console.log("[tracks] admin:", admin, "user:", user?.userId ?? "guest", "where:", JSON.stringify(where));
 
     // Execute count + data in parallel
     const [total, raw] = await Promise.all([

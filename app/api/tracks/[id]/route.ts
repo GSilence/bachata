@@ -11,15 +11,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { id } = await params
   const trackId = parseInt(id, 10)
   if (isNaN(trackId)) {
@@ -33,6 +24,14 @@ export async function GET(
   const track = await prisma.track.findUnique({ where: { id: trackId } })
   if (!track) {
     return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+  }
+
+  // Guest users can only access public approved tracks
+  const user = await getCurrentUser()
+  if (!user) {
+    if (track.visibility !== 'public' || track.trackStatus !== 'approved') {
+      return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+    }
   }
 
   return NextResponse.json({

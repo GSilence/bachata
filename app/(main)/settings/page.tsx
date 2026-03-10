@@ -29,13 +29,13 @@ export default function SettingsPage() {
   const [migrationProgress, setMigrationProgress] = useState<{ migrated: number; skipped: number; lastTitle: string } | null>(null);
   const [migrationDone, setMigrationDone] = useState(false);
 
-  // Backfill metadata
-  const [backfillStats, setBackfillStats] = useState<{ total: number; missingFileSize: number; missingDuration: number } | null>(null);
-  const [isBackfilling, setIsBackfilling] = useState(false);
-  const backfillStopRef = useRef(false);
-  const [backfillStopped, setBackfillStopped] = useState(false);
-  const [backfillProgress, setBackfillProgress] = useState<{ processed: number; lastTitle: string } | null>(null);
-  const [backfillDone, setBackfillDone] = useState(false);
+  // Fingerprint
+  const [fpStats, setFpStats] = useState<{ total: number; withFingerprint: number; withError: number; without: number } | null>(null);
+  const [isFingerprinting, setIsFingerprinting] = useState(false);
+  const fpStopRef = useRef(false);
+  const [fpStopped, setFpStopped] = useState(false);
+  const [fpProgress, setFpProgress] = useState<{ processed: number; lastTitle: string; errors: number } | null>(null);
+  const [fpDone, setFpDone] = useState(false);
 
   // Auth check
   useEffect(() => {
@@ -91,44 +91,56 @@ export default function SettingsPage() {
     if (isAdmin(user?.role)) fetchMigrationStats();
   }, [user]);
 
-  const fetchBackfillStats = async () => {
+  const fetchFpStats = async () => {
     try {
-      const r = await fetch("/api/admin/backfill-metadata");
-      if (r.ok) setBackfillStats(await r.json());
+      const r = await fetch("/api/admin/fingerprint-all");
+      if (r.ok) setFpStats(await r.json());
     } catch {}
   };
 
   useEffect(() => {
-    if (isAdmin(user?.role)) fetchBackfillStats();
+    if (isAdmin(user?.role)) fetchFpStats();
   }, [user]);
 
-  const handleBackfill = async () => {
-    backfillStopRef.current = false;
-    setIsBackfilling(true);
-    setBackfillStopped(false);
-    setBackfillDone(false);
-    setBackfillProgress({ processed: 0, lastTitle: "" });
+  const handleFingerprint = async () => {
+    fpStopRef.current = false;
+    setIsFingerprinting(true);
+    setFpStopped(false);
+    setFpDone(false);
+    setFpProgress({ processed: 0, lastTitle: "", errors: 0 });
 
     let processed = 0;
+    let errors = 0;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 10;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      if (backfillStopRef.current) break;
+      if (fpStopRef.current) break;
       try {
-        const r = await fetch("/api/admin/backfill-metadata", { method: "POST" });
-        if (!r.ok) { alert("Ошибка: " + (await r.text())); break; }
+        const r = await fetch("/api/admin/fingerprint-all", { method: "POST" });
         const data = await r.json();
-        processed += data.processed || 1;
-        setBackfillProgress({ processed, lastTitle: data.lastTitle || "" });
-        if (data.done) { setBackfillDone(true); break; }
+        if (data.done) { setFpDone(true); break; }
+        if (data.processed) {
+          processed++;
+          consecutiveErrors = 0;
+        } else {
+          errors++;
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            setFpDone(true);
+            break;
+          }
+        }
+        setFpProgress({ processed, lastTitle: data.title || "", errors });
       } catch (e: any) {
         alert("Сетевая ошибка: " + e.message);
         break;
       }
     }
 
-    setIsBackfilling(false);
-    fetchBackfillStats();
+    setIsFingerprinting(false);
+    fetchFpStats();
   };
 
   const handleMigrate = async () => {
@@ -377,53 +389,72 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Бэкфилл fileSize / duration */}
+      {/* Chromaprint Fingerprint */}
       <div className="bg-gray-800/50 rounded-xl p-6 mt-8 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+          <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
           </svg>
-          Заполнение метаданных (fileSize / duration)
+          Аудио-отпечатки (Chromaprint)
         </h2>
         <p className="text-gray-400 text-sm mb-4">
-          Для треков, у которых отсутствует размер файла или длительность — получает данные из S3 (HeadObject), локальных файлов или JSON-отчётов анализа.
-          Необходимо для корректной работы кластеризации дубликатов.
+          Генерирует сырой Chromaprint fingerprint (массив int32) для каждого трека. Используется для дедупликации —
+          если пользователь загружает трек, который уже есть в базе (даже в другом битрейте или обрезанный), он будет распознан.
+          <br /><span className="text-yellow-500">⚠ Старые base64-отпечатки несовместимы — перегенерируйте все.</span>
         </p>
 
-        {backfillStats && (
+        {fpStats && (
           <div className="flex gap-4 mb-4">
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-amber-400">{backfillStats.missingFileSize}</span>
-              <span className="text-sm text-gray-400 ml-2">без размера</span>
+              <span className="text-2xl font-bold text-emerald-400">{fpStats.withFingerprint}</span>
+              <span className="text-sm text-gray-400 ml-2">с отпечатком</span>
             </div>
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-amber-400">{backfillStats.missingDuration}</span>
-              <span className="text-sm text-gray-400 ml-2">без длительности</span>
+              <span className="text-2xl font-bold text-red-400">{fpStats.without}</span>
+              <span className="text-sm text-gray-400 ml-2">без отпечатка</span>
             </div>
+            {fpStats.withError > 0 && (
+              <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+                <span className="text-2xl font-bold text-yellow-400">{fpStats.withError}</span>
+                <span className="text-sm text-gray-400 ml-2">ошибки</span>
+              </div>
+            )}
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-gray-300">{backfillStats.total}</span>
+              <span className="text-2xl font-bold text-gray-300">{fpStats.total}</span>
               <span className="text-sm text-gray-400 ml-2">всего</span>
             </div>
           </div>
         )}
 
+        {fpStats && fpStats.without > 0 && fpStats.withFingerprint > 0 && (
+          <div className="mb-4">
+            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-300"
+                style={{ width: `${Math.round((fpStats.withFingerprint / fpStats.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {Math.round((fpStats.withFingerprint / fpStats.total) * 100)}% готово
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center gap-4 flex-wrap">
-          {!isBackfilling ? (
+          {!isFingerprinting ? (
             <button
-              onClick={handleBackfill}
-              disabled={!backfillStats || (backfillStats.missingFileSize === 0 && backfillStats.missingDuration === 0)}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              onClick={handleFingerprint}
+              disabled={!fpStats || fpStats.without === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
               </svg>
-              {backfillStats && backfillStats.missingFileSize === 0 && backfillStats.missingDuration === 0
-                ? "Все данные заполнены"
-                : `Заполнить (${(backfillStats?.missingFileSize ?? 0) + (backfillStats?.missingDuration ?? 0)} пропусков)`}
+              {fpStats?.without === 0 ? "Все треки с отпечатком" : `Сгенерировать (${fpStats?.without ?? "…"})`}
             </button>
           ) : (
             <button
-              onClick={() => { backfillStopRef.current = true; setBackfillStopped(true); }}
+              onClick={() => { fpStopRef.current = true; setFpStopped(true); }}
               className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -433,27 +464,31 @@ export default function SettingsPage() {
             </button>
           )}
 
-          {isBackfilling && backfillProgress && (
+          {isFingerprinting && fpProgress && (
             <span className="text-sm text-gray-300 flex items-center gap-2">
-              <svg className="w-4 h-4 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Обработано: <span className="text-amber-400">{backfillProgress.processed}</span>
-              {backfillProgress.lastTitle && (
-                <span className="text-gray-500 max-w-xs truncate">— {backfillProgress.lastTitle}</span>
+              Готово: <span className="text-emerald-400">{fpProgress.processed}</span>
+              {fpProgress.errors > 0 && (
+                <span className="text-red-400 ml-1">(ошибок: {fpProgress.errors})</span>
+              )}
+              {fpProgress.lastTitle && (
+                <span className="text-gray-500 max-w-xs truncate">— {fpProgress.lastTitle}</span>
               )}
             </span>
           )}
 
-          {backfillDone && !isBackfilling && (
-            <span className="text-green-400 text-sm">Все данные заполнены!</span>
+          {fpDone && !isFingerprinting && (
+            <span className="text-green-400 text-sm">Все отпечатки сгенерированы!</span>
           )}
-          {backfillStopped && !isBackfilling && (
+          {fpStopped && !isFingerprinting && (
             <span className="text-yellow-400 text-sm">Остановлено. Прогресс сохранён.</span>
           )}
         </div>
       </div>
+
     </div>
   );
 }
