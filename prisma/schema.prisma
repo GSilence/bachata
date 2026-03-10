@@ -92,8 +92,8 @@ model ModQueue {
 // ─── Лог событий трека ──────────────────────────────────────────────────────
 model TrackLog {
   id        Int      @id @default(autoincrement())
-  trackId   Int
-  track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId   Int?
+  track     Track?   @relation(fields: [trackId], references: [id], onDelete: SetNull)
   userId    Int?     // null = системное событие (воркер)
   event     String   // analyzer_done | mod_assigned | mod_verdict_correct |
                      // mod_verdict_incorrect | mod_verdict_incorrect_again |

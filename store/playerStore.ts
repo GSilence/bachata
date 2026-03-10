@@ -60,6 +60,10 @@ const restoredSettings = restoreUserSettings();
 let transitionLock = false;
 const TRANSITION_LOCK_MS = 200;
 
+// История воспроизведённых треков (runtime-only, не персистируется)
+const trackHistory: Track[] = [];
+const TRACK_HISTORY_MAX = 20;
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => ({
@@ -110,6 +114,7 @@ export const usePlayerStore = create<PlayerState>()(
       dominanceBucketLow: true,
       dominanceBucketHigh: true,
       playUntilSeconds: null,
+      playbackRate: 1,
       isReanalyzing: false,
       savedTrackId: null,
 
@@ -127,6 +132,13 @@ export const usePlayerStore = create<PlayerState>()(
             duration: 0,
           });
           return;
+        }
+
+        // Сохраняем предыдущий трек в историю
+        const prev = get().currentTrack;
+        if (prev && prev.id !== track.id) {
+          trackHistory.push(prev);
+          if (trackHistory.length > TRACK_HISTORY_MAX) trackHistory.shift();
         }
 
         // STEP 1: IMMEDIATELY reset state to prevent stale duration from corrupting seek calculations
@@ -149,7 +161,10 @@ export const usePlayerStore = create<PlayerState>()(
             stemsVolume,
             musicVolume,
             voiceVolume,
+            playbackRate,
           } = get();
+          // Синхронизируем rate ДО loadTrack — чтобы новый Howl создался с правильной скоростью
+          audioEngine.setPlaybackRate(playbackRate);
           // loadTrack: unload старый → создаёт новый Howl (musicTrack = null на мгновение)
           audioEngine.loadTrack(t, isStemsMode, stemsEnabled, stemsVolume);
           audioEngine.setMusicVolume(musicVolume);
@@ -294,6 +309,11 @@ export const usePlayerStore = create<PlayerState>()(
         else set({ dominanceBucketHigh: value });
       },
       setPlayUntilSeconds: (seconds) => set({ playUntilSeconds: seconds }),
+      setPlaybackRate: (rate) => {
+        const clamped = Math.max(0.5, Math.min(1.5, rate));
+        set({ playbackRate: clamped });
+        audioEngine.setPlaybackRate(clamped);
+      },
       setAudioEngine: (engine) => set({ audioEngine: engine }),
 
       // AudioEngine methods - call audioEngine directly
@@ -408,6 +428,18 @@ export const usePlayerStore = create<PlayerState>()(
         const wasPlaying = isPlaying;
         set({ isPlaying: false });
 
+        // Если есть история — возвращаемся к последнему треку из неё (любой режим)
+        if (trackHistory.length > 0) {
+          const prevTrack = trackHistory.pop()!;
+          const { setCurrentTrack } = get();
+          // Не записываем текущий трек в историю повторно — pushим его обратно вручную,
+          // чтобы "вперёд" после "назад" вернул к нему
+          setCurrentTrack(prevTrack, wasPlaying);
+          releaseLock();
+          return;
+        }
+
+        // Нет истории — серверная навигация (prev для sequential, random для random)
         const direction = playMode === "random" ? "random" : "prev";
         const filters = buildNavigateFilters(state);
 
@@ -457,6 +489,7 @@ export const usePlayerStore = create<PlayerState>()(
         dominanceBucketLow: state.dominanceBucketLow,
         dominanceBucketHigh: state.dominanceBucketHigh,
         playUntilSeconds: state.playUntilSeconds,
+        playbackRate: state.playbackRate,
       }),
       storage: trackStorage,
       merge: (persistedState: any, currentState: any) => {
@@ -504,6 +537,7 @@ export const usePlayerStore = create<PlayerState>()(
             "playUntilSeconds",
             currentState.playUntilSeconds,
           ),
+          playbackRate: get("playbackRate", currentState.playbackRate),
           audioEngine: null,
         };
       },

@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: any = {};
   if (eventFilter) where.event = eventFilter;
-  if (trackSearch) where.track = { title: { contains: trackSearch } };
+  if (trackSearch) where.track = { is: { title: { contains: trackSearch } } };
   if (userSearch) {
     const matchingUsers = await prisma.user.findMany({
       where: { email: { contains: userSearch } },

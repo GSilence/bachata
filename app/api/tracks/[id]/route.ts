@@ -273,6 +273,17 @@ export async function DELETE(
       }
     }
 
+    // Лог удаления (trackId=null, т.к. трек сейчас будет удалён — SetNull сохранит запись)
+    try {
+      await prisma.trackLog.create({
+        data: {
+          trackId: null,
+          event: 'track_deleted',
+          details: { title: track.title, artist: track.artist ?? null, deletedTrackId: trackId },
+        },
+      });
+    } catch {}
+
     // Удаляем запись из БД
     await prisma.track.delete({
       where: { id: trackId }

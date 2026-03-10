@@ -119,6 +119,9 @@ export class AudioEngine {
   // Активные BufferSource nodes для немедленной остановки при паузе
   private activeVoiceSources: Set<AudioBufferSourceNode> = new Set();
 
+  // Скорость воспроизведения (0.5–1.5)
+  private _playbackRate: number = 1;
+
   // Silent Anchor: держит AudioContext активным в фоне
   private silentOscillator: OscillatorNode | null = null;
   private silentGain: GainNode | null = null;
@@ -335,6 +338,7 @@ export class AudioEngine {
       html5: true,
       preload: true,
       volume: this.musicVolume / 100,
+      rate: this._playbackRate,
       onend: () => {
         this.handleTrackEnd();
       },
@@ -418,6 +422,7 @@ export class AudioEngine {
         html5: true,
         preload: true,
         volume: (this.musicVolume / 100) * (volume / 100) * (enabled ? 1 : 0),
+        rate: this._playbackRate,
         onload: () => {
           loadedStemsCount++;
           // После загрузки всех стемов обновляем beatGrid и уведомляем подписчиков
@@ -990,6 +995,31 @@ export class AudioEngine {
     this._playUntilSeconds = seconds;
   }
 
+  setPlaybackRate(rate: number) {
+    this._playbackRate = Math.max(0.5, Math.min(1.5, rate));
+
+    // Применяем к музыке (Howler)
+    if (this.musicTrack) {
+      this.musicTrack.rate(this._playbackRate);
+    }
+
+    // Применяем к stems
+    const stemKeys: Array<keyof typeof this.stemsTracks> = ["vocals", "drums", "bass", "other"];
+    for (const key of stemKeys) {
+      if (this.stemsTracks[key]) {
+        this.stemsTracks[key]?.rate(this._playbackRate);
+      }
+    }
+
+    // Сбрасываем voice scheduler — пересчитаем wallTime с новым rate
+    this.lastScheduledVoiceBeatIndex = this.currentBeatIndex - 1;
+    this.stopAllScheduledVoices();
+  }
+
+  getPlaybackRate(): number {
+    return this._playbackRate;
+  }
+
   setVoiceFilter(filter: "mute" | "on1" | "on1times3" | "on1and5" | "full") {
     this.voiceFilter = filter;
   }
@@ -1255,7 +1285,10 @@ export class AudioEngine {
     if (this.voiceType === "clap" && !this.clapBuffer) return;
     const nowTrack = this.getCurrentTime();
     const nowWall = this.voiceCtx.currentTime;
-    const horizon = nowTrack + AudioEngine.SCHEDULE_AHEAD_SEC;
+    // При rate != 1 трек-время течёт быстрее/медленнее реального,
+    // поэтому горизонт планирования увеличиваем на rate.
+    const rate = this._playbackRate || 1;
+    const horizon = nowTrack + AudioEngine.SCHEDULE_AHEAD_SEC * rate;
 
     for (
       let i = this.lastScheduledVoiceBeatIndex + 1;
@@ -1265,7 +1298,8 @@ export class AudioEngine {
       const beat = this.beatGrid[i];
       if (beat.time > horizon) break;
       if (this.shouldPlayVoiceForBeat(beat.number, i)) {
-        const wallTime = nowWall + (beat.time - nowTrack);
+        // wallTime: разница в трек-времени делим на rate → реальное время до бита
+        const wallTime = nowWall + (beat.time - nowTrack) / rate;
         console.log(`[AE.scheduleVoice] beat#${beat.number} idx=${i}, beatTime=${beat.time.toFixed(2)}, nowTrack=${nowTrack.toFixed(2)}, wallTime=${wallTime.toFixed(3)}, ctxTime=${nowWall.toFixed(3)}`);
         this.scheduleVoiceAt(beat.number, wallTime);
       }

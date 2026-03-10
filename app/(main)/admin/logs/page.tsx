@@ -21,7 +21,7 @@ const ALL_EVENTS = Object.keys(EVENT_LABELS);
 
 interface LogEntry {
   id: number;
-  trackId: number;
+  trackId: number | null;
   trackTitle: string | null;
   event: string;
   details: any;
@@ -115,6 +115,7 @@ export default function AdminLogsPage() {
   const formatDetails = (details: any): string => {
     if (!details) return "";
     const parts: string[] = [];
+    if (details.title) parts.push(`«${details.title}»`);
     if (details.oldStatus && details.newStatus) parts.push(`${details.oldStatus} → ${details.newStatus}`);
     if (details.reason) parts.push(details.reason);
     if (details.email) parts.push(details.email);

@@ -634,14 +634,14 @@ export default function ModeratePage() {
               </div>
 
               {/* Управление */}
-              <div className="flex items-center justify-center gap-6">
+              <div className="flex items-center justify-center gap-3">
                 <button
                   onClick={rewind}
-                  className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded-full active:bg-gray-700"
+                  className="w-14 h-14 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded-full active:bg-gray-700"
                   title="-10 сек"
                 >
                   <svg
-                    className="w-7 h-7"
+                    className="w-10 h-10"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -678,12 +678,26 @@ export default function ModeratePage() {
                   )}
                 </button>
                 <button
+                  onClick={() => {
+                    if (!trackReady) return;
+                    audioEngine.stop();
+                    usePlayerStore.setState({ isPlaying: false, currentTime: 0 });
+                  }}
+                  disabled={!trackReady}
+                  className="w-14 h-14 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded-full active:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Стоп"
+                >
+                  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                </button>
+                <button
                   onClick={forward}
-                  className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded-full active:bg-gray-700"
+                  className="w-14 h-14 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded-full active:bg-gray-700"
                   title="+10 сек"
                 >
                   <svg
-                    className="w-7 h-7"
+                    className="w-10 h-10"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -778,7 +792,7 @@ export default function ModeratePage() {
             <button
               onClick={handleNotBachata}
               disabled={isMarkingNotBachata}
-              className="w-full mt-2 py-3 bg-transparent text-gray-500 hover:text-red-400 rounded-2xl transition-colors text-sm disabled:opacity-40"
+              className="w-full mt-2 py-3 bg-gray-800 border border-gray-700 text-gray-400 hover:text-red-400 hover:border-red-800 rounded-2xl transition-colors text-sm disabled:opacity-40"
             >
               {isMarkingNotBachata ? "Отправка..." : "Это не бачата"}
             </button>

@@ -26,6 +26,8 @@ export default function PlayerControls({
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
   const setMusicVolume = usePlayerStore((s) => s.setMusicVolume);
   const setVoiceVolume = usePlayerStore((s) => s.setVoiceVolume);
+  const playbackRate = usePlayerStore((s) => s.playbackRate);
+  const setPlaybackRate = usePlayerStore((s) => s.setPlaybackRate);
 
   const [isDragging, setIsDragging] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -144,8 +146,26 @@ export default function PlayerControls({
 
   return (
     <div className="space-y-4 sm:space-y-6" data-component="player-controls">
-      {/* Play/Pause/Stop Buttons */}
-      <div className="flex justify-center items-center gap-3 sm:gap-4">
+      {/* Play/Pause/Stop + Prev/Next Buttons */}
+      <div className="flex justify-center items-center gap-2 sm:gap-3">
+        {/* Предыдущий трек */}
+        <button
+          onClick={() => usePlayerStore.getState().playPrevious()}
+          disabled={!currentTrack}
+          className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition-colors ${
+            !currentTrack
+              ? "text-gray-600 cursor-not-allowed"
+              : "text-gray-400 hover:text-white active:bg-gray-700"
+          }`}
+          aria-label="Previous"
+          title="Предыдущий трек"
+        >
+          <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" />
+          </svg>
+        </button>
+
+        {/* Play/Pause */}
         <button
           onClick={isPlaying ? onPause : onPlay}
           disabled={!currentTrack}
@@ -157,32 +177,51 @@ export default function PlayerControls({
           aria-label={isPlaying ? "Pause" : "Play"}
         >
           {isPlaying ? (
-            <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M6 4h4v12H6V4zm4 0h4v12h-4V4z" />
+            <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
             </svg>
           ) : (
             <svg
-              className="w-8 h-8 ml-1"
+              className="w-7 h-7 ml-0.5"
               fill="currentColor"
-              viewBox="0 0 20 20"
+              viewBox="0 0 24 24"
             >
-              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+              <path d="M8 5v14l11-7z" />
             </svg>
           )}
         </button>
 
+        {/* Stop */}
         <button
           onClick={onStop}
           disabled={!currentTrack}
-          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center transition-colors shadow-lg ${
+          className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition-colors ${
             !currentTrack
-              ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-              : "bg-red-600 text-white hover:bg-red-700"
+              ? "text-gray-600 cursor-not-allowed"
+              : "text-gray-400 hover:text-white active:bg-gray-700"
           }`}
           aria-label="Stop"
+          title="Стоп"
         >
-          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M4 4h12v12H4V4z" />
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+          </svg>
+        </button>
+
+        {/* Следующий трек */}
+        <button
+          onClick={() => usePlayerStore.getState().playNext()}
+          disabled={!currentTrack}
+          className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition-colors ${
+            !currentTrack
+              ? "text-gray-600 cursor-not-allowed"
+              : "text-gray-400 hover:text-white active:bg-gray-700"
+          }`}
+          aria-label="Next"
+          title="Следующий трек"
+        >
+          <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z" />
           </svg>
         </button>
       </div>
@@ -245,6 +284,30 @@ export default function PlayerControls({
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
               style={{
                 background: `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${voiceVolume}%, rgb(55, 65, 81) ${voiceVolume}%, rgb(55, 65, 81) 100%)`,
+              }}
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-400 mb-2">
+            Speed: {Math.round(playbackRate * 100)}%
+          </label>
+          <div className="relative">
+            <input
+              type="range"
+              min="50"
+              max="150"
+              step="5"
+              value={Math.round(playbackRate * 100)}
+              onChange={(e) => {
+                setPlaybackRate(parseInt(e.target.value) / 100);
+              }}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              style={{
+                background: (() => {
+                  const pct = ((playbackRate * 100 - 50) / 100) * 100;
+                  return `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${pct}%, rgb(55, 65, 81) ${pct}%, rgb(55, 65, 81) 100%)`;
+                })(),
               }}
             />
           </div>
