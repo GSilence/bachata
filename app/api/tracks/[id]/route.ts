@@ -272,6 +272,11 @@ export async function DELETE(
       }
     }
 
+    // Удаляем обложку из S3 (если есть)
+    if (track.coverArtUrl) {
+      await deleteAudioFile(track.coverArtUrl)
+    }
+
     // Лог удаления (trackId=null, т.к. трек сейчас будет удалён — SetNull сохранит запись)
     try {
       await prisma.trackLog.create({

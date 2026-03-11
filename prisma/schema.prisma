@@ -54,6 +54,8 @@ model Track {
   metaGenre    String?  @db.VarChar(200)
   metaComment  String?  @db.Text
   metaTrackNum Int?
+  coverArtUrl     String?  @db.VarChar(500)  // URL обложки альбома (Cover Art Archive)
+  metaLookupDone  Boolean  @default(false)   // true = AcoustID lookup уже выполнялся
 
   // Статистика прослушиваний
   playsTotal        Int       @default(0) // всего прослушиваний
@@ -67,6 +69,9 @@ model Track {
   // Аудио-фингерпринт (Chromaprint)
   audioFingerprint    String?  @db.Text  // сжатый fingerprint от fpcalc
   fingerprintDuration Float?             // длительность (сек), используемая для сравнения fingerprint'ов
+
+  // Визуализация формы волны
+  waveformData        String?  @db.Text  // JSON-массив нормализованных RMS-пиков (0.0–1.0), ~200 значений
 
   // Кластеризация дублей
   duration         Float?    // длительность трека в секундах (из v2-анализа)

@@ -69,30 +69,44 @@ const TrackItem = memo(function TrackItem({
     <div className="relative group">
       <button
         onClick={() => onSelect(track)}
-        className={`w-full text-left px-4 py-3 pr-10 rounded-lg transition-colors ${
+        className={`w-full text-left px-3 py-2.5 pr-10 rounded-xl transition-colors flex items-center gap-3 ${
           isActive
-            ? "bg-purple-600 border-2 border-purple-400 hover:bg-purple-700"
-            : "bg-gray-700 border border-gray-600 hover:bg-gray-600 hover:border-purple-600"
+            ? "bg-purple-600/30 border border-purple-500/50 hover:bg-purple-600/40"
+            : "border border-transparent hover:bg-white/5"
         }`}
       >
-        <div className="text-sm text-white truncate" title={track.title}>
-          {track.title}
+        {/* Обложка */}
+        <div className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-gray-700">
+          {track.coverArtUrl ? (
+            <img
+              src={track.coverArtUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z"/>
+              </svg>
+            </div>
+          )}
         </div>
-        {track.artist && (
-          <div
-            className={`text-sm ${isActive ? "text-purple-100" : "text-gray-400"}`}
-          >
-            {track.artist}
+
+        {/* Текст */}
+        <div className="min-w-0 flex-1">
+          <div className={`text-sm font-medium truncate ${isActive ? "text-white" : "text-gray-100"}`} title={track.title}>
+            {track.title}
+            {track.isProcessed && (
+              <span className="ml-1.5 text-green-400 text-xs" title="Stems обработаны">🎵</span>
+            )}
           </div>
-        )}
-        {track.isProcessed && (
-          <span
-            className="text-xs text-green-400 mt-1 inline-block"
-            title="Stems обработаны"
-          >
-            🎵
-          </span>
-        )}
+          {track.artist && (
+            <div className={`text-xs truncate mt-0.5 ${isActive ? "text-purple-200" : "text-gray-400"}`}>
+              {track.artist}
+            </div>
+          )}
+        </div>
       </button>
 
       {/* Кнопка Избранное */}

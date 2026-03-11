@@ -102,6 +102,11 @@ export interface Track {
   clusterId: number | null;
   isPrimary: boolean;
   clusterExcluded: boolean;
+  // Визуализация формы волны
+  waveformData?: string | null;
+  // AcoustID / MusicBrainz
+  coverArtUrl?: string | null;
+  metaLookupDone?: boolean;
 }
 
 export interface PlayerState {

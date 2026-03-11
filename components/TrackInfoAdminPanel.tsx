@@ -51,6 +51,11 @@ export default function TrackInfoAdminPanel({
   const [v2Stage, setV2Stage] = useState("");
   const [isFingerprintLoading, setIsFingerprintLoading] = useState(false);
   const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
+  const [isWaveformLoading, setIsWaveformLoading] = useState(false);
+  const [waveformStatus, setWaveformStatus] = useState<string | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupStatus, setLookupStatus] = useState<string | null>(null);
+  const [coverArtUrl, setCoverArtUrl] = useState<string | null>(null);
   const [bridges, setBridges] = useState<number[]>(
     () => (currentTrack.gridMap as GridMap | null)?.bridges ?? [],
   );
@@ -92,6 +97,59 @@ export default function TrackInfoAdminPanel({
     setFingerprintStatus(null);
     setIsFingerprintLoading(false);
   }, [currentTrack.id]);
+
+  const runWaveform = async () => {
+    if (!currentTrack || isWaveformLoading) return;
+    setIsWaveformLoading(true);
+    setWaveformStatus(null);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/waveform`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      updateCurrentTrack({ ...currentTrack, waveformData: data.waveformData });
+      setWaveformStatus(`OK (${data.count} peaks)`);
+    } catch (err: any) {
+      setWaveformStatus(`Ошибка: ${err.message}`);
+    } finally {
+      setIsWaveformLoading(false);
+    }
+  };
+
+  const runLookupMetadata = async () => {
+    if (!currentTrack || isLookingUp) return;
+    setIsLookingUp(true);
+    setLookupStatus("Запрос...");
+    setCoverArtUrl(null);
+    try {
+      const res = await fetch(`/api/tracks/${currentTrack.id}/lookup-metadata`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+
+      if (!data.found) {
+        setLookupStatus("Не найдено в AcoustID");
+        console.log("[Metadata Lookup] Not found:", data);
+        return;
+      }
+
+      const best = data.best;
+      const savedMark = data.saved ? " ✓ сохранено" : "";
+      const status = best
+        ? `${best.artist} — ${best.title} (${best.confidence_pct}%)${savedMark}`
+        : "Найдено, но без данных";
+      setLookupStatus(status);
+      if (best?.coverArtUrl) setCoverArtUrl(best.coverArtUrl);
+
+      console.group(`[Metadata Lookup] Track #${data.trackId}: ${data.trackTitle}`);
+      console.log("Best match:", best);
+      console.log("All candidates:", data.results);
+      console.groupEnd();
+    } catch (err: any) {
+      setLookupStatus(`Ошибка: ${err.message}`);
+      console.error("[Metadata Lookup] Error:", err);
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
 
   const runFingerprint = async () => {
     if (!currentTrack || isFingerprintLoading) return;
@@ -323,6 +381,45 @@ export default function TrackInfoAdminPanel({
         <div className="flex items-center justify-between gap-2 mb-2">
           <span className="text-sm font-medium text-gray-400">Анализ</span>
           <div className="flex items-center gap-1.5">
+            {/* Lookup metadata (AcoustID + MusicBrainz) */}
+            <button
+              type="button"
+              onClick={runLookupMetadata}
+              disabled={isLookingUp}
+              title={lookupStatus || "Найти метаданные через AcoustID + MusicBrainz"}
+              className="p-1.5 rounded bg-amber-700 hover:bg-amber-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label="Lookup metadata"
+            >
+              {isLookingUp ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              )}
+            </button>
+            {/* Waveform */}
+            <button
+              type="button"
+              onClick={runWaveform}
+              disabled={isWaveformLoading}
+              title={waveformStatus || "Сгенерировать waveform (форму волны)"}
+              className="p-1.5 rounded bg-sky-700 hover:bg-sky-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label="Waveform"
+            >
+              {isWaveformLoading ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l2 2 2-2v4l2-2 2 2V6" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m14 0h2M3 6h2m14 0h2M3 18h2m14 0h2" />
+                </svg>
+              )}
+            </button>
             {/* Fingerprint */}
             <button
               type="button"
@@ -364,6 +461,25 @@ export default function TrackInfoAdminPanel({
             </button>
           </div>
         </div>
+        {lookupStatus && (
+          <p className={`text-xs truncate mb-1 ${lookupStatus.startsWith("Ошибка") ? "text-red-400" : lookupStatus === "Не найдено в AcoustID" ? "text-yellow-400" : "text-amber-400"}`}>
+            🔍 {lookupStatus}
+          </p>
+        )}
+        {coverArtUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={coverArtUrl}
+            alt="Album cover"
+            className="w-16 h-16 rounded object-cover mb-1 border border-gray-600"
+            onError={() => setCoverArtUrl(null)}
+          />
+        )}
+        {waveformStatus && (
+          <p className={`text-xs truncate mb-1 ${waveformStatus.startsWith("OK") ? "text-sky-400" : "text-red-400"}`}>
+            WF: {waveformStatus}
+          </p>
+        )}
         {fingerprintStatus && (
           <p className={`text-xs truncate mb-1 ${fingerprintStatus.startsWith("OK") ? "text-emerald-400" : "text-red-400"}`}>
             FP: {fingerprintStatus}

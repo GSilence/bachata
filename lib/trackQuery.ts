@@ -39,6 +39,7 @@ export const LIGHT_SELECT = {
   isPrimary: true,
   visibility: true,
   uploadedBy: true,
+  coverArtUrl: true,
 } as const;
 
 // Поля, которые не должны видеть обычные пользователи

@@ -29,13 +29,21 @@ export default function SettingsPage() {
   const [migrationProgress, setMigrationProgress] = useState<{ migrated: number; skipped: number; lastTitle: string } | null>(null);
   const [migrationDone, setMigrationDone] = useState(false);
 
-  // Fingerprint
-  const [fpStats, setFpStats] = useState<{ total: number; withFingerprint: number; withError: number; without: number } | null>(null);
-  const [isFingerprinting, setIsFingerprinting] = useState(false);
-  const fpStopRef = useRef(false);
-  const [fpStopped, setFpStopped] = useState(false);
-  const [fpProgress, setFpProgress] = useState<{ processed: number; lastTitle: string; errors: number } | null>(null);
-  const [fpDone, setFpDone] = useState(false);
+  // Waveform bulk generation
+  const [wfStats, setWfStats] = useState<{ total: number; withWaveform: number; without: number } | null>(null);
+
+  // Lookup metadata bulk
+  const [luStats, setLuStats] = useState<{ total: number; done: number; pending: number; withMeta: number; hasApiKey: boolean } | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const luStopRef = useRef(false);
+  const [luStopped, setLuStopped] = useState(false);
+  const [luProgress, setLuProgress] = useState<{ processed: number; saved: number; lastTitle: string; errors: number } | null>(null);
+  const [luDone, setLuDone] = useState(false);
+  const [isWaveforming, setIsWaveforming] = useState(false);
+  const wfStopRef = useRef(false);
+  const [wfStopped, setWfStopped] = useState(false);
+  const [wfProgress, setWfProgress] = useState<{ processed: number; lastTitle: string; errors: number } | null>(null);
+  const [wfDone, setWfDone] = useState(false);
 
   // Auth check
   useEffect(() => {
@@ -91,23 +99,34 @@ export default function SettingsPage() {
     if (isAdmin(user?.role)) fetchMigrationStats();
   }, [user]);
 
-  const fetchFpStats = async () => {
+  const fetchWfStats = async () => {
     try {
-      const r = await fetch("/api/admin/fingerprint-all");
-      if (r.ok) setFpStats(await r.json());
+      const r = await fetch("/api/admin/waveform-all");
+      if (r.ok) setWfStats(await r.json());
     } catch {}
   };
 
   useEffect(() => {
-    if (isAdmin(user?.role)) fetchFpStats();
+    if (isAdmin(user?.role)) fetchWfStats();
   }, [user]);
 
-  const handleFingerprint = async () => {
-    fpStopRef.current = false;
-    setIsFingerprinting(true);
-    setFpStopped(false);
-    setFpDone(false);
-    setFpProgress({ processed: 0, lastTitle: "", errors: 0 });
+  const fetchLuStats = async () => {
+    try {
+      const r = await fetch("/api/admin/lookup-metadata-all");
+      if (r.ok) setLuStats(await r.json());
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (isAdmin(user?.role)) fetchLuStats();
+  }, [user]);
+
+  const handleWaveform = async () => {
+    wfStopRef.current = false;
+    setIsWaveforming(true);
+    setWfStopped(false);
+    setWfDone(false);
+    setWfProgress({ processed: 0, lastTitle: "", errors: 0 });
 
     let processed = 0;
     let errors = 0;
@@ -116,11 +135,11 @@ export default function SettingsPage() {
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      if (fpStopRef.current) break;
+      if (wfStopRef.current) break;
       try {
-        const r = await fetch("/api/admin/fingerprint-all", { method: "POST" });
+        const r = await fetch("/api/admin/waveform-all", { method: "POST" });
         const data = await r.json();
-        if (data.done) { setFpDone(true); break; }
+        if (data.done) { setWfDone(true); break; }
         if (data.processed) {
           processed++;
           consecutiveErrors = 0;
@@ -128,19 +147,54 @@ export default function SettingsPage() {
           errors++;
           consecutiveErrors++;
           if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            setFpDone(true);
+            setWfDone(true);
             break;
           }
         }
-        setFpProgress({ processed, lastTitle: data.title || "", errors });
+        setWfProgress({ processed, lastTitle: data.title || "", errors });
       } catch (e: any) {
         alert("Сетевая ошибка: " + e.message);
         break;
       }
     }
 
-    setIsFingerprinting(false);
-    fetchFpStats();
+    setIsWaveforming(false);
+    fetchWfStats();
+  };
+
+  const handleLookup = async () => {
+    luStopRef.current = false;
+    setIsLookingUp(true);
+    setLuStopped(false);
+    setLuDone(false);
+    setLuProgress({ processed: 0, saved: 0, lastTitle: "", errors: 0 });
+
+    let processed = 0;
+    let saved = 0;
+    let errors = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (luStopRef.current) break;
+      try {
+        const r = await fetch("/api/admin/lookup-metadata-all", { method: "POST" });
+        const data = await r.json();
+        if (data.done) { setLuDone(true); break; }
+        if (data.processed) {
+          processed++;
+          if (data.saved) saved++;
+        } else {
+          errors++;
+        }
+        setLuProgress({ processed, saved, lastTitle: data.title || "", errors });
+      } catch (e: any) {
+        alert("Сетевая ошибка: " + e.message);
+        break;
+      }
+    }
+
+    setIsLookingUp(false);
+    fetchLuStats();
   };
 
   const handleMigrate = async () => {
@@ -389,72 +443,67 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Chromaprint Fingerprint */}
+      {/* Waveform bulk generation */}
       <div className="bg-gray-800/50 rounded-xl p-6 mt-8 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
+          <svg className="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l2 2 2-2v4l2-2 2 2V6" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m14 0h2M3 6h2m14 0h2M3 18h2m14 0h2" />
           </svg>
-          Аудио-отпечатки (Chromaprint)
+          Форма волны (Waveform)
         </h2>
         <p className="text-gray-400 text-sm mb-4">
-          Генерирует сырой Chromaprint fingerprint (массив int32) для каждого трека. Используется для дедупликации —
-          если пользователь загружает трек, который уже есть в базе (даже в другом битрейте или обрезанный), он будет распознан.
-          <br /><span className="text-yellow-500">⚠ Старые base64-отпечатки несовместимы — перегенерируйте все.</span>
+          Генерирует 200 нормализованных RMS-пиков для каждого трека. Отображается вместо полоски прогресса в плеере.
+          Новые треки будут получать waveform автоматически при анализе.
         </p>
 
-        {fpStats && (
+        {wfStats && (
           <div className="flex gap-4 mb-4">
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-emerald-400">{fpStats.withFingerprint}</span>
-              <span className="text-sm text-gray-400 ml-2">с отпечатком</span>
+              <span className="text-2xl font-bold text-sky-400">{wfStats.withWaveform}</span>
+              <span className="text-sm text-gray-400 ml-2">с waveform</span>
             </div>
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-red-400">{fpStats.without}</span>
-              <span className="text-sm text-gray-400 ml-2">без отпечатка</span>
+              <span className="text-2xl font-bold text-red-400">{wfStats.without}</span>
+              <span className="text-sm text-gray-400 ml-2">без waveform</span>
             </div>
-            {fpStats.withError > 0 && (
-              <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-                <span className="text-2xl font-bold text-yellow-400">{fpStats.withError}</span>
-                <span className="text-sm text-gray-400 ml-2">ошибки</span>
-              </div>
-            )}
             <div className="bg-gray-700/50 rounded-lg px-4 py-2">
-              <span className="text-2xl font-bold text-gray-300">{fpStats.total}</span>
+              <span className="text-2xl font-bold text-gray-300">{wfStats.total}</span>
               <span className="text-sm text-gray-400 ml-2">всего</span>
             </div>
           </div>
         )}
 
-        {fpStats && fpStats.without > 0 && fpStats.withFingerprint > 0 && (
+        {wfStats && wfStats.withWaveform > 0 && wfStats.without > 0 && (
           <div className="mb-4">
             <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
               <div
-                className="h-full bg-emerald-500 transition-all duration-300"
-                style={{ width: `${Math.round((fpStats.withFingerprint / fpStats.total) * 100)}%` }}
+                className="h-full bg-sky-500 transition-all duration-300"
+                style={{ width: `${Math.round((wfStats.withWaveform / wfStats.total) * 100)}%` }}
               />
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {Math.round((fpStats.withFingerprint / fpStats.total) * 100)}% готово
+              {Math.round((wfStats.withWaveform / wfStats.total) * 100)}% готово
             </p>
           </div>
         )}
 
         <div className="flex items-center gap-4 flex-wrap">
-          {!isFingerprinting ? (
+          {!isWaveforming ? (
             <button
-              onClick={handleFingerprint}
-              disabled={!fpStats || fpStats.without === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              onClick={handleWaveform}
+              disabled={!wfStats || wfStats.without === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l2 2 2-2v4l2-2 2 2V6" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h2m14 0h2M3 6h2m14 0h2M3 18h2m14 0h2" />
               </svg>
-              {fpStats?.without === 0 ? "Все треки с отпечатком" : `Сгенерировать (${fpStats?.without ?? "…"})`}
+              {wfStats?.without === 0 ? "Все треки с waveform" : `Сгенерировать (${wfStats?.without ?? "…"})`}
             </button>
           ) : (
             <button
-              onClick={() => { fpStopRef.current = true; setFpStopped(true); }}
+              onClick={() => { wfStopRef.current = true; setWfStopped(true); }}
               className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -464,26 +513,123 @@ export default function SettingsPage() {
             </button>
           )}
 
-          {isFingerprinting && fpProgress && (
+          {isWaveforming && wfProgress && (
             <span className="text-sm text-gray-300 flex items-center gap-2">
-              <svg className="w-4 h-4 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 animate-spin text-sky-400" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Готово: <span className="text-emerald-400">{fpProgress.processed}</span>
-              {fpProgress.errors > 0 && (
-                <span className="text-red-400 ml-1">(ошибок: {fpProgress.errors})</span>
+              Готово: <span className="text-sky-400">{wfProgress.processed}</span>
+              {wfProgress.errors > 0 && (
+                <span className="text-red-400 ml-1">(ошибок: {wfProgress.errors})</span>
               )}
-              {fpProgress.lastTitle && (
-                <span className="text-gray-500 max-w-xs truncate">— {fpProgress.lastTitle}</span>
+              {wfProgress.lastTitle && (
+                <span className="text-gray-500 max-w-xs truncate">— {wfProgress.lastTitle}</span>
               )}
             </span>
           )}
 
-          {fpDone && !isFingerprinting && (
-            <span className="text-green-400 text-sm">Все отпечатки сгенерированы!</span>
+          {wfDone && !isWaveforming && (
+            <span className="text-green-400 text-sm">Все waveform сгенерированы!</span>
           )}
-          {fpStopped && !isFingerprinting && (
+          {wfStopped && !isWaveforming && (
+            <span className="text-yellow-400 text-sm">Остановлено. Прогресс сохранён.</span>
+          )}
+        </div>
+      </div>
+
+      {/* Lookup Metadata (AcoustID + MusicBrainz) */}
+      <div className="bg-gray-800/50 rounded-xl p-6 mt-8 border border-gray-700">
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          Метаданные (AcoustID + MusicBrainz)
+        </h2>
+        <p className="text-gray-400 text-sm mb-4">
+          Определяет название, исполнителя, альбом, год и обложку по аудиоотпечатку.
+          Автоматически сохраняет в базу при совпадении ≥ 90%.
+          {luStats && !luStats.hasApiKey && (
+            <span className="text-red-400 ml-1">ACOUSTID_API_KEY не задан!</span>
+          )}
+        </p>
+
+        {luStats && (
+          <div className="flex gap-4 mb-4 flex-wrap">
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-amber-400">{luStats.withMeta}</span>
+              <span className="text-sm text-gray-400 ml-2">с метаданными</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-red-400">{luStats.pending}</span>
+              <span className="text-sm text-gray-400 ml-2">не проверено</span>
+            </div>
+            <div className="bg-gray-700/50 rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold text-gray-300">{luStats.total}</span>
+              <span className="text-sm text-gray-400 ml-2">всего</span>
+            </div>
+          </div>
+        )}
+
+        {luStats && luStats.done > 0 && luStats.total > 0 && (
+          <div className="mb-4">
+            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-500 transition-all duration-300"
+                style={{ width: `${Math.round((luStats.done / luStats.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {Math.round((luStats.done / luStats.total) * 100)}% проверено
+            </p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4 flex-wrap">
+          {!isLookingUp ? (
+            <button
+              onClick={handleLookup}
+              disabled={!luStats || luStats.pending === 0 || !luStats.hasApiKey}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              {luStats?.pending === 0 ? "Все треки проверены" : `Запустить поиск (${luStats?.pending ?? "…"})`}
+            </button>
+          ) : (
+            <button
+              onClick={() => { luStopRef.current = true; setLuStopped(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Остановить
+            </button>
+          )}
+
+          {isLookingUp && luProgress && (
+            <span className="text-sm text-gray-300 flex items-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Проверено: <span className="text-amber-400">{luProgress.processed}</span>
+              <span className="text-green-400 ml-1">сохранено: {luProgress.saved}</span>
+              {luProgress.errors > 0 && (
+                <span className="text-red-400 ml-1">(ошибок: {luProgress.errors})</span>
+              )}
+              {luProgress.lastTitle && (
+                <span className="text-gray-500 max-w-xs truncate">— {luProgress.lastTitle}</span>
+              )}
+            </span>
+          )}
+
+          {luDone && !isLookingUp && (
+            <span className="text-green-400 text-sm">Все треки проверены!</span>
+          )}
+          {luStopped && !isLookingUp && (
             <span className="text-yellow-400 text-sm">Остановлено. Прогресс сохранён.</span>
           )}
         </div>

@@ -2,7 +2,8 @@
 
 import { usePlayerStore } from "@/store/playerStore";
 import { audioEngine } from "@/lib/audioEngine";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import WaveformBar from "@/components/WaveformBar";
 
 interface PlayerControlsProps {
   onPlay: () => void;
@@ -207,6 +208,18 @@ export default function PlayerControls({
       ? Math.min(100, (currentTime / duration) * 100)
       : 0;
 
+  // Waveform peaks — parsed once per track change
+  const waveformPeaks = useMemo<number[] | null>(() => {
+    const raw = currentTrack?.waveformData;
+    if (!raw) return null;
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) && arr.length > 0 ? arr : null;
+    } catch {
+      return null;
+    }
+  }, [currentTrack?.waveformData]);
+
   // Loop marker positions (percentage of full duration)
   const loopStartPct =
     loopStartSeconds != null && loopStartSeconds > 0 && duration > 0
@@ -304,20 +317,34 @@ export default function PlayerControls({
         <div
           ref={progressRef}
           onClick={handleProgressClick}
-          className="w-full h-2 bg-gray-700 rounded-full cursor-pointer relative"
+          className={`w-full cursor-pointer relative rounded-full ${
+            waveformPeaks ? "h-10" : "h-2 bg-gray-700"
+          }`}
         >
-          {/* Подсветка зоны цикла */}
-          {loopStartPct != null && loopEndPct != null && (
-            <div
-              className="absolute top-0 h-full bg-yellow-500/20 rounded-full"
-              style={{ left: `${loopStartPct}%`, width: `${loopEndPct - loopStartPct}%` }}
+          {waveformPeaks ? (
+            /* Waveform visualization */
+            <WaveformBar
+              peaks={waveformPeaks}
+              progress={duration > 0 ? currentTime / duration : 0}
+              loopStartPct={loopStartPct}
+              loopEndPct={loopEndPct}
             />
+          ) : (
+            <>
+              {/* Подсветка зоны цикла */}
+              {loopStartPct != null && loopEndPct != null && (
+                <div
+                  className="absolute top-0 h-full bg-yellow-500/20 rounded-full"
+                  style={{ left: `${loopStartPct}%`, width: `${loopEndPct - loopStartPct}%` }}
+                />
+              )}
+              {/* Прогресс */}
+              <div
+                className="absolute top-0 left-0 h-full bg-purple-600 rounded-full"
+                style={{ width: `${progressPercentage}%` }}
+              />
+            </>
           )}
-          {/* Прогресс */}
-          <div
-            className="absolute top-0 left-0 h-full bg-purple-600 rounded-full"
-            style={{ width: `${progressPercentage}%` }}
-          />
           {/* Маркер начала цикла — draggable */}
           {loopStartPct != null && (
             <div

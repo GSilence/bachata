@@ -74,7 +74,7 @@ export const usePlayerStore = create<PlayerState>()(
       currentTime: 0,
       duration: 0,
       musicVolume: restoredSettings.musicVolume,
-      voiceVolume: restoredSettings.voiceVolume, // Базовая громкость (реальная громкость будет увеличена на 250% в audioEngine)
+      voiceVolume: restoredSettings.voiceVolume,
 
       // Управление дорожками
       isStemsMode: false, // По умолчанию используем цельный файл (экономия ресурсов)

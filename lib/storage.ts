@@ -63,6 +63,7 @@ function getContentType(key: string): string {
   const mimeMap: Record<string, string> = {
     mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav",
     flac: "audio/flac", ogg: "audio/ogg", aac: "audio/aac",
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
   };
   return mimeMap[ext] || "application/octet-stream";
 }
@@ -78,7 +79,15 @@ export async function uploadBuffer(
   key: string,
 ): Promise<string> {
   const client = getS3Client();
-  if (!client) return getFileUrl(key);
+  if (!client) {
+    // Local mode: write to public/uploads/
+    const { writeFileSync, mkdirSync } = await import("fs");
+    const { join: joinPath, dirname } = await import("path");
+    const localPath = joinPath(process.cwd(), "public", "uploads", key);
+    mkdirSync(dirname(localPath), { recursive: true });
+    writeFileSync(localPath, buffer);
+    return getFileUrl(key);
+  }
 
   await client.send(
     new PutObjectCommand({
