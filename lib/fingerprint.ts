@@ -12,7 +12,9 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join } from "path";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { randomBytes } from "crypto";
 
 const execAsync = promisify(exec);
 
@@ -28,15 +30,25 @@ interface FingerprintConfig {
 
 let _fpConfig: FingerprintConfig | null = null;
 
+const DEFAULT_FP_CONFIG: FingerprintConfig = {
+  ber_threshold: 0.15,
+  max_frames: 300,
+  duration_tolerance_seconds: 20,
+  max_shift: 50,
+  min_overlap: 20,
+};
+
 export function getFingerprintConfig(): FingerprintConfig {
   if (_fpConfig) return _fpConfig;
   try {
     const raw = readFileSync(join(process.cwd(), "config", "analysis-thresholds.json"), "utf-8");
     const parsed = JSON.parse(raw);
-    _fpConfig = parsed.fingerprint as FingerprintConfig;
-    return _fpConfig;
+    _fpConfig = parsed.fingerprint
+      ? { ...DEFAULT_FP_CONFIG, ...parsed.fingerprint }
+      : DEFAULT_FP_CONFIG;
+    return _fpConfig!;
   } catch {
-    _fpConfig = { ber_threshold: 0.15, max_frames: 300, duration_tolerance_seconds: 20, max_shift: 50, min_overlap: 20 };
+    _fpConfig = DEFAULT_FP_CONFIG;
     return _fpConfig;
   }
 }
@@ -78,24 +90,44 @@ export interface FingerprintResult {
 /**
  * Generate raw Chromaprint fingerprint for an audio file.
  * Uses `fpcalc -raw -json` to get integer array directly.
+ *
+ * On failure, retries after remuxing through ffmpeg to strip junk bytes
+ * (e.g. Traktor DJ marker blocks embedded mid-stream).
  */
 export async function generateFingerprint(
   audioPath: string,
 ): Promise<FingerprintResult> {
   const fpcalc = getFpcalcPath();
-  const { stdout } = await execAsync(
-    `"${fpcalc}" -raw -json "${audioPath}"`,
-    { maxBuffer: 10 * 1024 * 1024, timeout: 60_000 },
-  );
 
-  const result = JSON.parse(stdout.trim());
-  if (!result.fingerprint || !Array.isArray(result.fingerprint) || result.fingerprint.length === 0) {
-    throw new Error("fpcalc returned no fingerprint");
+  async function runFpcalc(filePath: string): Promise<FingerprintResult> {
+    const { stdout } = await execAsync(
+      `"${fpcalc}" -raw -json "${filePath}"`,
+      { maxBuffer: 10 * 1024 * 1024, timeout: 60_000 },
+    );
+    const result = JSON.parse(stdout.trim());
+    if (!result.fingerprint || !Array.isArray(result.fingerprint) || result.fingerprint.length === 0) {
+      throw new Error("fpcalc returned no fingerprint");
+    }
+    return { fingerprint: result.fingerprint, duration: result.duration };
   }
-  return {
-    fingerprint: result.fingerprint,
-    duration: result.duration,
-  };
+
+  // First attempt — direct
+  try {
+    return await runFpcalc(audioPath);
+  } catch {
+    // Fallback: decode to WAV via ffmpeg (handles junk bytes, Traktor markers, etc.)
+    // -c copy preserves corrupt stream; full PCM decode produces a clean file.
+    const tmpPath = join(tmpdir(), `fp_remux_${randomBytes(8).toString("hex")}.wav`);
+    try {
+      await execAsync(
+        `ffmpeg -v quiet -i "${audioPath}" -c:a pcm_s16le -ar 44100 -ac 2 -y "${tmpPath}"`,
+        { timeout: 120_000 },
+      );
+      return await runFpcalc(tmpPath);
+    } finally {
+      try { unlinkSync(tmpPath); } catch { /* ignore cleanup errors */ }
+    }
+  }
 }
 
 // ─── Comparison ─────────────────────────────────────────────────────────────

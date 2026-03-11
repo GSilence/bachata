@@ -21,6 +21,7 @@ export default function SettingsPanel({
     playUntilSeconds,
     loopStartSeconds,
     loopPauseSeconds,
+    playbackRate,
     setPlayMode,
     setVoiceFilter,
     setVoiceLanguage,
@@ -28,6 +29,7 @@ export default function SettingsPanel({
     setPlayUntilSeconds,
     setLoopStartSeconds,
     setLoopPauseSeconds,
+    setPlaybackRate,
   } = usePlayerStore();
   const [mounted, setMounted] = useState(false);
   const [isPlayModeExpanded, setIsPlayModeExpanded] = useState(false);
@@ -96,11 +98,11 @@ export default function SettingsPanel({
             onClick={() => setIsPlayModeExpanded(!isPlayModeExpanded)}
             className="lg:hidden w-full flex items-center justify-between text-sm font-medium text-gray-400 mb-0 lg:mb-2 hover:text-white transition-colors"
           >
-            <span>Mode (Режим воспроизведения)</span>
+            <span>Инструменты</span>
             <span className="text-lg">{isPlayModeExpanded ? "−" : "+"}</span>
           </button>
           <label className="hidden lg:block text-sm font-medium text-gray-400 mb-4">
-            Mode (Режим воспроизведения)
+            Инструменты
           </label>
           <div
             className={`space-y-2 pt-4 pb-2 lg:pt-0 lg:pb-0 ${
@@ -224,6 +226,28 @@ export default function SettingsPanel({
               Выставьте нужный отрезок, и он будет играть бесконечно — удобно для заучивания хореографии и футворков.
               Можно задать паузу между повторами. Не забудьте выбрать режим «Loop (Один трек)», чтобы повторялся один трек.
             </p>
+          </div>
+
+          {/* Speed */}
+          <div className="pt-3 border-t border-gray-700/70 mt-3">
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Скорость: {mounted ? Math.round(playbackRate * 100) : 100}%
+            </label>
+            <input
+              type="range"
+              min="50"
+              max="150"
+              step="5"
+              value={mounted ? Math.round(playbackRate * 100) : 100}
+              onChange={(e) => setPlaybackRate(parseInt(e.target.value) / 100)}
+              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              style={{
+                background: (() => {
+                  const pct = ((( mounted ? playbackRate : 1) * 100 - 50) / 100) * 100;
+                  return `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${pct}%, rgb(55, 65, 81) ${pct}%, rgb(55, 65, 81) 100%)`;
+                })(),
+              }}
+            />
           </div>
         </div>
       )}

@@ -28,9 +28,6 @@ export default function PlayerControls({
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
   const setMusicVolume = usePlayerStore((s) => s.setMusicVolume);
   const setVoiceVolume = usePlayerStore((s) => s.setVoiceVolume);
-  const playbackRate = usePlayerStore((s) => s.playbackRate);
-  const setPlaybackRate = usePlayerStore((s) => s.setPlaybackRate);
-
   const setLoopStartSeconds = usePlayerStore((s) => s.setLoopStartSeconds);
   const setPlayUntilSeconds = usePlayerStore((s) => s.setPlayUntilSeconds);
 
@@ -409,30 +406,6 @@ export default function PlayerControls({
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
               style={{
                 background: `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${voiceVolume}%, rgb(55, 65, 81) ${voiceVolume}%, rgb(55, 65, 81) 100%)`,
-              }}
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-400 mb-2">
-            Speed: {Math.round(playbackRate * 100)}%
-          </label>
-          <div className="relative">
-            <input
-              type="range"
-              min="50"
-              max="150"
-              step="5"
-              value={Math.round(playbackRate * 100)}
-              onChange={(e) => {
-                setPlaybackRate(parseInt(e.target.value) / 100);
-              }}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-              style={{
-                background: (() => {
-                  const pct = ((playbackRate * 100 - 50) / 100) * 100;
-                  return `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${pct}%, rgb(55, 65, 81) ${pct}%, rgb(55, 65, 81) 100%)`;
-                })(),
               }}
             />
           </div>
