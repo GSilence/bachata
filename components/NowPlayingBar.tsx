@@ -60,11 +60,11 @@ export default function NowPlayingBar() {
 
         {/* Название + мета */}
         <div className="min-w-0 flex-1">
-          <div className="font-bold text-white text-[22px] leading-snug truncate" title={title}>
+          <div className="font-bold text-white text-[15px] md:text-[22px] leading-snug truncate" title={title}>
             {title}
           </div>
           {metaParts.length > 0 && (
-            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0 text-base text-gray-400">
+            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0 text-xs md:text-base text-gray-400">
               {metaParts.map((part, i) => (
                 <span key={i} className="flex items-center gap-1.5 min-w-0">
                   {i > 0 && <span className="text-gray-600 leading-none select-none">·</span>}

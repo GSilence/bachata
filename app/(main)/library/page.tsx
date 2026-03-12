@@ -4,7 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
-import { isAdminOrModerator } from "@/lib/roles";
+import { isAdmin, isAdminOrModerator } from "@/lib/roles";
+import AdminSubNav from "@/components/AdminSubNav";
 
 const CONCURRENCY = 2;
 
@@ -301,7 +302,7 @@ export default function LibraryPage() {
         </div>
       )}
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-4">
           <h1 className="text-3xl font-bold text-white">Медиатека</h1>
           <div className="flex items-center gap-2">
             <Link
@@ -318,6 +319,9 @@ export default function LibraryPage() {
             </Link>
           </div>
         </div>
+
+        {/* Admin sub-navigation */}
+        {isAdmin(user?.role) && <AdminSubNav group="library" />}
 
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <h2 className="text-xl font-semibold text-white mb-6">

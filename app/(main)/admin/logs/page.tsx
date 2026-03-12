@@ -15,6 +15,8 @@ const EVENT_LABELS: Record<string, { label: string; color: string }> = {
   status_change:             { label: "Смена статуса",    color: "bg-purple-900/60 text-purple-300 border-purple-700" },
   track_deleted:             { label: "Удалён",           color: "bg-gray-800 text-gray-400 border-gray-600" },
   admin_released:            { label: "Освобождён",       color: "bg-cyan-900/60 text-cyan-300 border-cyan-700" },
+  upload_new:                { label: "Загружен",         color: "bg-emerald-900/60 text-emerald-300 border-emerald-700" },
+  upload_duplicate:          { label: "Дубликат",         color: "bg-pink-900/60 text-pink-300 border-pink-700" },
 };
 
 const ALL_EVENTS = Object.keys(EVENT_LABELS);
@@ -40,6 +42,7 @@ export default function AdminLogsPage() {
   const [eventFilter, setEventFilter] = useState("");
   const [trackSearch, setTrackSearch] = useState("");
   const [userSearch, setUserSearch] = useState("");
+  const [period, setPeriod] = useState("");
   const [fetching, setFetching] = useState(false);
 
   // Дебаунс-таймеры для текстовых полей
@@ -58,6 +61,7 @@ export default function AdminLogsPage() {
     ev: string,
     track: string,
     usr: string,
+    per: string = "",
   ) => {
     setFetching(true);
     try {
@@ -65,6 +69,7 @@ export default function AdminLogsPage() {
       if (ev) params.set("event", ev);
       if (track) params.set("track", track);
       if (usr) params.set("user", usr);
+      if (per) params.set("period", per);
       const res = await fetch(`/api/admin/logs?${params}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
@@ -77,11 +82,11 @@ export default function AdminLogsPage() {
     }
   }, []);
 
-  // Начальная загрузка и при смене страницы / event-фильтра
+  // Начальная загрузка и при смене страницы / event-фильтра / периода
   useEffect(() => {
-    if (isAdmin(user?.role)) fetchLogs(page, eventFilter, trackSearch, userSearch);
+    if (isAdmin(user?.role)) fetchLogs(page, eventFilter, trackSearch, userSearch, period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, page, eventFilter, fetchLogs]);
+  }, [user, page, eventFilter, period, fetchLogs]);
 
   const handleEventChange = (ev: string) => {
     setEventFilter(ev);
@@ -93,7 +98,7 @@ export default function AdminLogsPage() {
     if (trackDebounce.current) clearTimeout(trackDebounce.current);
     trackDebounce.current = setTimeout(() => {
       setPage(1);
-      fetchLogs(1, eventFilter, value, userSearch);
+      fetchLogs(1, eventFilter, value, userSearch, period);
     }, 400);
   };
 
@@ -102,8 +107,13 @@ export default function AdminLogsPage() {
     if (userDebounce.current) clearTimeout(userDebounce.current);
     userDebounce.current = setTimeout(() => {
       setPage(1);
-      fetchLogs(1, eventFilter, trackSearch, value);
+      fetchLogs(1, eventFilter, trackSearch, value, period);
     }, 400);
+  };
+
+  const handlePeriodChange = (value: string) => {
+    setPeriod(value);
+    setPage(1);
   };
 
   const formatDate = (iso: string) => {
@@ -112,13 +122,23 @@ export default function AdminLogsPage() {
       d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   };
 
+  const DUP_METHOD_LABELS: Record<string, string> = {
+    fileHash: "по хешу файла",
+    meta: "по метаданным",
+    titleArtist: "по названию+исполнителю",
+  };
+
   const formatDetails = (details: any): string => {
     if (!details) return "";
     const parts: string[] = [];
-    if (details.title) parts.push(`«${details.title}»`);
+    if (details.title || details.uploadedTitle) parts.push(`«${details.title || details.uploadedTitle}»`);
+    if (details.uploadedArtist) parts.push(details.uploadedArtist);
+    if (details.method) parts.push(DUP_METHOD_LABELS[details.method] || details.method);
+    if (details.originalName) parts.push(details.originalName);
     if (details.oldStatus && details.newStatus) parts.push(`${details.oldStatus} → ${details.newStatus}`);
     if (details.reason) parts.push(details.reason);
     if (details.email) parts.push(details.email);
+    if (details.fileSize) parts.push(`${(details.fileSize / 1024 / 1024).toFixed(1)} МБ`);
     return parts.join(" · ");
   };
 
@@ -161,11 +181,33 @@ export default function AdminLogsPage() {
           className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none placeholder-gray-600 w-44"
         />
         <button
-          onClick={() => fetchLogs(page, eventFilter, trackSearch, userSearch)}
+          onClick={() => fetchLogs(page, eventFilter, trackSearch, userSearch, period)}
           className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors"
         >
           {fetching ? "..." : "↻ Обновить"}
         </button>
+      </div>
+
+      {/* Период */}
+      <div className="mb-4 flex gap-1.5 flex-wrap">
+        {[
+          { value: "", label: "Все" },
+          { value: "today", label: "Сегодня" },
+          { value: "yesterday", label: "Вчера" },
+          { value: "week", label: "Неделя" },
+        ].map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => handlePeriodChange(opt.value)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              period === opt.value
+                ? "bg-purple-600/20 text-purple-300 border border-purple-500/30"
+                : "bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-white border border-transparent"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
 
       {/* Таблица */}

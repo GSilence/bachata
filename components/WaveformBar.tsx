@@ -43,11 +43,19 @@ export default function WaveformBar({
     const progressX = progress * w;
     const maxBarH = h - 2;
 
+    // Gradient for played portion: blue → purple → red
+    const playedGrad = ctx.createLinearGradient(0, 0, w, 0);
+    playedGrad.addColorStop(0, "rgb(59, 130, 246)");
+    playedGrad.addColorStop(0.5, "rgb(139, 92, 246)");
+    playedGrad.addColorStop(1, "rgb(239, 68, 68)");
+
+    const unplayedColor = `rgb(${getComputedStyle(canvas).getPropertyValue("--waveform-unplayed").trim()})`;
+
     for (let i = 0; i < n; i++) {
       const x = i * barW + gap / 2;
       const barH = Math.max(2, peaks[i] * maxBarH);
       const isPlayed = x + bw <= progressX;
-      ctx.fillStyle = isPlayed ? "rgb(147, 51, 234)" : "rgb(55, 65, 81)";
+      ctx.fillStyle = isPlayed ? playedGrad : unplayedColor;
       ctx.fillRect(x, midY - barH / 2, bw, barH);
     }
 
@@ -55,7 +63,11 @@ export default function WaveformBar({
     if (loopStartPct != null && loopEndPct != null) {
       const lx = (loopStartPct / 100) * w;
       const lw = ((loopEndPct - loopStartPct) / 100) * w;
-      ctx.fillStyle = "rgba(234, 179, 8, 0.15)";
+      const grad = ctx.createLinearGradient(lx, 0, lx + lw, 0);
+      grad.addColorStop(0, "rgba(59, 130, 246, 0.15)");
+      grad.addColorStop(0.5, "rgba(139, 92, 246, 0.15)");
+      grad.addColorStop(1, "rgba(239, 68, 68, 0.15)");
+      ctx.fillStyle = grad;
       ctx.fillRect(lx, 0, lw, h);
     }
   }, [peaks, progress, loopStartPct, loopEndPct]);

@@ -2,36 +2,125 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 255, 255, 255;
-  --background-rgb: 17, 24, 39; /* gray-900 */
-  --background-dark-rgb: 0, 0, 0; /* black */
-  --purple-dark-rgb: 67, 56, 202; /* purple-800 */
+/* ===== Theme System =====
+ * Two themes: "default" (current gray) and "purple-night" (reference-inspired).
+ * Switching is done by changing data-theme attribute on <html>.
+ * Default (no attribute) = "default" theme.
+ */
+
+:root,
+[data-theme="default"] {
+  /* Backgrounds */
+  --bg-primary: 17, 24, 39;          /* gray-900 #111827 */
+  --bg-secondary: 31, 41, 55;        /* gray-800 #1f2937 */
+  --bg-tertiary: 55, 65, 81;         /* gray-700 #374151 */
+  --bg-elevated: 26, 31, 46;         /* #1a1f2e */
+  --bg-sidebar: 13, 17, 23;          /* #0d1117 */
+  --bg-sidebar-panel: 22, 27, 34;    /* #161b22 */
+
+  /* Surface/interactive */
+  --surface-hover: 75, 85, 99;       /* gray-600 #4b5563 */
+  --surface-active: 107, 114, 128;   /* gray-500 #6b7280 */
+
+  /* Borders */
+  --border-primary: 55, 65, 81;      /* gray-700 */
+  --border-secondary: 75, 85, 99;    /* gray-600 */
+
+  /* Text */
+  --text-primary: 255, 255, 255;     /* white */
+  --text-secondary: 209, 213, 219;   /* gray-300 */
+  --text-tertiary: 156, 163, 175;    /* gray-400 */
+  --text-muted: 107, 114, 128;       /* gray-500 */
+
+  /* Accent — purple */
+  --accent: 147, 51, 234;            /* purple-600 #9333ea */
+  --accent-light: 168, 85, 247;      /* purple-400 #a855f7 */
+  --accent-dark: 67, 56, 202;        /* purple-800 #4338ca */
+  --accent-hover: 126, 34, 206;      /* purple-700 #7e22ce */
+  --accent-subtle: 147, 51, 234;     /* purple-600 at 20% via /20 */
+
+  /* Waveform */
+  --waveform-played: 147, 51, 234;   /* purple-600 */
+  --waveform-unplayed: 55, 65, 81;   /* gray-700 */
+
+  /* Scrollbar */
+  --scrollbar-track: 31, 41, 55;     /* gray-800 */
+  --scrollbar-thumb: 75, 85, 99;     /* gray-600 */
+  --scrollbar-thumb-hover: 107, 114, 128; /* gray-500 */
+
+  /* Gradient overlay (for page background) */
+  --bg-gradient: none;
+}
+
+[data-theme="purple-night"] {
+  /* Backgrounds — deep navy with purple tint */
+  --bg-primary: 22, 20, 36;          /* #161424 deep purple-black */
+  --bg-secondary: 30, 28, 48;        /* #1e1c30 */
+  --bg-tertiary: 45, 46, 55;         /* #2d2e37 from reference */
+  --bg-elevated: 35, 32, 58;         /* #23203a */
+  --bg-sidebar: 14, 12, 26;          /* #0e0c1a */
+  --bg-sidebar-panel: 22, 20, 36;    /* #161424 */
+
+  /* Surface/interactive */
+  --surface-hover: 60, 58, 82;       /* slightly lighter purple-gray */
+  --surface-active: 80, 78, 102;     /* lighter still */
+
+  /* Borders */
+  --border-primary: 50, 48, 72;      /* muted purple border */
+  --border-secondary: 65, 62, 90;    /* lighter purple border */
+
+  /* Text */
+  --text-primary: 252, 252, 255;     /* #fcfcff from reference */
+  --text-secondary: 196, 196, 196;   /* #c4c4c4 from reference */
+  --text-tertiary: 150, 148, 170;    /* muted lavender */
+  --text-muted: 110, 108, 130;       /* deep muted */
+
+  /* Accent — indigo-purple from reference */
+  --accent: 60, 58, 190;             /* #3c3abe from reference */
+  --accent-light: 100, 98, 220;      /* lighter indigo */
+  --accent-dark: 45, 42, 150;        /* darker indigo */
+  --accent-hover: 75, 72, 210;       /* hover indigo */
+  --accent-subtle: 60, 58, 190;      /* at 20% */
+
+  /* Waveform */
+  --waveform-played: 60, 58, 190;    /* accent */
+  --waveform-unplayed: 45, 46, 55;   /* bg-tertiary */
+
+  /* Scrollbar */
+  --scrollbar-track: 30, 28, 48;
+  --scrollbar-thumb: 60, 58, 82;
+  --scrollbar-thumb-hover: 80, 78, 102;
+
+  /* Subtle radial gradient on the page background */
+  --bg-gradient: radial-gradient(ellipse at 20% 50%, rgba(60, 58, 190, 0.08) 0%, transparent 60%),
+                 radial-gradient(ellipse at 80% 20%, rgba(100, 60, 180, 0.06) 0%, transparent 50%);
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
+  color: rgb(var(--text-primary));
+  background-color: rgb(var(--bg-primary));
+  background-image: var(--bg-gradient);
+  background-attachment: fixed;
   min-height: 100vh;
 }
 
-/* Scrollbar styling for dark theme */
+/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(31, 41, 55); /* gray-800 */
+  background: rgb(var(--scrollbar-track));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(75, 85, 99); /* gray-600 */
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(107, 114, 128); /* gray-500 */
+  background: rgb(var(--scrollbar-thumb-hover));
 }
 
 /* Hide scrollbar for playlist */
@@ -39,3 +128,65 @@ body {
   display: none; /* Chrome, Safari, Opera */
 }
 
+/* ===== Purple-night: remap Tailwind gray utilities =====
+ * Override standard gray-* Tailwind classes so all existing components
+ * automatically respond to the theme without code changes.
+ * Uses @layer utilities so these have the same specificity as Tailwind. */
+@layer utilities {
+  [data-theme="purple-night"] {
+    /* ── Backgrounds ── */
+    .bg-gray-900    { background-color: rgb(var(--bg-primary)) !important; }
+    .bg-gray-900\/90 { background-color: rgba(var(--bg-primary), 0.9) !important; }
+    .bg-gray-800    { background-color: rgb(var(--bg-secondary)) !important; }
+    .bg-gray-800\/50 { background-color: rgba(var(--bg-secondary), 0.5) !important; }
+    .bg-gray-800\/60 { background-color: rgba(var(--bg-secondary), 0.6) !important; }
+    .bg-gray-700    { background-color: rgb(var(--bg-tertiary)) !important; }
+    .bg-gray-700\/50 { background-color: rgba(var(--bg-tertiary), 0.5) !important; }
+    .bg-gray-700\/40 { background-color: rgba(var(--bg-tertiary), 0.4) !important; }
+    .bg-gray-700\/80 { background-color: rgba(var(--bg-tertiary), 0.8) !important; }
+    .bg-gray-600    { background-color: rgb(var(--surface-hover)) !important; }
+    .bg-gray-600\/70 { background-color: rgba(var(--surface-hover), 0.7) !important; }
+
+    /* hover variants */
+    .hover\:bg-gray-800:hover { background-color: rgb(var(--bg-secondary)) !important; }
+    .hover\:bg-gray-700:hover { background-color: rgb(var(--bg-tertiary)) !important; }
+    .hover\:bg-gray-700\/80:hover { background-color: rgba(var(--bg-tertiary), 0.8) !important; }
+    .hover\:bg-gray-700\/60:hover { background-color: rgba(var(--bg-tertiary), 0.6) !important; }
+    .hover\:bg-gray-600:hover { background-color: rgb(var(--surface-hover)) !important; }
+    .hover\:bg-gray-500:hover { background-color: rgb(var(--surface-active)) !important; }
+    .active\:bg-gray-700:active { background-color: rgb(var(--bg-tertiary)) !important; }
+
+    /* ── Borders ── */
+    .border-gray-800    { border-color: rgb(var(--bg-secondary)) !important; }
+    .border-gray-800\/60 { border-color: rgba(var(--bg-secondary), 0.6) !important; }
+    .border-gray-700    { border-color: rgb(var(--border-primary)) !important; }
+    .border-gray-700\/50 { border-color: rgba(var(--border-primary), 0.5) !important; }
+    .border-gray-700\/60 { border-color: rgba(var(--border-primary), 0.6) !important; }
+    .border-gray-700\/70 { border-color: rgba(var(--border-primary), 0.7) !important; }
+    .border-gray-600    { border-color: rgb(var(--border-secondary)) !important; }
+    .border-gray-600\/40 { border-color: rgba(var(--border-secondary), 0.4) !important; }
+
+    /* ── Text ── */
+    .text-white   { color: rgb(var(--text-primary)) !important; }
+    .text-gray-300 { color: rgb(var(--text-secondary)) !important; }
+    .text-gray-400 { color: rgb(var(--text-tertiary)) !important; }
+    .text-gray-500 { color: rgb(var(--text-muted)) !important; }
+    .text-gray-600 { color: rgba(var(--text-muted), 0.7) !important; }
+    .text-gray-700 { color: rgba(var(--text-muted), 0.5) !important; }
+    .hover\:text-white:hover { color: rgb(var(--text-primary)) !important; }
+
+    /* ── Purple accent remap ── */
+    .bg-purple-600       { background-color: rgb(var(--accent)) !important; }
+    .bg-purple-600\/20   { background-color: rgba(var(--accent), 0.2) !important; }
+    .hover\:bg-purple-700:hover { background-color: rgb(var(--accent-hover)) !important; }
+    .hover\:bg-purple-500:hover { background-color: rgb(var(--accent-light)) !important; }
+    .text-purple-400     { color: rgb(var(--accent-light)) !important; }
+    .border-purple-500\/30 { border-color: rgba(var(--accent), 0.3) !important; }
+
+    /* ── Ring / placeholder ── */
+    .placeholder-gray-500::placeholder { color: rgb(var(--text-muted)) !important; }
+
+    /* ── Divide ── */
+    .divide-gray-700 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(var(--border-primary)) !important; }
+  }
+}

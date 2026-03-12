@@ -32,7 +32,16 @@ export default function MainLayout({
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto">{children}</main>
+      <main
+        className="flex-1 ml-0 lg:ml-16 sidebar:ml-64 h-screen overflow-y-auto"
+        style={{
+          backgroundColor: "rgb(var(--bg-primary))",
+          backgroundImage: "var(--bg-gradient)",
+          backgroundAttachment: "fixed",
+        }}
+      >
+        {children}
+      </main>
     </div>
   );
 }

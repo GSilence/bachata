@@ -7,9 +7,9 @@ import {
 import { CHART_COLORS, formatTime } from "./SharedChartProps";
 
 const TOOLTIP_DIV_STYLE: React.CSSProperties = {
-  backgroundColor: "#1f2937",
-  border: "1px solid #374151",
-  color: "#e5e7eb",
+  backgroundColor: "rgb(var(--bg-secondary))",
+  border: "1px solid rgb(var(--border-primary))",
+  color: "rgb(var(--text-secondary))",
   fontSize: 12,
   borderRadius: 6,
   padding: "6px 10px",

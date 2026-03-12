@@ -102,9 +102,9 @@ export default function TactComparisonChart({
         <YAxis tick={{ fontSize: 9, fill: "#9ca3af" }} width={38} />
         <Tooltip
           contentStyle={{
-            backgroundColor: "#1f2937",
-            border: "1px solid #374151",
-            color: "#e5e7eb",
+            backgroundColor: "rgb(var(--bg-secondary))",
+            border: "1px solid rgb(var(--border-primary))",
+            color: "rgb(var(--text-secondary))",
             fontSize: 11,
           }}
           formatter={(value: unknown, name: string) => [

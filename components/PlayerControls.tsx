@@ -5,6 +5,61 @@ import { audioEngine } from "@/lib/audioEngine";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WaveformBar from "@/components/WaveformBar";
 
+/** Vertical volume slider – touch-friendly, no CSS rotate hacks */
+function VerticalSlider({ value, onChange, accentColor }: { value: number; onChange: (v: number) => void; accentColor?: string }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+
+  const clamp = (y: number) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return value;
+    // bottom = 0, top = 100
+    const pct = 1 - Math.max(0, Math.min(1, (y - rect.top) / rect.height));
+    return Math.round(pct * 100);
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    onChange(clamp(e.clientY));
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    e.preventDefault();
+    onChange(clamp(e.clientY));
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    dragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  const color = accentColor || "rgb(192,132,252)";
+  const pct = value;
+
+  return (
+    <div
+      ref={trackRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      style={{ width: 28, height: 110, touchAction: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+    >
+      {/* Track background */}
+      <div style={{ width: 4, height: "100%", borderRadius: 2, background: "rgb(55,65,81)", position: "relative" }}>
+        {/* Filled portion */}
+        <div style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: `${pct}%`, borderRadius: 2, background: color }} />
+        {/* Thumb */}
+        <div style={{ position: "absolute", bottom: `${pct}%`, left: "50%", transform: "translate(-50%, 50%)", width: 14, height: 14, borderRadius: "50%", background: color, boxShadow: "0 0 4px rgba(0,0,0,0.4)" }} />
+      </div>
+    </div>
+  );
+}
+
 interface PlayerControlsProps {
   onPlay: () => void;
   onPause: () => void;
@@ -38,11 +93,19 @@ export default function PlayerControls({
   const [openVolume, setOpenVolume] = useState<"music" | "voice" | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const volumeAreaRef = useRef<HTMLDivElement>(null);
+  const mobileVolumeAreaRef = useRef<HTMLDivElement>(null);
   const isInteractingRef = useRef(false);
   const limitTriggeredRef = useRef(false);
   const limitTriggeredForTrackIdRef = useRef<number | null>(null);
   // Какой маркер тянем: "start" | "end" | null
   const draggingMarkerRef = useRef<"start" | "end" | null>(null);
+  // Refs for fresh values in drag handler (avoid stale closures)
+  const loopStartRef = useRef(loopStartSeconds);
+  loopStartRef.current = loopStartSeconds;
+  const loopEndRef = useRef(playUntilSeconds);
+  loopEndRef.current = playUntilSeconds;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
 
   // Синхронизируем параметры цикла с audioEngine — он проверяет их внутри setInterval(16ms),
   // который продолжает работать при заблокированном экране и скрытой вкладке.
@@ -163,14 +226,20 @@ export default function PlayerControls({
   );
 
   useEffect(() => {
+    const MIN_LOOP_GAP = 5; // minimum 5 seconds between markers
+
     const onMove = (clientX: number) => {
       const which = draggingMarkerRef.current;
       if (!which) return;
       const time = calcTimeFromX(clientX);
       if (which === "start") {
-        setLoopStartSeconds(time > 0 ? time : null);
+        const endTime = loopEndRef.current ?? durationRef.current;
+        const clamped = Math.min(time, endTime - MIN_LOOP_GAP);
+        setLoopStartSeconds(clamped > 0 ? clamped : null);
       } else {
-        setPlayUntilSeconds(time > 0 ? time : null);
+        const startTime = loopStartRef.current ?? 0;
+        const clamped = Math.max(time, startTime + MIN_LOOP_GAP);
+        setPlayUntilSeconds(clamped > 0 ? clamped : null);
       }
     };
 
@@ -200,16 +269,23 @@ export default function PlayerControls({
     };
   }, [calcTimeFromX, setLoopStartSeconds, setPlayUntilSeconds]);
 
-  // Close volume popup on outside click
+  // Close volume popup on outside click/touch
   useEffect(() => {
     if (!openVolume) return;
-    const handler = (e: MouseEvent) => {
-      if (volumeAreaRef.current && !volumeAreaRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      const inDesktop = volumeAreaRef.current?.contains(target);
+      const inMobile = mobileVolumeAreaRef.current?.contains(target);
+      if (!inDesktop && !inMobile) {
         setOpenVolume(null);
       }
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
   }, [openVolume]);
 
   const cyclePlayMode = useCallback(() => {
@@ -281,13 +357,13 @@ export default function PlayerControls({
               <>
                 {loopStartPct != null && loopEndPct != null && (
                   <div
-                    className="absolute top-0 h-full bg-yellow-500/20 rounded-full"
-                    style={{ left: `${loopStartPct}%`, width: `${loopEndPct - loopStartPct}%` }}
+                    className="absolute top-0 h-full rounded-full"
+                    style={{ left: `${loopStartPct}%`, width: `${loopEndPct - loopStartPct}%`, background: "linear-gradient(to right, rgba(59,130,246,0.2), rgba(139,92,246,0.2), rgba(239,68,68,0.2))" }}
                   />
                 )}
                 <div
-                  className="absolute top-0 left-0 h-full bg-purple-600 rounded-full"
-                  style={{ width: `${progressPercentage}%` }}
+                  className="absolute top-0 left-0 h-full rounded-full"
+                  style={{ width: `${progressPercentage}%`, background: "linear-gradient(to right, rgb(59,130,246), rgb(139,92,246), rgb(239,68,68))" }}
                 />
               </>
             )}
@@ -299,7 +375,7 @@ export default function PlayerControls({
                 onMouseDown={handleMarkerDragStart("start")}
                 onTouchStart={handleMarkerDragStart("start")}
               >
-                <div className="w-0.5 h-4 bg-yellow-400 rounded-full pointer-events-none" />
+                <div className="w-0.5 h-4 bg-blue-400 rounded-full pointer-events-none" />
               </div>
             )}
             {loopEndPct != null && (
@@ -310,7 +386,7 @@ export default function PlayerControls({
                 onMouseDown={handleMarkerDragStart("end")}
                 onTouchStart={handleMarkerDragStart("end")}
               >
-                <div className="w-0.5 h-4 bg-yellow-400 rounded-full pointer-events-none" />
+                <div className="w-0.5 h-4 bg-red-400 rounded-full pointer-events-none" />
               </div>
             )}
           </div>
@@ -326,7 +402,7 @@ export default function PlayerControls({
           <div className="relative h-3 px-11">
             {loopStartPct != null && (
               <span
-                className="absolute text-[10px] text-yellow-400/60 -translate-x-1/2 whitespace-nowrap"
+                className="absolute text-[10px] text-blue-400/60 -translate-x-1/2 whitespace-nowrap"
                 style={{ left: `${loopStartPct}%` }}
               >
                 {formatTime(loopStartSeconds ?? 0)}
@@ -334,7 +410,7 @@ export default function PlayerControls({
             )}
             {loopEndPct != null && (
               <span
-                className="absolute text-[10px] text-yellow-400/60 -translate-x-1/2 whitespace-nowrap"
+                className="absolute text-[10px] text-red-400/60 -translate-x-1/2 whitespace-nowrap"
                 style={{ left: `${loopEndPct}%` }}
               >
                 {formatTime(playUntilSeconds ?? 0)}
@@ -344,10 +420,12 @@ export default function PlayerControls({
         )}
       </div>
 
-      {/* Controls row: [PlayMode] [Prev/Play/Stop/Next] [Volume buttons] */}
-      <div className="flex items-center">
-        {/* Left: Play mode cycling button */}
-        <div className="shrink-0 w-11">
+      {/* Controls row: transport centered, secondary controls below on mobile */}
+      <div className="flex flex-col items-center gap-2">
+        {/* Main transport: Prev/Play/Stop/Next */}
+        <div className="flex items-center w-full">
+        {/* Left: Play mode (hidden on mobile, shown on md+) */}
+        <div className="shrink-0 w-11 hidden md:block">
           <button
             onClick={cyclePlayMode}
             title={
@@ -458,8 +536,8 @@ export default function PlayerControls({
           </button>
         </div>
 
-        {/* Right: Volume popup buttons */}
-        <div ref={volumeAreaRef} className="shrink-0 flex items-center gap-1">
+        {/* Right: Volume popup buttons (hidden on mobile, shown on md+) */}
+        <div ref={volumeAreaRef} className="shrink-0 hidden md:flex items-center gap-1">
           {/* Music volume */}
           <div className="relative">
             <button
@@ -475,24 +553,9 @@ export default function PlayerControls({
               </svg>
             </button>
             {openVolume === "music" && (
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-2 z-50" style={{ width: "52px" }}>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-4 z-50" style={{ width: "52px" }}>
                 <span className="text-xs text-gray-400 tabular-nums leading-none">{musicVolume}%</span>
-                <div className="flex items-center justify-center" style={{ height: "110px", width: "28px" }}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={musicVolume}
-                    onChange={(e) => setMusicVolume(parseInt(e.target.value))}
-                    style={{
-                      width: "100px",
-                      height: "4px",
-                      transform: "rotate(-90deg)",
-                      accentColor: "rgb(168, 85, 247)",
-                      cursor: "pointer",
-                    }}
-                  />
-                </div>
+                <VerticalSlider value={musicVolume} onChange={setMusicVolume} accentColor="rgb(var(--accent-light))" />
               </div>
             )}
           </div>
@@ -515,26 +578,90 @@ export default function PlayerControls({
               </svg>
             </button>
             {openVolume === "voice" && (
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-2 z-50" style={{ width: "52px" }}>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-4 z-50" style={{ width: "52px" }}>
                 <span className="text-xs text-gray-400 tabular-nums leading-none">{voiceVolume}%</span>
-                <div className="flex items-center justify-center" style={{ height: "110px", width: "28px" }}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={voiceVolume}
-                    onChange={(e) => setVoiceVolume(parseInt(e.target.value))}
-                    style={{
-                      width: "100px",
-                      height: "4px",
-                      transform: "rotate(-90deg)",
-                      accentColor: "rgb(168, 85, 247)",
-                      cursor: "pointer",
-                    }}
-                  />
-                </div>
+                <VerticalSlider value={voiceVolume} onChange={setVoiceVolume} accentColor="rgb(var(--accent-light))" />
               </div>
             )}
+          </div>
+        </div>
+        </div>{/* end main transport row */}
+
+        {/* Secondary controls row — mobile only */}
+        <div className="flex md:hidden items-center justify-center gap-4">
+          {/* Play mode */}
+          <button
+            onClick={cyclePlayMode}
+            title={
+              playMode === "sequential" ? "По порядку"
+              : playMode === "random" ? "Перемешать"
+              : "Повторить"
+            }
+            className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+              playMode === "sequential"
+                ? "text-gray-400 hover:text-white"
+                : "text-purple-400 hover:text-purple-300"
+            }`}
+          >
+            {playMode === "sequential" && (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h12M3 12h9m-9 5h6M17 5l3 3-3 3M17 16l3 3-3 3" />
+              </svg>
+            )}
+            {playMode === "random" && (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 3h5v5M4 20l16-16M16 21h5v-5M4 4l7 7" />
+              </svg>
+            )}
+            {playMode === "loop" && (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3" />
+              </svg>
+            )}
+          </button>
+          {/* Music & Voice volume (wrapped for outside-click detection) */}
+          <div ref={mobileVolumeAreaRef} className="flex items-center gap-4">
+            <div className="relative">
+              <button
+                onClick={() => setOpenVolume(openVolume === "music" ? null : "music")}
+                title={`Музыка: ${musicVolume}%`}
+                className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+                  openVolume === "music" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+                }`}
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M9 3v10.55A4 4 0 1 0 11 17V7h4V3H9z"/>
+                </svg>
+              </button>
+              {openVolume === "music" && (
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-4 z-50" style={{ width: "52px" }}>
+                  <span className="text-xs text-gray-400 tabular-nums leading-none">{musicVolume}%</span>
+                  <VerticalSlider value={musicVolume} onChange={setMusicVolume} accentColor="rgb(var(--accent-light))" />
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button
+                onClick={() => setOpenVolume(openVolume === "voice" ? null : "voice")}
+                title={`Голос: ${voiceVolume}%`}
+                className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+                  openVolume === "voice" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+                }`}
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="8" cy="6" r="3.5"/>
+                  <path d="M2 19.5c0-3.6 2.7-6.5 6-6.5 1.4 0 2.7.5 3.7 1.4"/>
+                  <path d="M15 10.5a3 3 0 000-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
+                  <path d="M17.5 12.5a6 6 0 000-9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
+                </svg>
+              </button>
+              {openVolume === "voice" && (
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-3 px-2 flex flex-col items-center gap-4 z-50" style={{ width: "52px" }}>
+                  <span className="text-xs text-gray-400 tabular-nums leading-none">{voiceVolume}%</span>
+                  <VerticalSlider value={voiceVolume} onChange={setVoiceVolume} accentColor="rgb(var(--accent-light))" />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

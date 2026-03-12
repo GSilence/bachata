@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
+import { useAuthStore } from "@/store/authStore";
 
 interface QueueEntry {
   id: number;
@@ -12,6 +13,7 @@ interface QueueEntry {
   error: string | null;
   trackId: number | null;
   position: number | null;
+  uploadedBy: number | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -64,6 +66,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const AVG_PROCESS_SEC = 37.5; // среднее время обработки файла (35-40 сек)
+
+function formatEstimate(seconds: number): string {
+  if (seconds < 60) return `~${Math.round(seconds)} сек`;
+  if (seconds < 3600) return `~${Math.round(seconds / 60)} мин`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return `~${h} ч ${m} мин`;
+}
+
 function formatDuration(from: string | null, to: string | null): string {
   if (!from || !to) return "—";
   const ms = new Date(to).getTime() - new Date(from).getTime();
@@ -77,6 +89,7 @@ function formatTime(iso: string | null): string {
 }
 
 export default function QueuePage() {
+  const user = useAuthStore((s) => s.user);
   const [entries, setEntries] = useState<QueueEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +170,31 @@ export default function QueuePage() {
   const activeCount = entries.filter((e) => e.status === "pending" || e.status === "processing").length;
   const doneCount = entries.filter((e) => e.status === "done").length;
 
+  // Оценка времени ожидания
+  const estimate = useMemo(() => {
+    if (!user) return null;
+    const userId = user.id;
+
+    // Все pending/processing файлы отсортированные по createdAt (порядок очереди)
+    const queue = entries
+      .filter((e) => e.status === "pending" || e.status === "processing")
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    // Файлы текущего пользователя в очереди
+    const myFiles = queue.filter((e) => e.uploadedBy === userId);
+    if (myFiles.length === 0) return null;
+
+    // Индекс первого файла пользователя в общей очереди
+    const firstMyIndex = queue.findIndex((e) => e.uploadedBy === userId);
+    const filesAhead = firstMyIndex; // файлы других пользователей перед первым нашим
+
+    const waitSec = filesAhead * AVG_PROCESS_SEC;
+    const mySec = myFiles.length * AVG_PROCESS_SEC;
+    const totalSec = waitSec + mySec;
+
+    return { filesAhead, myCount: myFiles.length, waitSec, mySec, totalSec };
+  }, [entries, user]);
+
   if (isLoading) {
     return (
       <div className="p-8 text-center text-gray-400">
@@ -201,6 +239,35 @@ export default function QueuePage() {
       {error && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
           Ошибка загрузки: {error}
+        </div>
+      )}
+
+      {estimate && (
+        <div className="mb-5 p-4 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-purple-300 text-sm font-medium">Примерное время</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            {estimate.filesAhead > 0 && (
+              <div>
+                <span className="text-gray-500">Впереди в очереди:</span>{" "}
+                <span className="text-gray-300">{estimate.filesAhead} файл{estimate.filesAhead === 1 ? "" : estimate.filesAhead < 5 ? "а" : "ов"}</span>
+                <div className="text-purple-400 text-xs mt-0.5">Ожидание: {formatEstimate(estimate.waitSec)}</div>
+              </div>
+            )}
+            <div>
+              <span className="text-gray-500">Ваших файлов:</span>{" "}
+              <span className="text-gray-300">{estimate.myCount}</span>
+              <div className="text-purple-400 text-xs mt-0.5">Обработка: {formatEstimate(estimate.mySec)}</div>
+            </div>
+            <div>
+              <span className="text-gray-500">Итого:</span>{" "}
+              <span className="text-white font-medium">{formatEstimate(estimate.totalSec)}</span>
+            </div>
+          </div>
         </div>
       )}
 

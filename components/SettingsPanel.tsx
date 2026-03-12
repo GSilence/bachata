@@ -38,23 +38,31 @@ export default function SettingsPanel({
   const [playUntilInput, setPlayUntilInput] = useState("");
   const [loopPauseInput, setLoopPauseInput] = useState("");
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // SSR-безопасные значения: до mount используем дефолты, чтобы SSR и клиент совпадали
-  const activeVoiceType: VoiceType     = mounted ? voiceType     : "human";
+  const activeVoiceType: VoiceType = mounted ? voiceType : "human";
   const activeVoiceLanguage: VoiceLanguage = mounted ? voiceLanguage : "en";
-  const activeVoiceFilter: VoiceFilter = mounted ? voiceFilter   : "full";
-  const activePlayMode: PlayMode       = mounted ? playMode      : "sequential";
+  const activeVoiceFilter: VoiceFilter = mounted ? voiceFilter : "full";
+  const activePlayMode: PlayMode = mounted ? playMode : "sequential";
 
   // Синхронизируем поля цикла с store (при загрузке из persist)
   useEffect(() => {
-    setLoopStartInput(loopStartSeconds == null ? "" : String(Math.round(loopStartSeconds)));
+    setLoopStartInput(
+      loopStartSeconds == null ? "" : String(Math.round(loopStartSeconds)),
+    );
   }, [loopStartSeconds]);
   useEffect(() => {
-    setPlayUntilInput(playUntilSeconds == null ? "" : String(Math.round(playUntilSeconds)));
+    setPlayUntilInput(
+      playUntilSeconds == null ? "" : String(Math.round(playUntilSeconds)),
+    );
   }, [playUntilSeconds]);
   useEffect(() => {
-    setLoopPauseInput(loopPauseSeconds == null ? "" : String(Math.round(loopPauseSeconds)));
+    setLoopPauseInput(
+      loopPauseSeconds == null ? "" : String(Math.round(loopPauseSeconds)),
+    );
   }, [loopPauseSeconds]);
 
   const playModes: { value: PlayMode; label: string }[] = [
@@ -145,7 +153,10 @@ export default function SettingsPanel({
                 onChange={(e) => setLoopStartInput(e.target.value)}
                 onBlur={() => {
                   const trimmed = loopStartInput.trim();
-                  if (!trimmed) { setLoopStartSeconds(null); return; }
+                  if (!trimmed) {
+                    setLoopStartSeconds(null);
+                    return;
+                  }
                   const sec = parseInt(trimmed, 10);
                   if (Number.isFinite(sec) && sec >= 0) {
                     setLoopStartSeconds(sec);
@@ -169,7 +180,10 @@ export default function SettingsPanel({
                 onChange={(e) => setPlayUntilInput(e.target.value)}
                 onBlur={() => {
                   const trimmed = playUntilInput.trim();
-                  if (!trimmed) { setPlayUntilSeconds(null); return; }
+                  if (!trimmed) {
+                    setPlayUntilSeconds(null);
+                    return;
+                  }
                   const sec = parseInt(trimmed, 10);
                   if (Number.isFinite(sec) && sec > 0) {
                     setPlayUntilSeconds(sec);
@@ -186,9 +200,12 @@ export default function SettingsPanel({
               <button
                 type="button"
                 onClick={() => {
-                  setLoopStartSeconds(null); setLoopStartInput("");
-                  setPlayUntilSeconds(null); setPlayUntilInput("");
-                  setLoopPauseSeconds(null); setLoopPauseInput("");
+                  setLoopStartSeconds(null);
+                  setLoopStartInput("");
+                  setPlayUntilSeconds(null);
+                  setPlayUntilInput("");
+                  setLoopPauseSeconds(null);
+                  setLoopPauseInput("");
                 }}
                 className="px-2 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors ml-auto"
               >
@@ -207,7 +224,10 @@ export default function SettingsPanel({
                 onChange={(e) => setLoopPauseInput(e.target.value)}
                 onBlur={() => {
                   const trimmed = loopPauseInput.trim();
-                  if (!trimmed) { setLoopPauseSeconds(null); return; }
+                  if (!trimmed) {
+                    setLoopPauseSeconds(null);
+                    return;
+                  }
                   const sec = parseInt(trimmed, 10);
                   if (Number.isFinite(sec) && sec >= 0) {
                     setLoopPauseSeconds(sec);
@@ -223,8 +243,11 @@ export default function SettingsPanel({
               <span className="text-xs text-gray-500 shrink-0">сек</span>
             </div>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Выставьте нужный отрезок, и он будет играть бесконечно — удобно для заучивания хореографии и футворков.
-              Можно задать паузу между повторами. Не забудьте выбрать режим «Loop (Один трек)», чтобы повторялся один трек.
+              Выставьте нужный отрезок, и он будет играть бесконечно — удобно
+              для заучивания хореографии и футворков.
+              <br />
+              Можно задать паузу между повторами. Не забудьте выбрать режим
+              «Loop (Один трек)», чтобы повторялся один трек.
             </p>
           </div>
 
@@ -243,8 +266,9 @@ export default function SettingsPanel({
               className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-purple-500"
               style={{
                 background: (() => {
-                  const pct = ((( mounted ? playbackRate : 1) * 100 - 50) / 100) * 100;
-                  return `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${pct}%, rgb(55, 65, 81) ${pct}%, rgb(55, 65, 81) 100%)`;
+                  const pct =
+                    (((mounted ? playbackRate : 1) * 100 - 50) / 100) * 100;
+                  return `linear-gradient(to right, rgb(var(--accent-light)) 0%, rgb(var(--accent-light)) ${pct}%, rgb(var(--bg-tertiary)) ${pct}%, rgb(var(--bg-tertiary)) 100%)`;
                 })(),
               }}
             />

@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
     const parsedYear    = year ? parseInt(year, 10) || null : null;
 
     // --- Дедупликация по Track: возвращаем "already done" запись в очереди ---
-    const createInstantDone = async (existingTrackId: number) => {
+    const createInstantDone = async (existingTrackId: number, dupMethod: string) => {
       const now = new Date();
       // Добавляем трек в плейлист "Загруженное" пользователя
       if (currentUserId) {
@@ -187,6 +187,20 @@ export async function POST(request: NextRequest) {
       const trackLabel = existingTrack
         ? `${existingTrack.title}${existingTrack.artist ? ` — ${existingTrack.artist}` : ""}`
         : `#${existingTrackId}`;
+      // Логируем дубликат в TrackLog
+      await prisma.trackLog.create({
+        data: {
+          trackId: existingTrackId,
+          userId: currentUserId,
+          event: "upload_duplicate",
+          details: {
+            method: dupMethod,
+            originalName: file.name,
+            uploadedTitle: trimmedTitle,
+            uploadedArtist: trimmedArtist,
+          },
+        },
+      });
       return NextResponse.json({
         queued: true,
         queueId: entry.id,
@@ -198,18 +212,18 @@ export async function POST(request: NextRequest) {
     };
 
     const hashDuplicate = await prisma.track.findFirst({ where: { fileHash } });
-    if (hashDuplicate) return createInstantDone(hashDuplicate.id);
+    if (hashDuplicate) return createInstantDone(hashDuplicate.id, "fileHash");
 
     if (trimmedTitle && trimmedArtist && parsedYear) {
       const metaDuplicate = await prisma.track.findFirst({
         where: { metaTitle: trimmedTitle, metaArtist: trimmedArtist, metaYear: parsedYear },
       });
-      if (metaDuplicate) return createInstantDone(metaDuplicate.id);
+      if (metaDuplicate) return createInstantDone(metaDuplicate.id, "meta");
     }
     const titleArtistDuplicate = await prisma.track.findFirst({
       where: { title: trimmedTitle, ...(trimmedArtist ? { artist: trimmedArtist } : { artist: null }) },
     });
-    if (titleArtistDuplicate) return createInstantDone(titleArtistDuplicate.id);
+    if (titleArtistDuplicate) return createInstantDone(titleArtistDuplicate.id, "titleArtist");
 
     // --- Дедупликация по UploadQueue (файл уже ждёт обработки) ---
     const queueHashDuplicate = await (prisma as any).uploadQueue.findFirst({
@@ -260,6 +274,22 @@ export async function POST(request: NextRequest) {
         fileHash,
         status: "pending",
         uploadedBy: currentUserId,
+      },
+    });
+
+    // Логируем новую загрузку
+    await prisma.trackLog.create({
+      data: {
+        trackId: null,
+        userId: currentUserId,
+        event: "upload_new",
+        details: {
+          queueId: entry.id,
+          originalName: file.name,
+          title: trimmedTitle,
+          artist: trimmedArtist,
+          fileSize: file.size,
+        },
       },
     });
 

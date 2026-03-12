@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
+import AdminSubNav from "@/components/AdminSubNav";
 
 interface QueueEntry {
   id: number;
@@ -68,6 +69,7 @@ export default function AdminModQueuePage() {
 
   return (
     <div className="min-h-screen bg-gray-950 px-4 py-6 max-w-4xl mx-auto">
+      <AdminSubNav group="library" />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-bold text-white">Очередь модерации</h1>
@@ -75,17 +77,12 @@ export default function AdminModQueuePage() {
             {pending.length} ожидают · {assigned.length} в работе
           </p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={fetchQueue}
-            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors"
-          >
-            {fetching ? "..." : "↻ Обновить"}
-          </button>
-          <button onClick={() => router.back()} className="text-gray-500 hover:text-gray-300 text-sm transition-colors">
-            ← Назад
-          </button>
-        </div>
+        <button
+          onClick={fetchQueue}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors"
+        >
+          {fetching ? "..." : "↻ Обновить"}
+        </button>
       </div>
 
       {/* В работе */}

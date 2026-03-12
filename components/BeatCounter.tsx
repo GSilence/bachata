@@ -71,46 +71,92 @@ export default function BeatCounter({
   return (
     <>
       {/* Счет в строке или "Запустить" в зависимости от режима */}
-      <div
-        className="flex justify-between items-center w-full"
-        data-component="beat-counter"
-      >
-        {isStopped ? (
-          // После Стоп — цифры без выделения, чтобы не сбивать
-          beats.map((beat) => (
-            <div
-              key={beat}
-              data-beat={beat}
-              data-active={false}
-              className="flex-1 text-center text-gray-400 scale-100 text-2xl md:text-5xl"
-            >
-              {beat}
-            </div>
-          ))
-        ) : displayMode === "fullscreen" && !isPlaying && hasCurrentTrack ? (
-          // Показываем "Запустить" в блоке beat-counter когда режим fullscreen и не играет
+      <div className="w-full" data-component="beat-counter">
+        {/* ── Mobile: big number + mini strip (always visible in inline mode) ── */}
+        <div className="flex flex-col items-center w-full md:hidden">
+          {/* Big current number — always rendered to prevent layout shift */}
           <div
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onPlay) {
-                onPlay();
-                setIsFullscreenOverlayVisible(true);
-              }
+            className={`font-bold transition-all duration-200 ${
+              isStopped || !isPlaying
+                ? "text-gray-600"
+                : isBridge
+                  ? "text-yellow-400"
+                  : "text-purple-400"
+            }`}
+            style={{
+              fontSize: "7rem",
+              lineHeight: 1,
+              paddingTop: "6vh",
+              paddingBottom: "6vh",
+              textShadow:
+                isStopped || !isPlaying
+                  ? "none"
+                  : isBridge
+                    ? "0 0 20px rgba(250, 204, 21, 0.4)"
+                    : "0 0 20px rgba(192, 132, 252, 0.4)",
             }}
-            className="w-full text-center cursor-pointer hover:text-purple-400 transition-colors text-2xl md:text-5xl font-bold text-purple-400"
           >
-            Запустить
+            {isStopped ? "–" : activeBeatNumber}
           </div>
-        ) : (
-          // Показываем обычный счет
-          beats.map((beat, index) => {
-            const isActive = index === currentBeat;
-            return (
+          {/* Mini beat strip */}
+          <div className="flex justify-between items-center w-full px-2">
+            {beats.map((beat, index) => {
+              const isActive = !isStopped && index === currentBeat;
+              return (
+                <div
+                  key={beat}
+                  data-beat={beat}
+                  data-active={isActive}
+                  className={`flex-1 text-center text-xs transition-all duration-150 ${
+                    isActive
+                      ? isBridge
+                        ? "font-bold text-yellow-400 scale-125"
+                        : "font-bold text-purple-400 scale-125"
+                      : "text-gray-600"
+                  }`}
+                >
+                  {beat}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Desktop: original layout ── */}
+        <div className="hidden md:flex justify-between items-center w-full">
+          {isStopped ? (
+            beats.map((beat) => (
               <div
                 key={beat}
                 data-beat={beat}
-                data-active={isActive}
-                className={`
+                data-active={false}
+                className="flex-1 text-center text-gray-400 scale-100 text-5xl"
+              >
+                {beat}
+              </div>
+            ))
+          ) : displayMode === "fullscreen" && !isPlaying && hasCurrentTrack ? (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onPlay) {
+                  onPlay();
+                  setIsFullscreenOverlayVisible(true);
+                }
+              }}
+              className="w-full text-center cursor-pointer hover:text-purple-400 transition-colors text-5xl font-bold text-purple-400"
+            >
+              Запустить
+            </div>
+          ) : (
+            beats.map((beat, index) => {
+              const isActive = index === currentBeat;
+              return (
+                <div
+                  key={beat}
+                  data-beat={beat}
+                  data-active={isActive}
+                  className={`
                   flex-1 text-center transition-transform duration-200
                   ${
                     isActive
@@ -119,14 +165,15 @@ export default function BeatCounter({
                         : "scale-[2] font-bold text-purple-400"
                       : "scale-100 text-gray-400"
                   }
-                  text-2xl md:text-5xl
+                  text-5xl
                 `}
-              >
-                {beat}
-              </div>
-            );
-          })
-        )}
+                >
+                  {beat}
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
 
       {/* Режим "Во весь экран" - показываем оверлей когда играет */}

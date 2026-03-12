@@ -22,10 +22,28 @@ export async function GET(request: NextRequest) {
   const eventFilter = searchParams.get("event") || undefined;
   const trackSearch = searchParams.get("track")?.trim() || undefined;
   const userSearch = searchParams.get("user")?.trim() || undefined;
+  const period = searchParams.get("period") || undefined; // today | yesterday | week
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: any = {};
   if (eventFilter) where.event = eventFilter;
+
+  // Date filter
+  if (period) {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (period === "today") {
+      where.createdAt = { gte: todayStart };
+    } else if (period === "yesterday") {
+      const yesterdayStart = new Date(todayStart);
+      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      where.createdAt = { gte: yesterdayStart, lt: todayStart };
+    } else if (period === "week") {
+      const weekStart = new Date(todayStart);
+      weekStart.setDate(weekStart.getDate() - 7);
+      where.createdAt = { gte: weekStart };
+    }
+  }
   if (trackSearch) where.track = { is: { title: { contains: trackSearch } } };
   if (userSearch) {
     const matchingUsers = await prisma.user.findMany({

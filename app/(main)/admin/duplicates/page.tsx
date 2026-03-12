@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
+import AdminSubNav from "@/components/AdminSubNav";
 
 interface ClusterTrack {
   id: number;
@@ -201,6 +202,7 @@ export default function DuplicatesPage() {
 
   return (
     <div className="max-w-6xl mx-auto p-6">
+      <AdminSubNav group="library" />
       <h1 className="text-2xl font-bold text-white mb-6">Поиск дубликатов</h1>
 
       {/* Параметры */}

@@ -92,7 +92,8 @@
       "Bash(\"d:/Sites/bachata/bin/fpcalc.exe\" -json -raw \"C:\\\\Users\\\\valer\\\\AppData\\\\Local\\\\Temp\\\\test_tone.wav\")",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh api repos/acoustid/chromaprint/git/trees/master --jq '.tree[].path')",
-      "Bash(gh api repos/acoustid/chromaprint/contents/src --jq '.[].name')"
+      "Bash(gh api repos/acoustid/chromaprint/contents/src --jq '.[].name')",
+      "Bash(find /d/Sites/bachata/app -type f \\\\\\(-name *.css -o -name *.module.css \\\\\\))"
     ]
   }
 }

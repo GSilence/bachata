@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import { ThemeProvider } from '@/lib/theme'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -16,8 +17,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ru" suppressHydrationWarning className="dark">
-      <body className={`${inter.className} bg-gray-900 text-white`} suppressHydrationWarning>
-        {children}
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("bachata-theme");document.documentElement.setAttribute("data-theme",t||"purple-night")}catch(e){document.documentElement.setAttribute("data-theme","purple-night")}})()`,
+          }}
+        />
+      </head>
+      <body className={`${inter.className}`} suppressHydrationWarning>
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   )

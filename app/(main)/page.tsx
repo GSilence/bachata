@@ -20,12 +20,16 @@ import { isAdmin } from "@/lib/roles";
 import { useRouter } from "next/navigation";
 import { useModeratorStore } from "@/store/moderatorStore";
 import ModerationModal from "@/components/ModerationModal";
+import ComplaintModal from "@/components/ComplaintModal";
 import type { Track } from "@/types";
 
 export default function PlaybackPage() {
   const router = useRouter();
   const isModerating = useModeratorStore((s) => s.isModerating);
   const isAdminMode = useModeratorStore((s) => s.isAdminMode);
+  const [mobilePlaylistOpen, setMobilePlaylistOpen] = useState(false);
+  const [showComplaint, setShowComplaint] = useState(false);
+  const user = useAuthStore((s) => s.user);
   // ── Zustand selectors — подписка ТОЛЬКО на то, что нужно в рендере ──
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -238,6 +242,17 @@ export default function PlaybackPage() {
 
   // Сброс позиции счёта при стопе — выполняется в handleStop, НЕ через useEffect с currentTime
 
+  // Автозагрузка первого трека, когда плейлист загрузится и трек ещё не выбран
+  useEffect(() => {
+    if (!isClient) return;
+    const unsub = usePlayerStore.subscribe((state, prev) => {
+      if (!state.currentTrack && !prev.currentTrack && state.tracks.length > 0 && prev.tracks.length === 0) {
+        loadTrack(state.tracks[0]);
+      }
+    });
+    return unsub;
+  }, [isClient, loadTrack]);
+
   // Синхронизация voiceFilter с audioEngine
   useEffect(() => {
     if (!isClient) return;
@@ -273,8 +288,50 @@ export default function PlaybackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 relative">
+    <div className="min-h-screen relative">
       <ModerationModal />
+
+      {/* Mobile playlist toggle button (top-right) */}
+      <button
+        onClick={() => setMobilePlaylistOpen(!mobilePlaylistOpen)}
+        className="lg:hidden fixed top-4 right-4 z-50 p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
+        aria-label="Toggle playlist"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+          {mobilePlaylistOpen ? (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+          )}
+        </svg>
+      </button>
+
+      {/* Mobile playlist overlay */}
+      {mobilePlaylistOpen && (
+        <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setMobilePlaylistOpen(false)} />
+      )}
+
+      {/* Mobile playlist slide-up panel */}
+      <div
+        className={`lg:hidden fixed inset-x-0 bottom-0 z-40 h-screen transform transition-transform duration-300 ease-in-out ${
+          mobilePlaylistOpen ? "translate-y-0" : "translate-y-full"
+        }`}
+        style={{ backgroundColor: "rgb(var(--bg-secondary))" }}
+      >
+        <div className="flex flex-col h-full">
+          {/* Handle bar */}
+          <div
+            className="flex justify-center py-3 cursor-pointer"
+            onClick={() => setMobilePlaylistOpen(false)}
+          >
+            <div className="w-10 h-1 rounded-full bg-gray-600" />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <Playlist onTrackSelect={(track) => { handleTrackSelect(track); setMobilePlaylistOpen(false); }} />
+          </div>
+        </div>
+      </div>
+
       {isReanalyzing && (
         <div
           className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm"
@@ -309,14 +366,27 @@ export default function PlaybackPage() {
             >
               {/* Информация о треке (только в режиме администратора) */}
               {isAdminMode && (
-                <div data-block="admin-panel" style={{ backgroundColor: "#1a1f2e" }}>
+                <div data-block="admin-panel" className="pt-14 lg:pt-0" style={{ backgroundColor: "rgb(var(--bg-elevated))" }}>
                   <TrackInfo />
                 </div>
               )}
 
               {/* Счёт — первым */}
-              <div data-block="beat-counter">
-                <div className={`px-4 md:px-12 ${isAdminMode ? "py-10" : "py-24 md:py-28"}`}>
+              <div data-block="beat-counter" className="relative">
+                {/* Кнопка Пожаловаться — верхний правый угол */}
+                {currentTrack && user && (
+                  <button
+                    onClick={() => setShowComplaint(true)}
+                    title="Пожаловаться на трек"
+                    className="absolute top-3 right-3 z-10 p-2 rounded-lg text-gray-600 hover:text-amber-400 hover:bg-gray-800/60 transition-colors"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                  </button>
+                )}
+                <div className={`px-4 md:px-12 ${isAdminMode ? "py-10" : "pt-8 pb-4 md:py-24 md:py-28"}`}>
                   {isClient ? (
                     <BeatCounter
                       currentBeat={currentBeat - 1}
@@ -351,7 +421,7 @@ export default function PlaybackPage() {
                 )}
               </div>
 
-              {/* Инструментарий танцора */}
+              {/* Инструменты */}
               {isClient && (
                 <DancerToolbar
                   beatCounterMode={beatCounterMode}
@@ -371,18 +441,28 @@ export default function PlaybackPage() {
             )}
           </div>
 
-          {/* Боковая панель - справа (скрыта в режиме модератора) */}
+          {/* Боковая панель - справа (скрыта на мобильных и в режиме модератора) */}
           {!isModerating && (
             <div
-              className="border-l border-gray-800/60 lg:sticky lg:top-0 lg:h-screen lg:flex lg:flex-col"
+              className="flex flex-col h-screen border-l border-gray-800/60 lg:sticky lg:top-0 lg:flex-col"
               data-block="sidebar"
+              style={{ backgroundColor: "rgb(var(--bg-secondary))" }}
             >
-              <div className="pt-8 px-4 pb-4 flex flex-col flex-1 min-h-0" data-block="playlist">
-                <Playlist onTrackSelect={handleTrackSelect} />
-              </div>
+              <Playlist onTrackSelect={handleTrackSelect} />
             </div>
           )}
         </div>
+
+      {/* Модалка жалобы */}
+      {showComplaint && currentTrack && (
+        <ComplaintModal
+          trackId={currentTrack.id}
+          trackTitle={currentTrack.metaTitle || currentTrack.title}
+          trackArtist={currentTrack.artist || currentTrack.metaArtist}
+          trackAlbum={currentTrack.metaAlbum}
+          onClose={() => setShowComplaint(false)}
+        />
+      )}
     </div>
   );
 }

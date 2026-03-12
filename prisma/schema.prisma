@@ -200,6 +200,25 @@ model PromoCode {
   createdAt   DateTime @default(now())
 }
 
+// ─── Жалобы / обратная связь ─────────────────────────────────────────────────
+model Complaint {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  userName  String   @db.VarChar(200)
+  userEmail String   @db.VarChar(200)
+  reason    String   @db.VarChar(200)  // тема: "wrong_grid" и т.д.
+  message   String   @db.Text          // текст жалобы
+  trackInfo String   @db.VarChar(500)  // "Название — Артист (Альбом)"
+  trackId   Int?                       // FK на трек (может быть удалён)
+  status    String   @default("sent")  // sent | reviewing | rejected | approved
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
 // ─── Плейлисты ──────────────────────────────────────────────────────────────
 model Playlist {
   id        Int      @id @default(autoincrement())

@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
 import { useModeratorStore } from "@/store/moderatorStore";
 import { useFavoritesStore } from "@/store/favoritesStore";
+import ComplaintModal from "@/components/ComplaintModal";
 import type { Track, PlaylistSortBy } from "@/types";
 
 interface PlaylistProps {
@@ -55,11 +56,13 @@ const TrackItem = memo(function TrackItem({
   isActive,
   isAdminUser,
   onSelect,
+  onComplain,
 }: {
   track: Track;
   isActive: boolean;
   isAdminUser: boolean;
   onSelect: (track: Track) => void;
+  onComplain: (track: Track) => void;
 }) {
   // Точечная подписка: только isFav этого трека — не перерисовывает остальные
   const isFav = useFavoritesStore((s) => s.favoriteIds.has(track.id));
@@ -70,11 +73,16 @@ const TrackItem = memo(function TrackItem({
     toggleFav(track.id);
   };
 
+  const handleComplain = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onComplain(track);
+  };
+
   return (
     <div className="relative group">
       <button
         onClick={() => onSelect(track)}
-        className={`w-full text-left px-3 py-2.5 pr-10 rounded-xl transition-colors flex items-center gap-3 ${
+        className={`w-full text-left px-3 py-2.5 pr-16 rounded-xl transition-colors flex items-center gap-3 ${
           isActive
             ? "bg-purple-600/30 border border-purple-500/50 hover:bg-purple-600/40"
             : "border border-transparent hover:bg-white/5"
@@ -112,6 +120,18 @@ const TrackItem = memo(function TrackItem({
             </div>
           )}
         </div>
+      </button>
+
+      {/* Кнопка Пожаловаться */}
+      <button
+        onClick={handleComplain}
+        title="Пожаловаться"
+        className="absolute right-8 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all text-gray-500 opacity-0 group-hover:opacity-100 hover:text-amber-400"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+        </svg>
       </button>
 
       {/* Кнопка Избранное */}
@@ -231,6 +251,9 @@ const SORT_LABELS: Record<string, string> = {
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
+
+  // ── Жалоба ──
+  const [complaintTrack, setComplaintTrack] = useState<Track | null>(null);
 
   // ── Выбранный плейлист (в сторе, чтобы playNext/playPrev знал контекст) ──
   const activePlaylist = usePlayerStore((s) => s.activePlaylist);
@@ -523,14 +546,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="shrink-0 space-y-4 pb-4">
+      <div
+        className="shrink-0 space-y-4 pt-8 px-4 pb-4"
+        style={{ backgroundColor: "rgb(var(--bg-sidebar))" }}
+      >
       {/* Заголовок */}
       <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Треки</h2>
 
       {/* Поиск — самый верх */}
       <input
         type="text"
-        placeholder="Поиск по названию..."
+        placeholder="Найти трек..."
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600 text-white placeholder-gray-400"
@@ -786,7 +812,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       {/* Список треков — виртуализированный, заполняет остаток высоты */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
+        className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-4 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
         data-block="playlist"
         onMouseEnter={() => { isUserHoveringRef.current = true; }}
         onMouseLeave={() => { isUserHoveringRef.current = false; }}
@@ -827,6 +853,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                       isActive={currentTrackId === track.id}
                       isAdminUser={isAdminUser}
                       onSelect={onTrackSelect}
+                      onComplain={setComplaintTrack}
                     />
                   </div>
                 </div>
@@ -835,6 +862,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
           </div>
         )}
       </div>
+
+      {/* Модалка жалобы */}
+      {complaintTrack && (
+        <ComplaintModal
+          trackId={complaintTrack.id}
+          trackTitle={complaintTrack.metaTitle || complaintTrack.title}
+          trackArtist={complaintTrack.artist || complaintTrack.metaArtist}
+          trackAlbum={complaintTrack.metaAlbum}
+          onClose={() => setComplaintTrack(null)}
+        />
+      )}
     </div>
   );
 }

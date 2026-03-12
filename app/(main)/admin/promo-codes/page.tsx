@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import AdminSubNav from "@/components/AdminSubNav";
 
 interface PromoCode {
   id: number;
@@ -70,6 +71,7 @@ export default function PromoCodesPage() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
+      <AdminSubNav group="users" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Промокоды модераторов</h1>
         <p className="text-gray-400 text-sm mt-1">
