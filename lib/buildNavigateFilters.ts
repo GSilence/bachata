@@ -4,6 +4,7 @@
  */
 export function buildNavigateFilters(state: {
   searchQuery: string;
+  activePlaylist: string;
   playlistFilter: string;
   isAdmin: boolean;
   bridgeFilterWith: boolean;
@@ -25,7 +26,11 @@ export function buildNavigateFilters(state: {
   const f: Record<string, string> = {};
 
   if (state.searchQuery) f.search = state.searchQuery;
-  f.filter = state.playlistFilter;
+  if (state.activePlaylist && state.activePlaylist !== "general") {
+    f.playlist = state.activePlaylist;
+  } else {
+    f.filter = state.playlistFilter;
+  }
   f.sort = state.playlistSortBy;
   f.sortDir = state.sortDirection;
   if (state.squareSortDirection !== "none") f.squareSort = state.squareSortDirection;

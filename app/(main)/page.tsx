@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { usePlayerStore } from "@/store/playerStore";
 import BeatCounter from "@/components/BeatCounter";
 import PlayerControls from "@/components/PlayerControls";
-import SettingsPanel from "@/components/SettingsPanel";
 import StemsControl from "@/components/StemsControl";
 import TrackInfo from "@/components/TrackInfo";
+import NowPlayingBar from "@/components/NowPlayingBar";
+import DancerToolbar from "@/components/DancerToolbar";
 import Playlist from "@/components/Playlist";
 import { audioEngine } from "@/lib/audioEngine";
 import {
@@ -23,6 +24,8 @@ import type { Track } from "@/types";
 
 export default function PlaybackPage() {
   const router = useRouter();
+  const isModerating = useModeratorStore((s) => s.isModerating);
+  const isAdminMode = useModeratorStore((s) => s.isAdminMode);
   // ── Zustand selectors — подписка ТОЛЬКО на то, что нужно в рендере ──
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -270,7 +273,7 @@ export default function PlaybackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8 relative">
+    <div className="min-h-screen bg-gray-900 relative">
       <ModerationModal />
       {isReanalyzing && (
         <div
@@ -297,93 +300,69 @@ export default function PlaybackPage() {
           <p className="text-gray-400 text-sm mt-1">Не закрывайте страницу</p>
         </div>
       )}
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      <div className={`grid grid-cols-1 min-h-screen ${isModerating ? "" : "lg:grid-cols-3"}`}>
           {/* Основная секция - слева */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Информация о треке */}
-            <div data-block="track-info">
-              <TrackInfo />
-            </div>
+          <div className="lg:col-span-2">
+            {/* Главный блок плеера */}
+            <div
+              data-block="ui-player"
+            >
+              {/* Информация о треке (только в режиме администратора) */}
+              {isAdminMode && (
+                <div data-block="admin-panel" style={{ backgroundColor: "#1a1f2e" }}>
+                  <TrackInfo />
+                </div>
+              )}
 
-            {/* Визуализация счета */}
-            <div className="space-y-4">
-              {/* Кнопки переключения режима - как закладки */}
-              <div className="flex gap-2 border-b border-gray-700">
-                <button
-                  onClick={() => setBeatCounterMode("inline")}
-                  className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
-                    beatCounterMode === "inline"
-                      ? "border-purple-600 text-purple-400"
-                      : "border-transparent text-gray-400 hover:text-purple-400"
-                  }`}
-                >
-                  В строке
-                </button>
-                <button
-                  onClick={() => setBeatCounterMode("fullscreen")}
-                  className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
-                    beatCounterMode === "fullscreen"
-                      ? "border-purple-600 text-purple-400"
-                      : "border-transparent text-gray-400 hover:text-purple-400"
-                  }`}
-                >
-                  Во весь экран
-                </button>
+              {/* Счёт — первым */}
+              <div data-block="beat-counter">
+                <div className={`px-4 md:px-12 ${isAdminMode ? "py-10" : "py-24 md:py-28"}`}>
+                  {isClient ? (
+                    <BeatCounter
+                      currentBeat={currentBeat - 1}
+                      isBridge={isBridgeBeat}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onStop={handleStop}
+                      displayMode={beatCounterMode}
+                      onDisplayModeChange={setBeatCounterMode}
+                    />
+                  ) : (
+                    <div className="text-center py-8 text-gray-400">Загрузка...</div>
+                  )}
+                </div>
               </div>
 
-              <div
-                className="bg-gray-800 rounded-lg py-8 px-4 md:p-12 border border-gray-700"
-                data-block="beat-counter"
-              >
+              {/* Название, артист · альбом · год + лайк / плейлист */}
+              <div className="px-6 pb-2 border-t border-gray-700/50 pt-4">
+                <NowPlayingBar />
+              </div>
+
+              {/* Прогресс-бар + кнопки управления */}
+              <div className="px-6 pt-6 pb-6" data-block="player-controls">
                 {isClient ? (
-                  <BeatCounter
-                    currentBeat={currentBeat - 1}
-                    isBridge={isBridgeBeat}
+                  <PlayerControls
                     onPlay={handlePlay}
                     onPause={handlePause}
                     onStop={handleStop}
-                    displayMode={beatCounterMode}
-                    onDisplayModeChange={setBeatCounterMode}
                   />
                 ) : (
-                  <div className="text-center py-8 text-gray-400">
-                    Загрузка...
-                  </div>
+                  <div className="text-center py-8 text-gray-400">Загрузка...</div>
                 )}
               </div>
-            </div>
 
-            {/* Управление воспроизведением */}
-            <div
-              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
-              data-block="player-controls"
-            >
-              {isClient ? (
-                <PlayerControls
-                  onPlay={handlePlay}
-                  onPause={handlePause}
-                  onStop={handleStop}
+              {/* Инструментарий танцора */}
+              {isClient && (
+                <DancerToolbar
+                  beatCounterMode={beatCounterMode}
+                  onBeatCounterModeChange={setBeatCounterMode}
                 />
-              ) : (
-                <div className="text-center py-8 text-gray-400">
-                  Загрузка...
-                </div>
               )}
-            </div>
-
-            {/* Режим озвучки (под Voice Volume) */}
-            <div
-              className="bg-gray-800 rounded-lg py-2 px-6 lg:p-6 border border-gray-700"
-              data-block="voice-filter"
-            >
-              <SettingsPanel showOnlyVoiceFilter />
             </div>
 
             {/* Управление дорожками */}
             {isClient && currentTrack && (
               <div
-                className="bg-gray-800 rounded-lg border border-gray-700"
                 data-block="stems-control"
                 style={{ display: "none" }}
               >
@@ -392,25 +371,18 @@ export default function PlaybackPage() {
             )}
           </div>
 
-          {/* Боковая панель - справа */}
-          <div className="space-y-4 sm:space-y-6" data-block="sidebar">
-            {/* Плейлист и настройки воспроизведения */}
+          {/* Боковая панель - справа (скрыта в режиме модератора) */}
+          {!isModerating && (
             <div
-              className="bg-gray-800 rounded-lg pt-2 pb-2 px-6 lg:p-6 border border-gray-700"
-              data-block="play-mode"
+              className="border-l border-gray-800/60 lg:sticky lg:top-0 lg:h-screen lg:flex lg:flex-col"
+              data-block="sidebar"
             >
-              <SettingsPanel showOnlyPlayMode />
+              <div className="pt-8 px-4 pb-4 flex flex-col flex-1 min-h-0" data-block="playlist">
+                <Playlist onTrackSelect={handleTrackSelect} />
+              </div>
             </div>
-
-            <div
-              className="bg-gray-800 rounded-lg p-6 border border-gray-700"
-              data-block="playlist"
-            >
-              <Playlist onTrackSelect={handleTrackSelect} />
-            </div>
-          </div>
+          )}
         </div>
-      </div>
     </div>
   );
 }

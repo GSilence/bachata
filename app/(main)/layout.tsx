@@ -30,9 +30,9 @@ export default function MainLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 ml-0 lg:ml-64 pt-16 lg:pt-0">{children}</main>
+      <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto">{children}</main>
     </div>
   );
 }

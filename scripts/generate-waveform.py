@@ -8,8 +8,8 @@ Usage:
 Output (stdout):
     JSON: {"peaks": [0.0..1.0, ...], "count": N}
 
-Peaks are normalized to [0, 1] with sqrt compression so quiet parts
-remain visible (similar to how Soundcloud renders waveforms).
+Peaks are normalized to [0, 1]. Uses small RMS frames (~93ms) with max-pooling
+when downsampling to n_peaks — preserves transients and amplitude variation.
 """
 
 import sys
@@ -25,24 +25,30 @@ def generate_waveform(audio_path: str, n_peaks: int = 200) -> list:
     if len(y) == 0:
         return []
 
-    # Compute RMS energy using librosa (vectorized, fast)
-    frame_length = max(256, len(y) // n_peaks)
-    hop_length = max(128, len(y) // n_peaks)
+    # Small fixed frames — preserves dynamics (~93ms window, ~23ms hop)
+    frame_length = 2048
+    hop_length = 512
     rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
 
-    # Resample to exactly n_peaks via linear interpolation
-    if len(rms) != n_peaks:
-        x_old = np.linspace(0, 1, len(rms))
-        x_new = np.linspace(0, 1, n_peaks)
-        rms = np.interp(x_new, x_old, rms)
+    # Downsample to exactly n_peaks using max-pooling within each bucket.
+    # Max (not mean/interp) preserves transient peaks → visible amplitude variation.
+    n_frames = len(rms)
+    peaks = []
+    for i in range(n_peaks):
+        start = int(i * n_frames / n_peaks)
+        end = int((i + 1) * n_frames / n_peaks)
+        end = max(end, start + 1)
+        peaks.append(float(np.max(rms[start:end])))
+    rms = np.array(peaks)
 
     # Normalize to [0, 1]
     max_val = float(np.max(rms))
     if max_val > 0:
         rms = rms / max_val
 
-    # sqrt compression: makes quiet parts more visible (perceptual loudness)
-    rms = np.sqrt(rms)
+    # Light power compression (^0.7): wider dynamic range than sqrt (^0.5),
+    # but still makes quiet parts visible. Produces bars from ~0.1 to 1.0.
+    rms = np.power(rms, 0.7)
 
     return [round(float(v), 4) for v in rms]
 

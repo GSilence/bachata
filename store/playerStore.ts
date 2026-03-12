@@ -95,6 +95,7 @@ export const usePlayerStore = create<PlayerState>()(
       voiceFilter: restoredSettings.voiceFilter,
       voiceLanguage: restoredSettings.voiceLanguage,
       voiceType: (restoredSettings as { voiceType?: VoiceType }).voiceType ?? "human",
+      activePlaylist: "general",
       playlistFilter: "free",
       searchQuery: "",
       bridgeFilterWith: true,
@@ -290,6 +291,7 @@ export const usePlayerStore = create<PlayerState>()(
         saveUserSettings({ voiceType: type });
         audioEngine.setVoiceType(type);
       },
+      setActivePlaylist: (playlist) => set({ activePlaylist: playlist }),
       setPlaylistFilter: (filter) => set({ playlistFilter: filter }),
       setSearchQuery: (query) => set({ searchQuery: query }),
       setBridgeFilterWith: (value) => set({ bridgeFilterWith: value }),
@@ -475,6 +477,7 @@ export const usePlayerStore = create<PlayerState>()(
       version: 3,
       partialize: (state) => ({
         savedTrackId: state.savedTrackId,
+        activePlaylist: state.activePlaylist,
         playlistFilter: state.playlistFilter,
         searchQuery: state.searchQuery,
         bridgeFilterWith: state.bridgeFilterWith,

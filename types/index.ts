@@ -145,6 +145,9 @@ export interface PlayerState {
   voiceType: VoiceType;
 
   // Плейлист
+  /** Активный таб плейлиста: "general" | "favorites" | "bookmarks" */
+  activePlaylist: string;
+  setActivePlaylist: (playlist: string) => void;
   playlistFilter: PlaylistFilter;
   searchQuery: string;
   /** Показывать треки с мостиками (по умолчанию true) */

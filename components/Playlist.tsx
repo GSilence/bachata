@@ -6,6 +6,8 @@ import { usePlayerStore } from "@/store/playerStore";
 import { useShallow } from "zustand/react/shallow";
 import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
+import { useModeratorStore } from "@/store/moderatorStore";
+import { useFavoritesStore } from "@/store/favoritesStore";
 import type { Track, PlaylistSortBy } from "@/types";
 
 interface PlaylistProps {
@@ -52,19 +54,22 @@ const TrackItem = memo(function TrackItem({
   track,
   isActive,
   isAdminUser,
-  isFav,
-  togglingFav,
   onSelect,
-  onToggleFav,
 }: {
   track: Track;
   isActive: boolean;
   isAdminUser: boolean;
-  isFav: boolean;
-  togglingFav: boolean;
   onSelect: (track: Track) => void;
-  onToggleFav: (e: React.MouseEvent, trackId: number) => void;
 }) {
+  // Точечная подписка: только isFav этого трека — не перерисовывает остальные
+  const isFav = useFavoritesStore((s) => s.favoriteIds.has(track.id));
+  const toggleFav = useFavoritesStore((s) => s.toggle);
+
+  const handleToggleFav = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    toggleFav(track.id);
+  };
+
   return (
     <div className="relative group">
       <button
@@ -95,15 +100,15 @@ const TrackItem = memo(function TrackItem({
 
         {/* Текст */}
         <div className="min-w-0 flex-1">
-          <div className={`text-sm font-medium truncate ${isActive ? "text-white" : "text-gray-100"}`} title={track.title}>
-            {track.title}
+          <div className={`text-sm font-medium truncate ${isActive ? "text-white" : "text-gray-100"}`} title={track.metaTitle || track.title}>
+            {track.metaTitle || track.title}
             {track.isProcessed && (
               <span className="ml-1.5 text-green-400 text-xs" title="Stems обработаны">🎵</span>
             )}
           </div>
-          {track.artist && (
+          {(track.artist || track.metaArtist) && (
             <div className={`text-xs truncate mt-0.5 ${isActive ? "text-purple-200" : "text-gray-400"}`}>
-              {track.artist}
+              {track.artist || track.metaArtist}
             </div>
           )}
         </div>
@@ -111,8 +116,7 @@ const TrackItem = memo(function TrackItem({
 
       {/* Кнопка Избранное */}
       <button
-        onClick={(e) => onToggleFav(e, track.id)}
-        disabled={togglingFav}
+        onClick={handleToggleFav}
         title={isFav ? "Убрать из Избранного" : "Добавить в Избранное"}
         className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all ${
           isFav
@@ -120,18 +124,9 @@ const TrackItem = memo(function TrackItem({
             : "text-gray-500 opacity-0 group-hover:opacity-100 hover:text-pink-400"
         }`}
       >
-        <svg
-          className="w-4 h-4"
-          fill={isFav ? "currentColor" : "none"}
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-          />
+        <svg className="w-4 h-4" fill={isFav ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
         </svg>
       </button>
     </div>
@@ -146,6 +141,7 @@ function buildFilterParams(opts: {
   pageSize: number;
   searchQuery: string;
   playlistFilter: string;
+  activePlaylist: string;
   isAdmin: boolean;
   bridgeFilterWith: boolean;
   bridgeFilterWithout: boolean;
@@ -168,7 +164,12 @@ function buildFilterParams(opts: {
   sp.set("pageSize", String(opts.pageSize));
 
   if (opts.searchQuery) sp.set("search", opts.searchQuery);
-  sp.set("filter", opts.playlistFilter);
+  // For favorites/bookmarks tabs pass playlist= param; otherwise use filter= for isFree etc.
+  if (opts.activePlaylist !== "general") {
+    sp.set("playlist", opts.activePlaylist);
+  } else {
+    sp.set("filter", opts.playlistFilter);
+  }
   sp.set("sort", opts.playlistSortBy);
   sp.set("sortDir", opts.sortDirection);
   if (opts.squareSortDirection !== "none") sp.set("squareSort", opts.squareSortDirection);
@@ -214,60 +215,70 @@ function buildFilterParams(opts: {
 
 const PAGE_SIZE = 40;
 
+const PLAYLISTS = [
+  { id: "general", name: "Общий" },
+  { id: "favorites", name: "Избранное" },
+  { id: "bookmarks", name: "Закладки" },
+];
+
+const SORT_LABELS: Record<string, string> = {
+  title: "По названию",
+  duration: "По длительности",
+  date: "По дате",
+};
+
 // ── Playlist ────────────────────────────────────────────────────────────────
 export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { user } = useAuthStore();
   const isAdminUser = isAdmin(user?.role);
 
-  // ── Избранное ────────────────────────────────────────────────────────────
-  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
-  const [togglingFav, setTogglingFav] = useState<number | null>(null);
+  // ── Выбранный плейлист (в сторе, чтобы playNext/playPrev знал контекст) ──
+  const activePlaylist = usePlayerStore((s) => s.activePlaylist);
+  const setActivePlaylist = usePlayerStore((s) => s.setActivePlaylist);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const tabsDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
+  const hasDraggedRef = useRef(false);
 
-  const fetchFavorites = useCallback(async () => {
-    if (!user) return;
-    try {
-      const res = await fetch("/api/playlists/favorites/tracks");
-      if (res.ok) {
-        const data = await res.json();
-        setFavoriteIds(new Set(data.trackIds ?? []));
-      }
-    } catch {}
-  }, [user]);
+  // ── Попап сортировки ─────────────────────────────────────────────────────
+  const [sortPopoverOpen, setSortPopoverOpen] = useState(false);
+  const sortPopoverRef = useRef<HTMLDivElement>(null);
 
+  const onTabsMouseDown = (e: React.MouseEvent) => {
+    const el = tabsRef.current;
+    if (!el) return;
+    hasDraggedRef.current = false;
+    tabsDragRef.current = { active: true, startX: e.pageX - el.offsetLeft, scrollLeft: el.scrollLeft };
+    el.style.cursor = "grabbing";
+  };
+  const onTabsMouseMove = (e: React.MouseEvent) => {
+    const el = tabsRef.current;
+    if (!el || !tabsDragRef.current.active) return;
+    const walk = (e.pageX - el.offsetLeft) - tabsDragRef.current.startX;
+    if (Math.abs(walk) > 4) hasDraggedRef.current = true;
+    el.scrollLeft = tabsDragRef.current.scrollLeft - walk;
+  };
+  const onTabsMouseUp = () => {
+    tabsDragRef.current.active = false;
+    if (tabsRef.current) tabsRef.current.style.cursor = "";
+  };
+  const onTabsWheel = (e: React.WheelEvent) => {
+    const el = tabsRef.current;
+    if (!el) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY + e.deltaX;
+  };
+
+  // Закрываем попап сортировки при клике вне него
   useEffect(() => {
-    fetchFavorites();
-  }, [fetchFavorites]);
-
-  const toggleFavorite = useCallback(async (e: React.MouseEvent, trackId: number) => {
-    e.stopPropagation();
-    if (togglingFav === trackId) return;
-    setTogglingFav(trackId);
-    const isFav = favoriteIds.has(trackId);
-    setFavoriteIds((prev) => {
-      const next = new Set(prev);
-      if (isFav) next.delete(trackId); else next.add(trackId);
-      return next;
-    });
-    try {
-      if (isFav) {
-        await fetch(`/api/playlists/favorites/tracks?trackId=${trackId}`, { method: "DELETE" });
-      } else {
-        await fetch("/api/playlists/favorites/tracks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trackId }),
-        });
+    if (!sortPopoverOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sortPopoverRef.current && !sortPopoverRef.current.contains(e.target as Node)) {
+        setSortPopoverOpen(false);
       }
-    } catch {
-      setFavoriteIds((prev) => {
-        const next = new Set(prev);
-        if (isFav) next.add(trackId); else next.delete(trackId);
-        return next;
-      });
-    } finally {
-      setTogglingFav(null);
-    }
-  }, [togglingFav, favoriteIds]);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [sortPopoverOpen]);
 
   // ── Zustand — только нужные поля ─────────────────────────────────────────
   const currentTrackId = useCurrentTrackId();
@@ -278,6 +289,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { accentFilterOn, mamboFilterOn } = useTagFilters();
   const { playlistSortBy, sortDirection, squareSortDirection } = useSortSettings();
   const { dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh } = useDominanceBuckets();
+  const isAdminMode = useModeratorStore((s) => s.isAdminMode);
 
   // Actions — стабильные ссылки, не вызывают ре-рендер
   const setAdmin = usePlayerStore((s) => s.setAdmin);
@@ -327,6 +339,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       pageSize: PAGE_SIZE,
       searchQuery: debouncedSearch,
       playlistFilter,
+      activePlaylist,
       isAdmin: isAdminUser,
       bridgeFilterWith,
       bridgeFilterWithout,
@@ -389,7 +402,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     doFetchRef.current?.(1, false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    debouncedSearch, playlistFilter, isAdminUser,
+    debouncedSearch, playlistFilter, activePlaylist, isAdminUser,
     bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
     statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
     accentFilterOn, mamboFilterOn,
@@ -414,6 +427,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         pageSize: totalLoaded,
         searchQuery: debouncedSearch,
         playlistFilter,
+        activePlaylist,
         isAdmin: isAdminUser,
         bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
         statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
@@ -450,6 +464,10 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   }, [isLoading, hasMore, currentPage]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Refs для управления авто-прокруткой
+  const isUserHoveringRef = useRef(false);   // мышь над списком
+  const hasInitialScrolled = useRef(false);  // уже прокрутили при загрузке
+  const prevTrackIdRef = useRef<number | null>(null); // предыдущий трек
 
   // ── Виртуализация списка — в DOM только видимые элементы ──
   const virtualizer = useVirtualizer({
@@ -463,13 +481,27 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     getItemKey: (index) => tracks[index]?.id ?? index,
   });
 
-  // Автоскролл к текущему треку при смене (рандом, next/prev)
+  // Авто-прокрутка к текущему треку:
+  // - при загрузке страницы (один раз)
+  // - при смене трека во время воспроизведения
+  // НЕ прокручивает при подгрузке страниц пагинации или когда пользователь
+  // держит мышь над списком.
   useEffect(() => {
     if (currentTrackId == null || tracks.length === 0) return;
     const idx = tracks.findIndex((t) => t.id === currentTrackId);
-    if (idx >= 0) {
-      virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
-    }
+    if (idx < 0) return;
+
+    const isTrackChange = currentTrackId !== prevTrackIdRef.current;
+    const isInitial = !hasInitialScrolled.current;
+
+    // Пагинация: tracks изменился, но трек тот же — пропускаем
+    if (!isInitial && !isTrackChange) return;
+    // Смена трека, но пользователь работает с плейлистом — пропускаем
+    if (!isInitial && isTrackChange && isUserHoveringRef.current) return;
+
+    prevTrackIdRef.current = currentTrackId;
+    hasInitialScrolled.current = true;
+    virtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
   }, [currentTrackId, tracks, virtualizer]);
 
   // Infinite scroll: detect when near bottom
@@ -490,68 +522,12 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   }, [loadMore]);
 
   return (
-    <div className="space-y-4">
-      {/* Заголовок с тарифом */}
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-xl font-semibold text-white">Плейлист</h2>
-        <span className="text-sm text-gray-600 select-none">Free</span>
-      </div>
+    <div className="flex flex-col h-full">
+      <div className="shrink-0 space-y-4 pb-4">
+      {/* Заголовок */}
+      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Треки</h2>
 
-      {/* Админ: базовый фильтр по статусу — перед поиском */}
-      {isAdminUser && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setStatusFilterUnlistened(!statusFilterUnlistened)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              statusFilterUnlistened
-                ? "bg-sky-600 text-white"
-                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-            }`}
-            title={statusFilterUnlistened ? "Показать новые (не прослушаны)" : "Скрыть новые"}
-          >
-            Новые
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilterModeration(!statusFilterModeration)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              statusFilterModeration
-                ? "bg-amber-600 text-white"
-                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-            }`}
-            title={statusFilterModeration ? "Показать на модерации" : "Скрыть на модерации"}
-          >
-            Модерация
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilterApproved(!statusFilterApproved)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              statusFilterApproved
-                ? "bg-emerald-600 text-white"
-                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-            }`}
-            title={statusFilterApproved ? "Показать согласованные" : "Скрыть согласованные"}
-          >
-            Согласована
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilterPopsa(!statusFilterPopsa)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              statusFilterPopsa
-                ? "bg-orange-600 text-white"
-                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-            }`}
-            title={statusFilterPopsa ? "Показать попсу" : "Скрыть попсу"}
-          >
-            Попса
-          </button>
-        </div>
-      )}
-
-      {/* Поиск */}
+      {/* Поиск — самый верх */}
       <input
         type="text"
         placeholder="Поиск по названию..."
@@ -560,37 +536,42 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600 text-white placeholder-gray-400"
       />
 
-      {/* Сортировка */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-400 shrink-0">Сортировка:</span>
-        <select
-          value={playlistSortBy}
-          onChange={(e) => setPlaylistSortBy(e.target.value as PlaylistSortBy)}
-          className="flex-1 px-3 py-1.5 text-sm rounded bg-gray-700 border border-gray-600 text-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-600 cursor-pointer"
-        >
-          <option value="title">По названию</option>
-          <option value="duration">По длительности</option>
-          <option value="date">По дате загрузки</option>
-        </select>
-        <button
-          type="button"
-          onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
-          className="px-2 py-1.5 rounded bg-gray-700 border border-gray-600 text-gray-300 hover:bg-gray-600 transition-colors text-sm select-none"
-          title={sortDirection === "asc" ? "По возрастанию" : "По убыванию"}
-        >
-          {sortDirection === "asc" ? "↑" : "↓"}
-        </button>
+      {/* Выбор плейлиста — горизонтальный скролл с drag */}
+      <div
+        ref={tabsRef}
+        className="flex gap-2 overflow-x-auto select-none cursor-grab [&::-webkit-scrollbar]:hidden"
+        style={{ scrollbarWidth: "none" }}
+        onMouseDown={onTabsMouseDown}
+        onMouseMove={onTabsMouseMove}
+        onMouseUp={onTabsMouseUp}
+        onMouseLeave={onTabsMouseUp}
+        onWheel={onTabsWheel}
+      >
+        {PLAYLISTS.map((pl) => (
+          <button
+            key={pl.id}
+            type="button"
+            onClick={() => { if (!hasDraggedRef.current) setActivePlaylist(pl.id); }}
+            className={`shrink-0 px-4 py-1.5 rounded-xl text-sm font-medium transition-colors ${
+              activePlaylist === pl.id
+                ? "bg-purple-600 text-white"
+                : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
+            }`}
+          >
+            {pl.name}
+          </button>
+        ))}
       </div>
 
-      {/* Фильтр по мостикам */}
+      {/* Мостики + теги (Акценты/Мамбо) — один ряд с переносом */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setBridgeFilterWith(!bridgeFilterWith)}
-          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
             bridgeFilterWith
               ? "bg-purple-600 text-white"
-              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
           }`}
         >
           С мостиками
@@ -598,73 +579,21 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         <button
           type="button"
           onClick={() => setBridgeFilterWithout(!bridgeFilterWithout)}
-          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
             bridgeFilterWithout
               ? "bg-purple-600 text-white"
-              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
           }`}
         >
           Без мостиков
         </button>
-        {isAdminUser && (
-          <button
-            type="button"
-            onClick={() => setBridgeFilterSwapped(!bridgeFilterSwapped)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              bridgeFilterSwapped
-                ? "bg-orange-600 text-white"
-                : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-            }`}
-          >
-            Свапнутые
-          </button>
-        )}
-      </div>
-
-      {/* Фильтр по % доминирования РАЗ над ПЯТЬ — только для админа */}
-      {isAdminUser && bridgeFilterWithout && (
-        <div className="flex flex-wrap gap-2">
-          <span className="text-xs text-gray-400 self-center shrink-0">% РАЗ:</span>
-          {(
-            [
-              { key: "neg", label: "−4.99% — 0" },
-              { key: "low", label: "0 — 4.99%" },
-              { key: "high", label: "5% — 100%" },
-            ] as const
-          ).map(({ key, label }) => {
-            const active =
-              key === "neg"
-                ? dominanceBucketNeg
-                : key === "low"
-                  ? dominanceBucketLow
-                  : dominanceBucketHigh;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setDominanceBucket(key, !active)}
-                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  active
-                    ? "bg-teal-600 text-white"
-                    : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Фильтр по меткам: Акценты / Мамбо */}
-      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setAccentFilterOn(!accentFilterOn)}
-          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
             accentFilterOn
-              ? "bg-amber-600 text-white"
-              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
           }`}
           title={accentFilterOn ? "Показать только треки с акцентами" : "Не фильтровать по акцентам"}
         >
@@ -673,33 +602,194 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         <button
           type="button"
           onClick={() => setMamboFilterOn(!mamboFilterOn)}
-          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
             mamboFilterOn
-              ? "bg-rose-600 text-white"
-              : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
           }`}
           title={mamboFilterOn ? "Показать только треки с мамбо" : "Не фильтровать по мамбо"}
         >
           Мамбо
         </button>
+        {isAdminUser && isAdminMode && (
+          <button
+            type="button"
+            onClick={() => setBridgeFilterSwapped(!bridgeFilterSwapped)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
+              bridgeFilterSwapped
+                ? "bg-purple-600 text-white"
+                : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
+            }`}
+          >
+            Свапнутые
+          </button>
+        )}
       </div>
 
-      {/* Счётчик треков */}
-      <div className="text-xs text-gray-500 text-right">
-        {tracks.length} из {total}
-        {isLoading && <span className="ml-2 text-purple-400">загрузка...</span>}
-      </div>
+      {/* Админ: фильтры только в режиме администратора */}
+      {isAdminUser && isAdminMode && (
+        <>
+          {/* Фильтр по статусу */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setStatusFilterUnlistened(!statusFilterUnlistened)}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                statusFilterUnlistened
+                  ? "bg-sky-600 text-white"
+                  : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              }`}
+              title={statusFilterUnlistened ? "Показать новые (не прослушаны)" : "Скрыть новые"}
+            >
+              Новые
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilterModeration(!statusFilterModeration)}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                statusFilterModeration
+                  ? "bg-amber-600 text-white"
+                  : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              }`}
+              title={statusFilterModeration ? "Показать на модерации" : "Скрыть на модерации"}
+            >
+              Модерация
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilterApproved(!statusFilterApproved)}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                statusFilterApproved
+                  ? "bg-emerald-600 text-white"
+                  : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              }`}
+              title={statusFilterApproved ? "Показать согласованные" : "Скрыть согласованные"}
+            >
+              Согласована
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilterPopsa(!statusFilterPopsa)}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                statusFilterPopsa
+                  ? "bg-orange-600 text-white"
+                  : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+              }`}
+              title={statusFilterPopsa ? "Показать попсу" : "Скрыть попсу"}
+            >
+              Попса
+            </button>
+          </div>
 
-      {/* Список треков — виртуализированный */}
-      <div className="relative">
+          {/* Фильтр по % доминирования РАЗ */}
+          {bridgeFilterWithout && (
+            <div className="flex flex-wrap gap-2">
+              <span className="text-xs text-gray-400 self-center shrink-0">% РАЗ:</span>
+              {(
+                [
+                  { key: "neg", label: "−4.99% — 0" },
+                  { key: "low", label: "0 — 4.99%" },
+                  { key: "high", label: "5% — 100%" },
+                ] as const
+              ).map(({ key, label }) => {
+                const active =
+                  key === "neg"
+                    ? dominanceBucketNeg
+                    : key === "low"
+                      ? dominanceBucketLow
+                      : dominanceBucketHigh;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setDominanceBucket(key, !active)}
+                    className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-teal-600 text-white"
+                        : "bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Счётчик + сортировка — одна строка */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-500">
+          {tracks.length} из {total}
+          {isLoading && <span className="ml-2 text-purple-400">загрузка...</span>}
+        </span>
+        <div className="flex items-center gap-2">
+          {/* Текстовый триггер сортировки */}
+          <div ref={sortPopoverRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setSortPopoverOpen((v) => !v)}
+              className="text-xs text-gray-400 hover:text-gray-200 transition-colors"
+            >
+              {SORT_LABELS[playlistSortBy] ?? playlistSortBy}
+            </button>
+            {sortPopoverOpen && (
+              <div className="absolute bottom-full right-0 mb-1 bg-gray-800 border border-gray-700 rounded-xl shadow-lg overflow-hidden z-20 min-w-max">
+                {Object.entries(SORT_LABELS).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => { setPlaylistSortBy(val as PlaylistSortBy); setSortPopoverOpen(false); }}
+                    className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                      playlistSortBy === val
+                        ? "text-white bg-purple-600"
+                        : "text-gray-300 hover:bg-gray-700"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Кнопка направления — одна, с двумя стрелками */}
+          <button
+            type="button"
+            onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
+            title={sortDirection === "asc" ? "По возрастанию" : "По убыванию"}
+            className="p-1 hover:opacity-80 transition-opacity"
+          >
+            <svg width="14" height="18" viewBox="0 0 14 18" fill="none">
+              {/* Стрелка вниз */}
+              <path
+                d="M10 9 L10 2 M7 6 L10 2 L13 6"
+                stroke={sortDirection === "asc" ? "rgb(192,132,252)" : "rgb(75,85,99)"}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {/* Стрелка вверх */}
+              <path
+                d="M4 9 L4 16 M1 12 L4 16 L7 12"
+                stroke={sortDirection === "desc" ? "rgb(192,132,252)" : "rgb(75,85,99)"}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      </div>{/* end shrink-0 filters */}
+
+      {/* Список треков — виртуализированный, заполняет остаток высоты */}
       <div
         ref={scrollContainerRef}
-        className="max-h-96 overflow-y-auto scrollbar-hide"
+        className="flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
         data-block="playlist"
-        style={{
-          scrollbarWidth: "none",
-          msOverflowStyle: "none",
-        }}
+        onMouseEnter={() => { isUserHoveringRef.current = true; }}
+        onMouseLeave={() => { isUserHoveringRef.current = false; }}
       >
         {total === 0 && !isLoading ? (
           tracks.length === 0 ? (
@@ -736,10 +826,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                       track={track}
                       isActive={currentTrackId === track.id}
                       isAdminUser={isAdminUser}
-                      isFav={favoriteIds.has(track.id)}
-                      togglingFav={togglingFav === track.id}
                       onSelect={onTrackSelect}
-                      onToggleFav={toggleFavorite}
                     />
                   </div>
                 </div>
@@ -747,17 +834,6 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
             })}
           </div>
         )}
-
-      </div>
-
-      {/* Индикатор прокрутки — поверх списка, прибит к низу */}
-      {tracks.length > 0 && hasMore && (
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none bg-gradient-to-t from-gray-800 via-gray-800/80 to-transparent pt-5 pb-1.5">
-          <svg className="w-4 h-4 text-gray-400 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      )}
       </div>
     </div>
   );

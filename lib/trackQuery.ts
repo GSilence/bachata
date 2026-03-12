@@ -130,9 +130,23 @@ export function buildTracksWhere(
     });
   }
 
-  // --- Playlist filter (free/my/all) ---
+  // --- Playlist tab filter (favorites / bookmarks) overrides isFree filter ---
+  const playlistTab = sp.get("playlist"); // "favorites" | "bookmarks" | null
   const playlistFilter = sp.get("filter") ?? "free";
-  if (playlistFilter === "free") {
+
+  if (playlistTab === "favorites" && user?.userId) {
+    conditions.push({
+      playlistItems: {
+        some: { playlist: { userId: user.userId, type: "favorites" } },
+      },
+    });
+  } else if (playlistTab === "bookmarks" && user?.userId) {
+    conditions.push({
+      playlistItems: {
+        some: { playlist: { userId: user.userId, type: "bookmarks" } },
+      },
+    });
+  } else if (playlistFilter === "free") {
     conditions.push({ isFree: true });
   }
   // "my" and "all" not yet implemented
