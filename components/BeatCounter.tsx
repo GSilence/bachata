@@ -87,7 +87,7 @@ export default function BeatCounter({
                   : "text-purple-400"
             }`}
             style={{
-              fontSize: "5.25rem",
+              fontSize: "3.25rem",
               lineHeight: 1,
               paddingTop: "1vh",
               paddingBottom: "1.5vh",

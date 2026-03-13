@@ -418,7 +418,7 @@ export default function PlaybackPage() {
               </div>
 
               {/* Прогресс-бар + кнопки управления */}
-              <div className="px-6 pt-6 pb-6" data-block="player-controls">
+              <div className="px-6 pt-3 pb-6 md:pt-6" data-block="player-controls">
                 {isClient ? (
                   <PlayerControls
                     onPlay={handlePlay}
