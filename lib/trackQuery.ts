@@ -246,6 +246,16 @@ export function buildTracksWhere(
     }
   }
 
+  // --- BPM range filter ---
+  const bpmMinRaw = sp.get("bpmMin");
+  const bpmMaxRaw = sp.get("bpmMax");
+  if (bpmMinRaw || bpmMaxRaw) {
+    const bpmCondition: Record<string, unknown> = {};
+    if (bpmMinRaw) bpmCondition.gte = parseFloat(bpmMinRaw);
+    if (bpmMaxRaw) bpmCondition.lte = parseFloat(bpmMaxRaw);
+    conditions.push({ bpm: bpmCondition });
+  }
+
   if (conditions.length === 0) return {};
   if (conditions.length === 1) return conditions[0];
   return { AND: conditions };

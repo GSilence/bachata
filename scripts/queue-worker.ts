@@ -98,25 +98,47 @@ async function addToUploadsPlaylist(userId: number, trackId: number) {
 
 async function processEntry(entry: any) {
   // ── Helper: привязать пользователя к существующему треку ────────────────
-  const linkToExisting = async (existingTrackId: number) => {
+  const linkToExisting = async (existingTrackId: number, method?: string) => {
     if (entry.uploadedBy) {
       await addToUploadsPlaylist(entry.uploadedBy, existingTrackId);
     }
-    log(`Dedup: entry #${entry.id} → existing Track #${existingTrackId}`);
+    // Log duplicate found by worker (hash, title+artist, or fingerprint)
+    try {
+      await prisma.trackLog.create({
+        data: {
+          trackId: existingTrackId,
+          userId: entry.uploadedBy ?? null,
+          event: "upload_duplicate",
+          details: {
+            method: method ?? "unknown",
+            originalName: entry.filename,
+            uploadedTitle: entry.title ?? null,
+            uploadedArtist: entry.artist ?? null,
+            queueId: entry.id,
+          },
+        },
+      });
+      // Also update the original upload_new log to link it
+      await prisma.trackLog.updateMany({
+        where: { event: "upload_new", trackId: null, details: { path: ["queueId"], equals: entry.id } },
+        data: { trackId: existingTrackId },
+      });
+    } catch {}
+    log(`Dedup: entry #${entry.id} → existing Track #${existingTrackId} (${method ?? "unknown"})`);
     return existingTrackId;
   };
 
   // ── Дедупликация перед анализом (быстрые проверки: hash, title+artist) ──
   if (entry.fileHash) {
     const hashDup = await prisma.track.findFirst({ where: { fileHash: entry.fileHash } });
-    if (hashDup) return linkToExisting(hashDup.id);
+    if (hashDup) return linkToExisting(hashDup.id, "fileHash");
   }
 
   if (entry.title) {
     const titleArtistDup = await prisma.track.findFirst({
       where: { title: entry.title, ...(entry.artist ? { artist: entry.artist } : { artist: null }) },
     });
-    if (titleArtistDup) return linkToExisting(titleArtistDup.id);
+    if (titleArtistDup) return linkToExisting(titleArtistDup.id, "titleArtist");
   }
 
   const s3Mode = isS3Enabled();
@@ -157,7 +179,7 @@ async function processEntry(entry: any) {
       } else {
         try { rmSync(queueFilePath); } catch {}
       }
-      return linkToExisting(fpMatch.trackId);
+      return linkToExisting(fpMatch.trackId, "fingerprint");
     }
   } catch (fpErr: any) {
     log(`Fingerprint failed (non-critical): ${fpErr.message}`);
@@ -335,6 +357,16 @@ async function processEntry(entry: any) {
   const reportBaseName = entry.filename.replace(/\.[^.]+$/, "");
   const reportPath = join(reportsDir, `${reportBaseName}_v2_analysis.json`);
   writeFileSync(reportPath, JSON.stringify({ success: true, trackId: track.id, track_title: track.title, track_artist: track.artist ?? null, ...result }, null, 2));
+
+  // ── Link upload_new log to the created track ───────────────────────
+  try {
+    await prisma.trackLog.updateMany({
+      where: { event: "upload_new", trackId: null, details: { path: ["queueId"], equals: entry.id } },
+      data: { trackId: track.id },
+    });
+  } catch {
+    // Non-critical
+  }
 
   // ── ModQueue + TrackLog ──────────────────────────────────────────────
   if (!isPopsa) {

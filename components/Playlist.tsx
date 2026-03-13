@@ -50,6 +50,11 @@ const useDominanceBuckets = () =>
     dominanceBucketLow: s.dominanceBucketLow,
     dominanceBucketHigh: s.dominanceBucketHigh,
   })));
+const useBpmFilter = () =>
+  usePlayerStore(useShallow((s) => ({
+    bpmMin: (s as any).bpmMin as number | null,
+    bpmMax: (s as any).bpmMax as number | null,
+  })));
 
 // ── Мемоизированный элемент трека ───────────────────────────────────────────
 const TrackItem = memo(function TrackItem({
@@ -132,6 +137,13 @@ const TrackItem = memo(function TrackItem({
         </div>
       </button>
 
+      {/* BPM — правый нижний угол */}
+      {track.bpm ? (
+        <span className={`absolute right-2 bottom-1.5 text-[10px] tabular-nums ${isActive ? "text-purple-300/60" : "text-gray-600"}`}>
+          {Math.round(track.bpm)} bpm
+        </span>
+      ) : null}
+
       {/* Кнопка удаления из кастомного плейлиста */}
       {customPlaylistId != null && (
         <button
@@ -198,6 +210,8 @@ function buildFilterParams(opts: {
   dominanceBucketNeg: boolean;
   dominanceBucketLow: boolean;
   dominanceBucketHigh: boolean;
+  bpmMin: number | null;
+  bpmMax: number | null;
   playlistSortBy: string;
   sortDirection: string;
   squareSortDirection: string;
@@ -237,6 +251,10 @@ function buildFilterParams(opts: {
       sp.set("status", statuses.join(","));
     }
   }
+
+  // BPM
+  if (opts.bpmMin != null) sp.set("bpmMin", String(opts.bpmMin));
+  if (opts.bpmMax != null) sp.set("bpmMax", String(opts.bpmMax));
 
   // Tags
   if (opts.accentFilterOn) sp.set("accents", "1");
@@ -300,6 +318,10 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   // ── Попап сортировки ─────────────────────────────────────────────────────
   const [sortPopoverOpen, setSortPopoverOpen] = useState(false);
   const sortPopoverRef = useRef<HTMLDivElement>(null);
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [bpmMinInput, setBpmMinInput] = useState("");
+  const [bpmMaxInput, setBpmMaxInput] = useState("");
 
   const onTabsMouseDown = (e: React.MouseEvent) => {
     const el = tabsRef.current;
@@ -338,6 +360,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, [sortPopoverOpen]);
 
+  useEffect(() => {
+    if (!filterPopoverOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (filterPopoverRef.current && !filterPopoverRef.current.contains(e.target as Node)) {
+        setFilterPopoverOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [filterPopoverOpen]);
+
   // ── Zustand — только нужные поля ─────────────────────────────────────────
   const currentTrackId = useCurrentTrackId();
   const playlistFilter = usePlaylistFilter();
@@ -347,6 +380,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const { accentFilterOn, mamboFilterOn } = useTagFilters();
   const { playlistSortBy, sortDirection, squareSortDirection } = useSortSettings();
   const { dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh } = useDominanceBuckets();
+  const { bpmMin, bpmMax } = useBpmFilter();
+  const setBpmMin = usePlayerStore((s) => (s as any).setBpmMin);
+  const setBpmMax = usePlayerStore((s) => (s as any).setBpmMax);
+  // Sync local inputs with store on mount
+  const bpmInitDone = useRef(false);
+  useEffect(() => {
+    if (bpmInitDone.current) return;
+    bpmInitDone.current = true;
+    if (bpmMin != null) setBpmMinInput(String(bpmMin));
+    if (bpmMax != null) setBpmMaxInput(String(bpmMax));
+  }, [bpmMin, bpmMax]);
   const isAdminMode = useModeratorStore((s) => s.isAdminMode);
 
   // Actions — стабильные ссылки, не вызывают ре-рендер
@@ -446,6 +490,8 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       statusFilterPopsa,
       accentFilterOn,
       mamboFilterOn,
+      bpmMin,
+      bpmMax,
       dominanceBucketNeg,
       dominanceBucketLow,
       dominanceBucketHigh,
@@ -502,6 +548,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
     bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
     statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
     accentFilterOn, mamboFilterOn,
+    bpmMin, bpmMax,
     dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh,
     playlistSortBy, sortDirection, squareSortDirection,
   ]);
@@ -528,6 +575,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         bridgeFilterWith, bridgeFilterWithout, bridgeFilterSwapped,
         statusFilterUnlistened, statusFilterModeration, statusFilterApproved, statusFilterPopsa,
         accentFilterOn, mamboFilterOn,
+        bpmMin, bpmMax,
         dominanceBucketNeg, dominanceBucketLow, dominanceBucketHigh,
         playlistSortBy, sortDirection, squareSortDirection,
       });
@@ -572,9 +620,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Refs для управления авто-прокруткой
-  const isUserHoveringRef = useRef(false);   // мышь над списком
+  const isUserScrollingRef = useRef(false);   // пользователь активно скроллит
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasInitialScrolled = useRef(false);  // уже прокрутили при загрузке
   const prevTrackIdRef = useRef<number | null>(null); // предыдущий трек
+
+  // Mark user as scrolling for 4 seconds after any scroll/touch interaction
+  const markUserScrolling = useCallback(() => {
+    isUserScrollingRef.current = true;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => { isUserScrollingRef.current = false; }, 4000);
+  }, []);
 
   // ── Виртуализация списка — в DOM только видимые элементы ──
   const virtualizer = useVirtualizer({
@@ -603,8 +659,8 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
 
     // Пагинация: tracks изменился, но трек тот же — пропускаем
     if (!isInitial && !isTrackChange) return;
-    // Смена трека, но пользователь работает с плейлистом — пропускаем
-    if (!isInitial && isTrackChange && isUserHoveringRef.current) return;
+    // Смена трека, но пользователь активно скроллит — пропускаем
+    if (!isInitial && isTrackChange && isUserScrollingRef.current) return;
 
     prevTrackIdRef.current = currentTrackId;
     hasInitialScrolled.current = true;
@@ -952,6 +1008,71 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
               />
             </svg>
           </button>
+
+          {/* Filter popover */}
+          <div ref={filterPopoverRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setFilterPopoverOpen((v) => !v)}
+              title="Фильтры"
+              className={`p-1 transition-opacity hover:opacity-80 ${bpmMin != null || bpmMax != null ? "text-purple-400" : "text-gray-500"}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+            </button>
+            {filterPopoverOpen && (
+              <div className="absolute bottom-full right-0 mb-1 bg-gray-800 border border-gray-700 rounded-xl shadow-lg z-20 p-3 w-56">
+                <p className="text-xs text-gray-400 font-medium mb-2">BPM</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    placeholder="от"
+                    value={bpmMinInput}
+                    onChange={(e) => setBpmMinInput(e.target.value)}
+                    onBlur={() => {
+                      const v = bpmMinInput.trim() ? parseFloat(bpmMinInput) : null;
+                      setBpmMin(Number.isFinite(v) ? v : null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const v = bpmMinInput.trim() ? parseFloat(bpmMinInput) : null;
+                        setBpmMin(Number.isFinite(v) ? v : null);
+                      }
+                    }}
+                    className="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 text-xs focus:ring-1 focus:ring-purple-500 focus:border-purple-500 placeholder-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="text-gray-600 text-xs">–</span>
+                  <input
+                    type="number"
+                    placeholder="до"
+                    value={bpmMaxInput}
+                    onChange={(e) => setBpmMaxInput(e.target.value)}
+                    onBlur={() => {
+                      const v = bpmMaxInput.trim() ? parseFloat(bpmMaxInput) : null;
+                      setBpmMax(Number.isFinite(v) ? v : null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const v = bpmMaxInput.trim() ? parseFloat(bpmMaxInput) : null;
+                        setBpmMax(Number.isFinite(v) ? v : null);
+                      }
+                    }}
+                    className="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 text-xs focus:ring-1 focus:ring-purple-500 focus:border-purple-500 placeholder-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+                {(bpmMin != null || bpmMax != null) && (
+                  <button
+                    type="button"
+                    onClick={() => { setBpmMin(null); setBpmMax(null); setBpmMinInput(""); setBpmMaxInput(""); }}
+                    className="mt-2 text-xs text-pink-400 hover:text-pink-300 transition-colors"
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       </div>{/* end shrink-0 filters */}
@@ -961,8 +1082,9 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         ref={scrollContainerRef}
         className="flex-1 min-h-0 md:min-h-[400px] overflow-y-auto px-4 pt-4 pb-4 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
         data-block="playlist"
-        onMouseEnter={() => { isUserHoveringRef.current = true; }}
-        onMouseLeave={() => { isUserHoveringRef.current = false; }}
+        onScroll={() => markUserScrolling()}
+        onTouchStart={() => markUserScrolling()}
+        onMouseDown={() => markUserScrolling()}
       >
         {total === 0 && !isLoading ? (
           tracks.length === 0 ? (

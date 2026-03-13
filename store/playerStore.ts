@@ -111,6 +111,8 @@ export const usePlayerStore = create<PlayerState>()(
       squareSortDirection: "none",
       playlistSortBy: "title",
       sortDirection: "asc",
+      bpmMin: null as number | null,
+      bpmMax: null as number | null,
       dominanceBucketNeg: true,
       dominanceBucketLow: true,
       dominanceBucketHigh: true,
@@ -312,6 +314,8 @@ export const usePlayerStore = create<PlayerState>()(
         else if (bucket === "low") set({ dominanceBucketLow: value });
         else set({ dominanceBucketHigh: value });
       },
+      setBpmMin: (val: number | null) => set({ bpmMin: val }),
+      setBpmMax: (val: number | null) => set({ bpmMax: val }),
       setPlayUntilSeconds: (seconds) => set({ playUntilSeconds: seconds }),
       setLoopStartSeconds: (seconds) => set({ loopStartSeconds: seconds }),
       setLoopPauseSeconds: (seconds) => set({ loopPauseSeconds: seconds }),
@@ -492,6 +496,8 @@ export const usePlayerStore = create<PlayerState>()(
         squareSortDirection: state.squareSortDirection,
         playlistSortBy: state.playlistSortBy,
         sortDirection: state.sortDirection,
+        bpmMin: state.bpmMin,
+        bpmMax: state.bpmMax,
         dominanceBucketNeg: state.dominanceBucketNeg,
         dominanceBucketLow: state.dominanceBucketLow,
         dominanceBucketHigh: state.dominanceBucketHigh,
@@ -540,6 +546,8 @@ export const usePlayerStore = create<PlayerState>()(
           ...(stored.playlistSortBy === "artist"
             ? { playlistSortBy: "title" as const }
             : {}),
+          bpmMin: get("bpmMin", currentState.bpmMin),
+          bpmMax: get("bpmMax", currentState.bpmMax),
           dominanceBucketNeg: get("dominanceBucketNeg", currentState.dominanceBucketNeg),
           dominanceBucketLow: get("dominanceBucketLow", currentState.dominanceBucketLow),
           dominanceBucketHigh: get("dominanceBucketHigh", currentState.dominanceBucketHigh),

@@ -57,6 +57,27 @@ export default function PlaybackPage() {
     setIsClient(true);
   }, []);
 
+  // Handle ?trackId= param: load the track and clean up URL
+  const trackIdHandled = useRef(false);
+  useEffect(() => {
+    if (!isClient || trackIdHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const tid = params.get("trackId");
+    if (!tid) return;
+    trackIdHandled.current = true;
+    // Remove param from URL immediately
+    window.history.replaceState({}, "", window.location.pathname);
+    // Fetch and load the track
+    (async () => {
+      try {
+        const res = await fetch(`/api/tracks/${tid}`);
+        if (!res.ok) return;
+        const track: Track = await res.json();
+        loadTrack(track);
+      } catch {}
+    })();
+  }, [isClient, loadTrack]);
+
   // Инициализация аудио-движка
   // Store-Driven: Subscribe to onTrackEnd ONCE on mount
   useEffect(() => {

@@ -324,7 +324,7 @@ export default function QueuePage() {
                   {entry.status === "done" && entry.trackId && (
                     <div className="mt-2">
                       <Link
-                        href="/"
+                        href={`/?trackId=${entry.trackId}`}
                         className="inline-flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-300 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

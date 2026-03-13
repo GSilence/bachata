@@ -858,8 +858,7 @@ export default function DancerToolbar({
                     Голос / Тарелка / Хлопок
                   </p>
                   <p className="text-gray-500 text-xs leading-relaxed">
-                    Тип звукового сигнала для счёта. Голос озвучивает цифрами,
-                    тарелка и хлопок дают ударный акцент.
+                    Установите тип озвучки.
                   </p>
                 </div>
               </div>
@@ -923,8 +922,7 @@ export default function DancerToolbar({
                     Счёт в строке / Полный экран
                   </p>
                   <p className="text-gray-500 text-xs leading-relaxed">
-                    Переключает отображение счётчика: компактный встроенный вид
-                    или на весь экран.
+                    Цифра отражается на весь экран.
                   </p>
                 </div>
               </div>
@@ -976,8 +974,7 @@ export default function DancerToolbar({
                 <div>
                   <p className="text-white font-medium mb-0.5">Скорость</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
-                    Замедляйте или ускоряйте воспроизведение от 50% до 150%.
-                    Полезно для разучивания сложных элементов на медленной скорости.
+                    Регулирует скорость трека 50–150% от начальной.
                   </p>
                 </div>
               </div>
@@ -1003,8 +1000,7 @@ export default function DancerToolbar({
                   <p className="text-white font-medium mb-0.5">Цикл</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
                     Задайте начало и конец фрагмента — он будет повторяться
-                    бесконечно. Удобно для отработки хореографии и футворков. Можно добавить
-                    паузу между повторами.
+                    бесконечно. Незаменима для отработки хореографии и футворков.
                   </p>
                 </div>
               </div>
@@ -1028,8 +1024,8 @@ export default function DancerToolbar({
                   <p className="text-white font-medium mb-0.5">Отрезок</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
                     Проигрывает только первые N секунд трека, затем автоматически
-                    переключает на следующий. Удобно для быстрого ознакомления
-                    с плейлистом.
+                    переключает на следующий. Специально для участников J&J,
+                    а также для быстрого ознакомления с плейлистом.
                   </p>
                 </div>
               </div>
@@ -1050,9 +1046,9 @@ export default function DancerToolbar({
                 <div>
                   <p className="text-white font-medium mb-0.5">Пожаловаться</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
-                    Кнопка в правом верхнем углу плеера. Если трек не бачата,
-                    неправильно разложен счёт или плохого качества —
-                    сообщите, и мы разберёмся.
+                    Кнопка в правом верхнем углу плеера. Если трек низкого
+                    качества, не бачата или неправильный счёт — сообщите,
+                    и мы разберёмся.
                   </p>
                 </div>
               </div>
