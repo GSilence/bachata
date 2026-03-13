@@ -262,7 +262,7 @@ export default function DancerToolbar({
       </div>
 
       {/* ── Icon buttons row ──────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-start gap-5">
+      <div className="grid grid-cols-3 md:flex md:flex-wrap items-start justify-items-center md:justify-start gap-4 md:gap-5">
         {/* Voice type cycling */}
         <button
           onClick={cycleVoiceType}
@@ -461,8 +461,11 @@ export default function DancerToolbar({
           </button>
 
           {showFilterMenu && (
+            <>
+            {/* Mobile backdrop */}
+            <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setShowFilterMenu(false)} />
             <div
-              className="absolute bottom-full mb-3 right-0 bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl py-2 z-50"
+              className="fixed md:absolute bottom-auto md:bottom-full top-1/2 md:top-auto -translate-y-1/2 md:translate-y-0 left-1/2 md:left-auto -translate-x-1/2 md:translate-x-0 md:right-0 md:mb-3 bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl py-2 z-50"
               style={{ minWidth: "230px" }}
             >
               <div className="px-1 flex flex-col gap-1">
@@ -487,6 +490,7 @@ export default function DancerToolbar({
                 ))}
               </div>
             </div>
+            </>
           )}
         </div>
 
@@ -955,6 +959,29 @@ export default function DancerToolbar({
                 </div>
               </div>
 
+              {/* Speed */}
+              <div className="flex gap-3">
+                <div className="shrink-0 w-8 h-8 rounded-xl bg-gray-700 flex items-center justify-center text-purple-400">
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.6}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 12V4M12 12l5 3M12 12L7 15" />
+                    <path strokeLinecap="round" d="M4.93 4.93a10 10 0 1014.14 0" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-medium mb-0.5">Скорость</p>
+                  <p className="text-gray-500 text-xs leading-relaxed">
+                    Замедляйте или ускоряйте воспроизведение от 50% до 150%.
+                    Полезно для разучивания сложных элементов на медленной скорости.
+                  </p>
+                </div>
+              </div>
+
               {/* Loop */}
               <div className="flex gap-3">
                 <div className="shrink-0 w-8 h-8 rounded-xl bg-gray-700 flex items-center justify-center text-purple-400">
@@ -978,6 +1005,31 @@ export default function DancerToolbar({
                     Задайте начало и конец фрагмента — он будет повторяться
                     бесконечно. Удобно для отработки хореографии и футворков. Можно добавить
                     паузу между повторами.
+                  </p>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div className="flex gap-3">
+                <div className="shrink-0 w-8 h-8 rounded-xl bg-gray-700 flex items-center justify-center text-purple-400">
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.6}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7" />
+                    <path strokeLinecap="round" d="M5 12h14" />
+                    <line x1="20" y1="5" x2="20" y2="19" strokeWidth={2} strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-medium mb-0.5">Отрезок</p>
+                  <p className="text-gray-500 text-xs leading-relaxed">
+                    Проигрывает только первые N секунд трека, затем автоматически
+                    переключает на следующий. Удобно для быстрого ознакомления
+                    с плейлистом.
                   </p>
                 </div>
               </div>

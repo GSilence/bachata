@@ -21,6 +21,13 @@ export default function ComplaintModal({
   const { user } = useAuthStore();
   const [reason, setReason] = useState("wrong_grid");
   const [message, setMessage] = useState("");
+
+  const placeholderByReason: Record<string, string> = {
+    wrong_grid: "Опишите, что не так с раскладом трека...",
+    not_bachata: "Укажите жанр, если знаете...",
+    low_quality: "Что именно не так: шум, обрезка, искажения?",
+    other: "Опишите проблему...",
+  };
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +124,7 @@ export default function ComplaintModal({
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="Опишите, что не так с раскладом трека..."
+                placeholder={placeholderByReason[reason] ?? "Опишите проблему..."}
                 rows={4}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:ring-2 focus:ring-purple-600 focus:border-transparent resize-none"
               />
