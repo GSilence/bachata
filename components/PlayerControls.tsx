@@ -433,27 +433,27 @@ export default function PlayerControls({
               : playMode === "random" ? "Перемешать"
               : "Повторить"
             }
-            className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+            className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
               playMode === "sequential"
-                ? "text-gray-400 hover:text-white"
-                : "text-purple-400 hover:text-purple-300"
+                ? "text-gray-400 hover:text-white hover:bg-gray-700"
+                : "text-purple-400 hover:text-purple-300 hover:bg-gray-700"
             }`}
           >
             {playMode === "sequential" && (
               /* По порядку: list arrows */
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h12M3 12h9m-9 5h6M17 5l3 3-3 3M17 16l3 3-3 3" />
               </svg>
             )}
             {playMode === "random" && (
               /* Перемешать: shuffle */
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 3h5v5M4 20l16-16M16 21h5v-5M4 4l7 7" />
               </svg>
             )}
             {playMode === "loop" && (
               /* Повторить: loop */
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3" />
               </svg>
             )}
@@ -474,8 +474,10 @@ export default function PlayerControls({
             aria-label="Previous"
             title="Предыдущий трек"
           >
-            <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" />
+            <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="currentColor" viewBox="0 0 24 24">
+              <rect x="4" y="6" width="2" height="12" rx="0.5" />
+              <path d="M8.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0015 16V8a1 1 0 00-1.6-.8l-5.334 4z" />
+              <path d="M14.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0021 16V8a1 1 0 00-1.6-.8l-5.334 4z" />
             </svg>
           </button>
 
@@ -530,25 +532,27 @@ export default function PlayerControls({
             aria-label="Next"
             title="Следующий трек"
           >
-            <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z" />
+            <svg className="w-7 h-7 sm:w-8 sm:h-8" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3 7v10l7-5z" />
+              <path d="M10 7v10l7-5z" />
+              <rect x="18" y="6" width="2" height="12" rx="0.5" />
             </svg>
           </button>
         </div>
 
         {/* Right: Volume popup buttons (hidden on mobile, shown on md+) */}
-        <div ref={volumeAreaRef} className="shrink-0 hidden md:flex items-center gap-1">
+        <div ref={volumeAreaRef} className="shrink-0 hidden md:flex items-center gap-2">
           {/* Music volume */}
           <div className="relative">
             <button
               onClick={() => setOpenVolume(openVolume === "music" ? null : "music")}
               title={`Музыка: ${musicVolume}%`}
-              className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
-                openVolume === "music" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+              className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
+                openVolume === "music" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white hover:bg-gray-700"
               }`}
             >
               {/* Music note icon */}
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M9 3v10.55A4 4 0 1 0 11 17V7h4V3H9z"/>
               </svg>
             </button>
@@ -565,12 +569,12 @@ export default function PlayerControls({
             <button
               onClick={() => setOpenVolume(openVolume === "voice" ? null : "voice")}
               title={`Голос: ${voiceVolume}%`}
-              className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
-                openVolume === "voice" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+              className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
+                openVolume === "voice" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white hover:bg-gray-700"
               }`}
             >
               {/* Speaking person icon */}
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="8" cy="6" r="3.5"/>
                 <path d="M2 19.5c0-3.6 2.7-6.5 6-6.5 1.4 0 2.7.5 3.7 1.4"/>
                 <path d="M15 10.5a3 3 0 000-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
@@ -588,7 +592,7 @@ export default function PlayerControls({
         </div>{/* end main transport row */}
 
         {/* Secondary controls row — mobile only */}
-        <div className="flex md:hidden items-center justify-center gap-4">
+        <div className="flex md:hidden items-center justify-center gap-3">
           {/* Play mode */}
           <button
             onClick={cyclePlayMode}
@@ -597,39 +601,39 @@ export default function PlayerControls({
               : playMode === "random" ? "Перемешать"
               : "Повторить"
             }
-            className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+            className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
               playMode === "sequential"
-                ? "text-gray-400 hover:text-white"
-                : "text-purple-400 hover:text-purple-300"
+                ? "text-gray-400 hover:text-white hover:bg-gray-700"
+                : "text-purple-400 hover:text-purple-300 hover:bg-gray-700"
             }`}
           >
             {playMode === "sequential" && (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h12M3 12h9m-9 5h6M17 5l3 3-3 3M17 16l3 3-3 3" />
               </svg>
             )}
             {playMode === "random" && (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 3h5v5M4 20l16-16M16 21h5v-5M4 4l7 7" />
               </svg>
             )}
             {playMode === "loop" && (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3" />
               </svg>
             )}
           </button>
           {/* Music & Voice volume (wrapped for outside-click detection) */}
-          <div ref={mobileVolumeAreaRef} className="flex items-center gap-4">
+          <div ref={mobileVolumeAreaRef} className="flex items-center gap-3">
             <div className="relative">
               <button
                 onClick={() => setOpenVolume(openVolume === "music" ? null : "music")}
                 title={`Музыка: ${musicVolume}%`}
-                className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
-                  openVolume === "music" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+                className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
+                  openVolume === "music" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white hover:bg-gray-700"
                 }`}
               >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M9 3v10.55A4 4 0 1 0 11 17V7h4V3H9z"/>
                 </svg>
               </button>
@@ -644,11 +648,11 @@ export default function PlayerControls({
               <button
                 onClick={() => setOpenVolume(openVolume === "voice" ? null : "voice")}
                 title={`Голос: ${voiceVolume}%`}
-                className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
-                  openVolume === "voice" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white"
+                className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
+                  openVolume === "voice" ? "text-purple-400 bg-gray-700" : "text-gray-400 hover:text-white hover:bg-gray-700"
                 }`}
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="8" cy="6" r="3.5"/>
                   <path d="M2 19.5c0-3.6 2.7-6.5 6-6.5 1.4 0 2.7.5 3.7 1.4"/>
                   <path d="M15 10.5a3 3 0 000-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>

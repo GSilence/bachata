@@ -26,11 +26,11 @@
   --border-primary: 55, 65, 81;      /* gray-700 */
   --border-secondary: 75, 85, 99;    /* gray-600 */
 
-  /* Text */
+  /* Text — high contrast for outdoor readability */
   --text-primary: 255, 255, 255;     /* white */
-  --text-secondary: 209, 213, 219;   /* gray-300 */
-  --text-tertiary: 156, 163, 175;    /* gray-400 */
-  --text-muted: 107, 114, 128;       /* gray-500 */
+  --text-secondary: 235, 238, 242;   /* near-white (was gray-300) */
+  --text-tertiary: 200, 205, 215;    /* light gray (was gray-400) */
+  --text-muted: 160, 165, 178;       /* readable muted (was gray-500) */
 
   /* Accent — purple */
   --accent: 147, 51, 234;            /* purple-600 #9333ea */
@@ -69,11 +69,11 @@
   --border-primary: 50, 48, 72;      /* muted purple border */
   --border-secondary: 65, 62, 90;    /* lighter purple border */
 
-  /* Text */
-  --text-primary: 252, 252, 255;     /* #fcfcff from reference */
-  --text-secondary: 196, 196, 196;   /* #c4c4c4 from reference */
-  --text-tertiary: 150, 148, 170;    /* muted lavender */
-  --text-muted: 110, 108, 130;       /* deep muted */
+  /* Text — high contrast for outdoor readability */
+  --text-primary: 255, 255, 255;     /* pure white */
+  --text-secondary: 235, 235, 240;   /* near-white */
+  --text-tertiary: 210, 210, 220;    /* light gray-lavender */
+  --text-muted: 170, 168, 185;       /* readable muted */
 
   /* Accent — indigo-purple from reference */
   --accent: 60, 58, 190;             /* #3c3abe from reference */

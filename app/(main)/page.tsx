@@ -291,10 +291,10 @@ export default function PlaybackPage() {
     <div className="min-h-screen relative">
       <ModerationModal />
 
-      {/* Mobile playlist toggle button (top-right) */}
+      {/* Mobile playlist toggle button (top-left, next to sidebar menu) */}
       <button
         onClick={() => setMobilePlaylistOpen(!mobilePlaylistOpen)}
-        className="lg:hidden fixed top-4 right-4 z-50 p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
+        className="lg:hidden fixed top-4 left-16 z-50 p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
         aria-label="Toggle playlist"
       >
         <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
@@ -377,12 +377,21 @@ export default function PlaybackPage() {
                 {currentTrack && user && (
                   <button
                     onClick={() => setShowComplaint(true)}
+                    aria-label="Пожаловаться на трек"
                     title="Пожаловаться на трек"
-                    className="absolute top-3 right-3 z-10 p-2 rounded-lg text-gray-600 hover:text-amber-400 hover:bg-gray-800/60 transition-colors"
+                    className="absolute top-4 right-4 z-10 p-2 bg-gray-800 rounded-lg text-white hover:text-amber-400 hover:bg-gray-700 transition-colors"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                      {/* Круг запрета — приглушённый красный */}
+                      <circle cx="12" cy="12" r="11.2" strokeWidth={1.6} fill="none" stroke="#e5e7eb" opacity={0.5} />
+                      {/* Диагональная черта запрета — под рукой */}
+                      <line x1="4" y1="4" x2="20" y2="20" strokeWidth={1.6} stroke="#e5e7eb" opacity={0.5} />
+                      {/* Ладонь (заливка) — поверх черты */}
+                      <path
+                        fill="#ef4444"
+                        transform="translate(5.5, 4.5) scale(0.43)"
+                        d="M31 8.5c0 0-2.53 5.333-3.215 8.062-0.896 3.57 0.13 6.268-1.172 9.73-2.25 4.060-2.402 4.717-10.613 4.708-3.009-0.003-11.626-2.297-11.626-2.297-1.188-0.305-3.373-0.125-3.373-1.453s1.554-2.296 2.936-2.3l5.439 0.478c1.322-0.083 2.705-0.856 2.747-2.585-0.022-2.558-0.275-4.522-1.573-6.6l-5.042-7.867c-0.301-0.626-0.373-1.694 0.499-2.171s1.862 0.232 2.2 0.849l5.631 7.66c0.602 0.559 1.671 0.667 1.58-0.524l-2.487-11.401c-0.155-0.81 0.256-1.791 1.194-1.791 1.231 0 1.987 0.47 1.963 1.213l2.734 11.249c0.214 0.547 0.972 0.475 1.176-0.031l0.779-10.939c0.040-0.349 0.495-0.957 1.369-0.831s1.377 1.063 1.285 1.424l-0.253 10.809c0.177 0.958 0.93 1.098 1.517 0.563l3.827-6.843c0.232-0.574 1.143-0.693 1.67-0.466 0.491 0.32 0.81 0.748 0.81 1.351v0z"
+                      />
                     </svg>
                   </button>
                 )}

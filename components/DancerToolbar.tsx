@@ -58,7 +58,11 @@ export default function DancerToolbar({
 
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSpeed, setShowSpeed] = useState(false);
+  const [showLoop, setShowLoop] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement>(null);
+  const speedPanelRef = useRef<HTMLDivElement>(null);
+  const loopPanelRef = useRef<HTMLDivElement>(null);
 
   const [loopStartInput, setLoopStartInput] = useState("");
   const [playUntilInput, setPlayUntilInput] = useState("");
@@ -89,6 +93,18 @@ export default function DancerToolbar({
       loopPauseSeconds == null ? "" : String(Math.round(loopPauseSeconds)),
     );
   }, [loopPauseSeconds]);
+
+  // Scroll to panel when opened
+  useEffect(() => {
+    if (showSpeed && speedPanelRef.current) {
+      setTimeout(() => speedPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+    }
+  }, [showSpeed]);
+  useEffect(() => {
+    if (showLoop && loopPanelRef.current) {
+      setTimeout(() => loopPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+    }
+  }, [showLoop]);
 
   // Outside-click for filter menu
   useEffect(() => {
@@ -238,7 +254,7 @@ export default function DancerToolbar({
       </div>
 
       {/* ── Icon buttons row ──────────────────────────── */}
-      <div className="flex items-start justify-start gap-5">
+      <div className="flex flex-wrap items-start justify-start gap-5">
         {/* Voice type cycling */}
         <button
           onClick={cycleVoiceType}
@@ -508,43 +524,212 @@ export default function DancerToolbar({
             </div>
           )}
         </div>
+
+        {/* Speed toggle */}
+        <button
+          onClick={() => { setShowSpeed(!showSpeed); setShowLoop(false); }}
+          title={`Скорость: ${Math.round(playbackRate * 100)}%`}
+          className="flex flex-col items-center gap-2 group"
+        >
+          <div className={`w-12 h-12 md:w-16 md:h-16 rounded-2xl transition-colors flex items-center justify-center ${
+            showSpeed
+              ? "bg-gray-600 text-purple-300"
+              : playbackRate !== 1
+                ? "bg-purple-600/20 text-purple-400 group-hover:bg-gray-600 group-hover:text-purple-300"
+                : "bg-gray-700 group-hover:bg-gray-600 text-purple-400 group-hover:text-purple-300"
+          }`}>
+            <svg className={iconCls} fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 12V4M12 12l5 3M12 12L7 15" />
+              <path strokeLinecap="round" d="M4.93 4.93a10 10 0 1014.14 0" />
+            </svg>
+          </div>
+          <span className={`w-12 md:w-16 text-center text-sm md:text-base transition-colors leading-tight ${
+            showSpeed ? "text-gray-300" : playbackRate !== 1 ? "text-purple-400" : "text-gray-500 group-hover:text-gray-300"
+          }`}>
+            {playbackRate !== 1 ? `${Math.round(playbackRate * 100)}%` : "Темп"}
+          </span>
+        </button>
+
+        {/* Loop toggle */}
+        <button
+          onClick={() => { setShowLoop(!showLoop); setShowSpeed(false); }}
+          title="Цикл"
+          className="flex flex-col items-center gap-2 group"
+        >
+          <div className={`w-12 h-12 md:w-16 md:h-16 rounded-2xl transition-colors flex items-center justify-center ${
+            showLoop
+              ? "bg-gray-600 text-purple-300"
+              : loopActive
+                ? "bg-purple-600/20 text-purple-400 group-hover:bg-gray-600 group-hover:text-purple-300"
+                : "bg-gray-700 group-hover:bg-gray-600 text-purple-400 group-hover:text-purple-300"
+          }`}>
+            <svg className={iconCls} fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3" />
+            </svg>
+          </div>
+          <span className={`w-12 md:w-16 text-center text-sm md:text-base transition-colors leading-tight ${
+            showLoop ? "text-gray-300" : loopActive ? "text-purple-400" : "text-gray-500 group-hover:text-gray-300"
+          }`}>
+            Цикл
+          </span>
+        </button>
       </div>
 
-      {/* ── Speed + Loop two-column section ─────────────────────── */}
-      <div className="mt-6 pt-4 border-t border-gray-700/50 flex flex-col lg:flex-row gap-6">
+      {/* ── Speed panel (collapsible) ─────────────────────── */}
+      {showSpeed && (
+        <div ref={speedPanelRef} className="mt-6 pt-4 border-t border-gray-700/50">
+          <div className="max-w-sm mx-auto">
+            <div className="flex flex-col items-center gap-3">
+              <span className="text-2xl font-semibold text-gray-200 tabular-nums">
+                {Math.round(playbackRate * 100)}%
+              </span>
+              <input
+                type="range"
+                min="50"
+                max="150"
+                step="5"
+                value={Math.round(playbackRate * 100)}
+                onChange={(e) => setPlaybackRate(parseInt(e.target.value) / 100)}
+                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                style={{
+                  background: (() => {
+                    const pct = ((playbackRate * 100 - 50) / 100) * 100;
+                    return `linear-gradient(to right, rgb(var(--accent-light)) 0%, rgb(var(--accent-light)) ${pct}%, rgb(var(--bg-tertiary)) ${pct}%, rgb(var(--bg-tertiary)) 100%)`;
+                  })(),
+                }}
+              />
+              <div className="flex justify-between w-full text-[10px] text-gray-500">
+                <span>50%</span>
+                <span>100%</span>
+                <span>150%</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlaybackRate(1)}
+                className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  playbackRate !== 1
+                    ? "bg-pink-400/20 text-white hover:bg-pink-400/30"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+                }`}
+              >
+                Сброс
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-        {/* ── Left column: Speed ── */}
-        <div className="lg:w-72 shrink-0">
-          <p className="text-left md:text-center text-lg md:text-xl mb-6 text-gray-400">Скорость</p>
-          <div className="flex flex-col items-start md:items-center gap-3">
-            <span className="text-2xl font-semibold text-gray-200 tabular-nums">
-              {Math.round(playbackRate * 100)}%
-            </span>
+      {/* ── Loop panel (collapsible) ─────────────────────── */}
+      {showLoop && (
+        <div ref={loopPanelRef} className="mt-6 pt-4 border-t border-gray-700/50">
+          {/* Row: [start input] [slider] [end input] */}
+          <div className="flex items-center gap-8 mb-2">
             <input
-              type="range"
-              min="50"
-              max="150"
-              step="5"
-              value={Math.round(playbackRate * 100)}
-              onChange={(e) => setPlaybackRate(parseInt(e.target.value) / 100)}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-purple-500"
-              style={{
-                background: (() => {
-                  const pct = ((playbackRate * 100 - 50) / 100) * 100;
-                  return `linear-gradient(to right, rgb(var(--accent-light)) 0%, rgb(var(--accent-light)) ${pct}%, rgb(var(--bg-tertiary)) ${pct}%, rgb(var(--bg-tertiary)) 100%)`;
-                })(),
+              type="number"
+              min={0}
+              max={999}
+              step={1}
+              placeholder="сек"
+              value={loopStartInput}
+              onChange={(e) => setLoopStartInput(e.target.value)}
+              onBlur={() => {
+                const v = loopStartInput.trim();
+                if (!v) { setLoopStartSeconds(null); return; }
+                const s = parseInt(v, 10);
+                if (Number.isFinite(s) && s >= 0) { setLoopStartSeconds(s); setLoopStartInput(String(s)); }
+                else { setLoopStartSeconds(null); setLoopStartInput(""); }
               }}
+              className={`${INPUT_CLS} shrink-0`}
+              aria-label="Начало цикла (сек)"
             />
-            <div className="flex justify-between w-full text-[10px] text-gray-500">
-              <span>50%</span>
-              <span>100%</span>
-              <span>150%</span>
+
+            <div
+              ref={sliderRef}
+              onClick={handleSliderClick}
+              className="relative flex-1 h-8 cursor-pointer select-none"
+            >
+              <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 bg-gray-600 rounded-full" />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full"
+                style={{
+                  left: `${displayStartPct}%`,
+                  width: `${displayEndPct - displayStartPct}%`,
+                  background: "linear-gradient(to right, rgba(59,130,246,0.35), rgba(139,92,246,0.35), rgba(239,68,68,0.35))",
+                }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-blue-400 rounded-full cursor-grab active:cursor-grabbing shadow-md border-2 border-blue-300 z-10 touch-none"
+                style={{ left: `${displayStartPct}%` }}
+                title={loopStartSeconds != null ? `Начало: ${fmt(loopStartSeconds)}` : "Начало"}
+                onMouseDown={(e) => { e.stopPropagation(); draggingLoopRef.current = "start"; }}
+                onTouchStart={(e) => { e.stopPropagation(); draggingLoopRef.current = "start"; }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-red-400 rounded-full cursor-grab active:cursor-grabbing shadow-md border-2 border-red-300 z-10 touch-none"
+                style={{ left: `${displayEndPct}%` }}
+                title={playUntilSeconds != null ? `Конец: ${fmt(playUntilSeconds)}` : "Конец"}
+                onMouseDown={(e) => { e.stopPropagation(); draggingLoopRef.current = "end"; }}
+                onTouchStart={(e) => { e.stopPropagation(); draggingLoopRef.current = "end"; }}
+              />
+              <div className="absolute -bottom-5 left-0 text-[10px] text-gray-500">0:00</div>
+              {duration > 0 && (
+                <div className="absolute -bottom-5 right-0 text-[10px] text-gray-500">{fmt(duration)}</div>
+              )}
+            </div>
+
+            <input
+              type="number"
+              min={1}
+              max={999}
+              step={1}
+              placeholder="сек"
+              value={playUntilInput}
+              onChange={(e) => setPlayUntilInput(e.target.value)}
+              onBlur={() => {
+                const v = playUntilInput.trim();
+                if (!v) { setPlayUntilSeconds(null); return; }
+                const s = parseInt(v, 10);
+                if (Number.isFinite(s) && s > 0) { setPlayUntilSeconds(s); setPlayUntilInput(String(s)); }
+                else { setPlayUntilSeconds(null); setPlayUntilInput(""); }
+              }}
+              className={`${INPUT_CLS} shrink-0`}
+              aria-label="Конец цикла (сек)"
+            />
+          </div>
+
+          {/* Interval + Reset */}
+          <div className="flex items-center justify-between gap-2 mt-7 mb-3">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500 shrink-0">Интервал</span>
+              <input
+                type="number"
+                min={0}
+                max={999}
+                step={1}
+                placeholder="сек"
+                value={loopPauseInput}
+                onChange={(e) => setLoopPauseInput(e.target.value)}
+                onBlur={() => {
+                  const v = loopPauseInput.trim();
+                  if (!v) { setLoopPauseSeconds(null); return; }
+                  const s = parseInt(v, 10);
+                  if (Number.isFinite(s) && s >= 0) { setLoopPauseSeconds(s); setLoopPauseInput(String(s)); }
+                  else { setLoopPauseSeconds(null); setLoopPauseInput(""); }
+                }}
+                className={INPUT_CLS}
+                aria-label="Пауза между циклами (сек)"
+              />
+              <span className="text-xs text-gray-500 shrink-0">сек</span>
             </div>
             <button
               type="button"
-              onClick={() => setPlaybackRate(1)}
-              className={`px-2 py-1 text-sm rounded transition-colors h-[30px] md:h-auto self-end md:self-center ${
-                playbackRate !== 1
+              onClick={() => {
+                setLoopStartSeconds(null); setLoopStartInput("");
+                setPlayUntilSeconds(null); setPlayUntilInput("");
+                setLoopPauseSeconds(null); setLoopPauseInput("");
+              }}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                loopActive
                   ? "bg-pink-400/20 text-white hover:bg-pink-400/30"
                   : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
               }`}
@@ -552,200 +737,8 @@ export default function DancerToolbar({
               Сброс
             </button>
           </div>
-        </div>{/* end left column: Speed */}
-
-        {/* ── Right column: Cycle ── */}
-        <div className="flex-1 min-w-0">
-        <p className="text-left md:text-center text-lg md:text-xl mb-6 text-gray-400">Цикл</p>
-
-        {/* Row: [start input] [slider] [end input] */}
-        <div className="flex items-center gap-8 mb-2">
-          {/* Start input */}
-          <input
-            type="number"
-            min={0}
-            max={999}
-            step={1}
-            placeholder="сек"
-            value={loopStartInput}
-            onChange={(e) => setLoopStartInput(e.target.value)}
-            onBlur={() => {
-              const v = loopStartInput.trim();
-              if (!v) {
-                setLoopStartSeconds(null);
-                return;
-              }
-              const s = parseInt(v, 10);
-              if (Number.isFinite(s) && s >= 0) {
-                setLoopStartSeconds(s);
-                setLoopStartInput(String(s));
-              } else {
-                setLoopStartSeconds(null);
-                setLoopStartInput("");
-              }
-            }}
-            className={`${INPUT_CLS} shrink-0`}
-            aria-label="Начало цикла (сек)"
-          />
-
-          {/* Visual range slider */}
-          <div
-            ref={sliderRef}
-            onClick={handleSliderClick}
-            className="relative flex-1 h-8 cursor-pointer select-none"
-          >
-            {/* Track background */}
-            <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 bg-gray-600 rounded-full" />
-
-            {/* Highlighted zone — always between start and end */}
-            <div
-              className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full"
-              style={{
-                left: `${displayStartPct}%`,
-                width: `${displayEndPct - displayStartPct}%`,
-                background: "linear-gradient(to right, rgba(59,130,246,0.35), rgba(139,92,246,0.35), rgba(239,68,68,0.35))",
-              }}
-            />
-
-            {/* Start handle — always visible */}
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-blue-400 rounded-full cursor-grab active:cursor-grabbing shadow-md border-2 border-blue-300 z-10 touch-none"
-              style={{ left: `${displayStartPct}%` }}
-              title={
-                loopStartSeconds != null
-                  ? `Начало: ${fmt(loopStartSeconds)}`
-                  : "Начало"
-              }
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                draggingLoopRef.current = "start";
-              }}
-              onTouchStart={(e) => {
-                e.stopPropagation();
-                draggingLoopRef.current = "start";
-              }}
-            />
-
-            {/* End handle — always visible */}
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-red-400 rounded-full cursor-grab active:cursor-grabbing shadow-md border-2 border-red-300 z-10 touch-none"
-              style={{ left: `${displayEndPct}%` }}
-              title={
-                playUntilSeconds != null
-                  ? `Конец: ${fmt(playUntilSeconds)}`
-                  : "Конец"
-              }
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                draggingLoopRef.current = "end";
-              }}
-              onTouchStart={(e) => {
-                e.stopPropagation();
-                draggingLoopRef.current = "end";
-              }}
-            />
-
-            {/* Time labels */}
-            <div className="absolute -bottom-5 left-0 text-[10px] text-gray-500">
-              0:00
-            </div>
-            {duration > 0 && (
-              <div className="absolute -bottom-5 right-0 text-[10px] text-gray-500">
-                {fmt(duration)}
-              </div>
-            )}
-          </div>
-
-          {/* End input */}
-          <input
-            type="number"
-            min={1}
-            max={999}
-            step={1}
-            placeholder="сек"
-            value={playUntilInput}
-            onChange={(e) => setPlayUntilInput(e.target.value)}
-            onBlur={() => {
-              const v = playUntilInput.trim();
-              if (!v) {
-                setPlayUntilSeconds(null);
-                return;
-              }
-              const s = parseInt(v, 10);
-              if (Number.isFinite(s) && s > 0) {
-                setPlayUntilSeconds(s);
-                setPlayUntilInput(String(s));
-              } else {
-                setPlayUntilSeconds(null);
-                setPlayUntilInput("");
-              }
-            }}
-            className={`${INPUT_CLS} shrink-0`}
-            aria-label="Конец цикла (сек)"
-          />
         </div>
-
-        {/* Row: Interval left, Reset right */}
-        <div className="flex items-center justify-between gap-2 mt-7 mb-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500 shrink-0">Интервал</span>
-            <input
-              type="number"
-              min={0}
-              max={999}
-              step={1}
-              placeholder="сек"
-              value={loopPauseInput}
-              onChange={(e) => setLoopPauseInput(e.target.value)}
-              onBlur={() => {
-                const v = loopPauseInput.trim();
-                if (!v) {
-                  setLoopPauseSeconds(null);
-                  return;
-                }
-                const s = parseInt(v, 10);
-                if (Number.isFinite(s) && s >= 0) {
-                  setLoopPauseSeconds(s);
-                  setLoopPauseInput(String(s));
-                } else {
-                  setLoopPauseSeconds(null);
-                  setLoopPauseInput("");
-                }
-              }}
-              className={INPUT_CLS}
-              aria-label="Пауза между циклами (сек)"
-            />
-            <span className="text-xs text-gray-500 shrink-0">сек</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setLoopStartSeconds(null);
-              setLoopStartInput("");
-              setPlayUntilSeconds(null);
-              setPlayUntilInput("");
-              setLoopPauseSeconds(null);
-              setLoopPauseInput("");
-            }}
-            className={`px-2 py-1 text-sm rounded transition-colors h-[30px] md:h-auto ${
-              loopActive
-                ? "bg-pink-400/20 text-white hover:bg-pink-400/30"
-                : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
-            }`}
-          >
-            Сброс
-          </button>
-        </div>
-
-        <p className="text-xs text-gray-500 leading-relaxed">
-          Выставьте нужный отрезок, и он будет играть бесконечно — удобно для
-          заучивания хореографии и футворков.
-          <br />
-          Можно задать паузу между повторами.
-        </p>
-        </div>{/* end right column: Cycle */}
-
-      </div>{/* end two-column wrapper */}
+      )}
 
       {/* ── Help modal ─────────────────────────────────────────────── */}
       {showHelp && (
@@ -972,8 +965,30 @@ export default function DancerToolbar({
                   <p className="text-white font-medium mb-0.5">Цикл</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
                     Задайте начало и конец фрагмента — он будет повторяться
-                    бесконечно. Удобно для отработки связок. Можно добавить
+                    бесконечно. Удобно для отработки хореографии и футворков. Можно добавить
                     паузу между повторами.
+                  </p>
+                </div>
+              </div>
+
+              {/* Пожаловаться */}
+              <div className="flex gap-3">
+                <div className="shrink-0 w-8 h-8 rounded-xl bg-gray-700 flex items-center justify-center text-amber-400">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10.5" strokeWidth={1.6} fill="none" stroke="currentColor" opacity={0.5} />
+                    <line x1="4.5" y1="4.5" x2="19.5" y2="19.5" strokeWidth={1.6} stroke="currentColor" opacity={0.5} />
+                    <path
+                      fill="currentColor"
+                      transform="translate(4.5, 3.5) scale(0.47)"
+                      d="M31 8.5c0 0-2.53 5.333-3.215 8.062-0.896 3.57 0.13 6.268-1.172 9.73-2.25 4.060-2.402 4.717-10.613 4.708-3.009-0.003-11.626-2.297-11.626-2.297-1.188-0.305-3.373-0.125-3.373-1.453s1.554-2.296 2.936-2.3l5.439 0.478c1.322-0.083 2.705-0.856 2.747-2.585-0.022-2.558-0.275-4.522-1.573-6.6l-5.042-7.867c-0.301-0.626-0.373-1.694 0.499-2.171s1.862 0.232 2.2 0.849l5.631 7.66c0.602 0.559 1.671 0.667 1.58-0.524l-2.487-11.401c-0.155-0.81 0.256-1.791 1.194-1.791 1.231 0 1.987 0.47 1.963 1.213l2.734 11.249c0.214 0.547 0.972 0.475 1.176-0.031l0.779-10.939c0.040-0.349 0.495-0.957 1.369-0.831s1.377 1.063 1.285 1.424l-0.253 10.809c0.177 0.958 0.93 1.098 1.517 0.563l3.827-6.843c0.232-0.574 1.143-0.693 1.67-0.466 0.491 0.32 0.81 0.748 0.81 1.351v0z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-medium mb-0.5">Пожаловаться</p>
+                  <p className="text-gray-500 text-xs leading-relaxed">
+                    Кнопка в правом верхнем углу плеера. Если трек не бачата
+                    или плохого качества — сообщите, и мы разберёмся.
                   </p>
                 </div>
               </div>

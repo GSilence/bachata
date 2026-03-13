@@ -84,10 +84,10 @@ export default function BeatCounter({
                   : "text-purple-400"
             }`}
             style={{
-              fontSize: "7rem",
+              fontSize: "21rem",
               lineHeight: 1,
-              paddingTop: "6vh",
-              paddingBottom: "6vh",
+              paddingTop: "2vh",
+              paddingBottom: "3vh",
               textShadow:
                 isStopped || !isPlaying
                   ? "none"
@@ -99,7 +99,7 @@ export default function BeatCounter({
             {isStopped ? "–" : activeBeatNumber}
           </div>
           {/* Mini beat strip */}
-          <div className="flex justify-between items-center w-full px-2">
+          <div className="flex justify-between items-center w-full px-2" style={{ fontSize: "20px" }}>
             {beats.map((beat, index) => {
               const isActive = !isStopped && index === currentBeat;
               return (
@@ -107,7 +107,7 @@ export default function BeatCounter({
                   key={beat}
                   data-beat={beat}
                   data-active={isActive}
-                  className={`flex-1 text-center text-xs transition-all duration-150 ${
+                  className={`flex-1 text-center transition-all duration-150 ${
                     isActive
                       ? isBridge
                         ? "font-bold text-yellow-400 scale-125"

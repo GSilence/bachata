@@ -146,6 +146,15 @@ export function buildTracksWhere(
         some: { playlist: { userId: user.userId, type: "bookmarks" } },
       },
     });
+  } else if (playlistTab?.startsWith("custom_") && user?.userId) {
+    const plId = parseInt(playlistTab.replace("custom_", ""), 10);
+    if (plId) {
+      conditions.push({
+        playlistItems: {
+          some: { playlist: { id: plId, userId: user.userId } },
+        },
+      });
+    }
   } else if (playlistFilter === "free") {
     conditions.push({ isFree: true });
   }

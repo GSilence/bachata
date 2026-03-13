@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/authStore";
 import { isAdmin } from "@/lib/roles";
 import { useModeratorStore } from "@/store/moderatorStore";
 import { useFavoritesStore } from "@/store/favoritesStore";
+import { usePlaylistsStore } from "@/store/playlistsStore";
 import ComplaintModal from "@/components/ComplaintModal";
 import type { Track, PlaylistSortBy } from "@/types";
 
@@ -57,12 +58,16 @@ const TrackItem = memo(function TrackItem({
   isAdminUser,
   onSelect,
   onComplain,
+  customPlaylistId,
+  onRemoveFromPlaylist,
 }: {
   track: Track;
   isActive: boolean;
   isAdminUser: boolean;
   onSelect: (track: Track) => void;
   onComplain: (track: Track) => void;
+  customPlaylistId?: number;
+  onRemoveFromPlaylist?: (trackId: number) => void;
 }) {
   // Точечная подписка: только isFav этого трека — не перерисовывает остальные
   const isFav = useFavoritesStore((s) => s.favoriteIds.has(track.id));
@@ -76,6 +81,11 @@ const TrackItem = memo(function TrackItem({
   const handleComplain = (e: React.MouseEvent) => {
     e.stopPropagation();
     onComplain(track);
+  };
+
+  const handleRemove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRemoveFromPlaylist?.(track.id);
   };
 
   return (
@@ -121,6 +131,19 @@ const TrackItem = memo(function TrackItem({
           )}
         </div>
       </button>
+
+      {/* Кнопка удаления из кастомного плейлиста */}
+      {customPlaylistId != null && (
+        <button
+          onClick={handleRemove}
+          title="Убрать из плейлиста"
+          className="absolute right-14 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all text-gray-500 opacity-0 group-hover:opacity-100 hover:text-red-400"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
 
       {/* Кнопка Пожаловаться */}
       <button
@@ -262,6 +285,18 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   const tabsDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const hasDraggedRef = useRef(false);
 
+  // ── Кастомные плейлисты ──
+  const customPlaylists = usePlaylistsStore((s) => s.playlists);
+  const fetchPlaylists = usePlaylistsStore((s) => s.fetch);
+  const createPlaylist = usePlaylistsStore((s) => s.create);
+  const fetchTrackIds = usePlaylistsStore((s) => s.fetchTrackIds);
+  const customTrackIds = usePlaylistsStore((s) => s.trackIds);
+  const removeTrackFromPl = usePlaylistsStore((s) => s.removeTrack);
+  const [showCreateInput, setShowCreateInput] = useState(false);
+  const [newPlName, setNewPlName] = useState("");
+  const [isCreatingPl, setIsCreatingPl] = useState(false);
+  const createInputRef = useRef<HTMLInputElement>(null);
+
   // ── Попап сортировки ─────────────────────────────────────────────────────
   const [sortPopoverOpen, setSortPopoverOpen] = useState(false);
   const sortPopoverRef = useRef<HTMLDivElement>(null);
@@ -335,6 +370,44 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   useEffect(() => {
     setAdmin(isAdminUser);
   }, [isAdminUser, setAdmin]);
+
+  // Загружаем кастомные плейлисты при наличии пользователя
+  useEffect(() => {
+    if (user) fetchPlaylists();
+  }, [user, fetchPlaylists]);
+
+  // Загружаем ID треков при выборе кастомного плейлиста
+  useEffect(() => {
+    if (activePlaylist.startsWith("custom_")) {
+      const plId = parseInt(activePlaylist.replace("custom_", ""), 10);
+      if (plId && !customTrackIds[plId]) fetchTrackIds(plId);
+    }
+  }, [activePlaylist, customTrackIds, fetchTrackIds]);
+
+  // ID кастомного плейлиста (если активен) — для кнопки удаления из плейлиста
+  const activeCustomPlId = activePlaylist.startsWith("custom_")
+    ? parseInt(activePlaylist.replace("custom_", ""), 10) || undefined
+    : undefined;
+
+  const handleRemoveFromPlaylist = useCallback(async (trackId: number) => {
+    if (!activeCustomPlId) return;
+    const ok = await removeTrackFromPl(activeCustomPlId, trackId);
+    if (ok) {
+      // Убираем трек из локального списка
+      setTracks((prev) => prev.filter((t) => t.id !== trackId));
+      setTotal((prev) => Math.max(0, prev - 1));
+    }
+  }, [activeCustomPlId, removeTrackFromPl]);
+
+  const handleCreatePlaylist = async () => {
+    const name = newPlName.trim();
+    if (!name) return;
+    setIsCreatingPl(true);
+    await createPlaylist(name);
+    setIsCreatingPl(false);
+    setNewPlName("");
+    setShowCreateInput(false);
+  };
 
   // ── Server-side paginated data ──────────────────────────────────────────
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -562,31 +635,94 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
         className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600 text-white placeholder-gray-400"
       />
 
-      {/* Выбор плейлиста — горизонтальный скролл с drag */}
-      <div
-        ref={tabsRef}
-        className="flex gap-2 overflow-x-auto select-none cursor-grab [&::-webkit-scrollbar]:hidden"
-        style={{ scrollbarWidth: "none" }}
-        onMouseDown={onTabsMouseDown}
-        onMouseMove={onTabsMouseMove}
-        onMouseUp={onTabsMouseUp}
-        onMouseLeave={onTabsMouseUp}
-        onWheel={onTabsWheel}
-      >
-        {PLAYLISTS.map((pl) => (
-          <button
-            key={pl.id}
-            type="button"
-            onClick={() => { if (!hasDraggedRef.current) setActivePlaylist(pl.id); }}
-            className={`shrink-0 px-4 py-1.5 rounded-xl text-sm font-medium transition-colors ${
-              activePlaylist === pl.id
-                ? "bg-purple-600 text-white"
-                : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
-            }`}
-          >
-            {pl.name}
-          </button>
-        ))}
+      {/* Мои плейлисты — область с фоном */}
+      <div className="bg-gray-800/50 rounded-xl px-3 py-3 space-y-2">
+        {user && (
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Мои плейлисты</span>
+          </div>
+        )}
+        <div
+          ref={tabsRef}
+          className="flex gap-2 pb-2 overflow-x-auto select-none cursor-grab [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(55,65,81,0.5) transparent" }}
+          onMouseDown={onTabsMouseDown}
+          onMouseMove={onTabsMouseMove}
+          onMouseUp={onTabsMouseUp}
+          onMouseLeave={onTabsMouseUp}
+          onWheel={onTabsWheel}
+        >
+          {user && (
+            <button
+              type="button"
+              onClick={() => { setShowCreateInput(true); setTimeout(() => createInputRef.current?.focus(), 50); }}
+              title="Создать плейлист"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl text-gray-500 hover:bg-purple-600/20 hover:text-purple-300 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            </button>
+          )}
+          {PLAYLISTS.map((pl) => (
+            <button
+              key={pl.id}
+              type="button"
+              onClick={() => { if (!hasDraggedRef.current) setActivePlaylist(pl.id); }}
+              className={`shrink-0 px-4 py-1.5 rounded-xl text-sm font-medium transition-colors ${
+                activePlaylist === pl.id
+                  ? "bg-purple-600 text-white"
+                  : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
+              }`}
+            >
+              {pl.name}
+            </button>
+          ))}
+          {user && customPlaylists.map((pl) => (
+            <button
+              key={`custom_${pl.id}`}
+              type="button"
+              onClick={() => { if (!hasDraggedRef.current) setActivePlaylist(`custom_${pl.id}`); }}
+              className={`shrink-0 px-4 py-1.5 rounded-xl text-sm font-medium transition-colors ${
+                activePlaylist === `custom_${pl.id}`
+                  ? "bg-purple-600 text-white"
+                  : "text-gray-400 hover:bg-purple-600/20 hover:text-purple-200"
+              }`}
+            >
+              {pl.name}
+            </button>
+          ))}
+        </div>
+        {/* Инлайн-создание плейлиста */}
+        {showCreateInput && (
+          <div className="flex gap-2">
+            <input
+              ref={createInputRef}
+              type="text"
+              value={newPlName}
+              onChange={(e) => setNewPlName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreatePlaylist();
+                if (e.key === "Escape") { setShowCreateInput(false); setNewPlName(""); }
+              }}
+              placeholder="Название плейлиста..."
+              className="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+            />
+            <button
+              onClick={handleCreatePlaylist}
+              disabled={isCreatingPl || !newPlName.trim()}
+              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40"
+            >
+              {isCreatingPl ? "..." : "OK"}
+            </button>
+            <button
+              onClick={() => { setShowCreateInput(false); setNewPlName(""); }}
+              className="px-2 py-1.5 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Мостики + теги (Акценты/Мамбо) — один ряд с переносом */}
@@ -854,6 +990,8 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
                       isAdminUser={isAdminUser}
                       onSelect={onTrackSelect}
                       onComplain={setComplaintTrack}
+                      customPlaylistId={activeCustomPlId}
+                      onRemoveFromPlaylist={handleRemoveFromPlaylist}
                     />
                   </div>
                 </div>
