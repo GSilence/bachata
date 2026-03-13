@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
@@ -151,6 +151,27 @@ export default function Sidebar() {
   const isOnHome = pathname === "/";
   const isAdminUser = isAdmin(user?.role);
   const isModeratorUser = isModerator(user?.role);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch unread complaint count
+  const fetchUnreadCount = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await fetch("/api/complaints/unread-count");
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadCount(data.count ?? 0);
+      }
+    } catch { /* ignore */ }
+  }, [user]);
+
+  useEffect(() => { fetchUnreadCount(); }, [fetchUnreadCount]);
+  // Refresh every 60s
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(fetchUnreadCount, 60_000);
+    return () => clearInterval(interval);
+  }, [user, fetchUnreadCount]);
 
   const { isModerating, enterModeratorMode, exitModeratorMode, isAdminMode, enterAdminMode, exitAdminMode } = useModeratorStore();
   const setVoiceFilter = usePlayerStore((s) => s.setVoiceFilter);
@@ -194,9 +215,18 @@ export default function Sidebar() {
   // collapsed = on lg screens but below 'sidebar' breakpoint, and not hovered
   // We'll use CSS for layout, but need isHovered for the expand-on-hover overlay
 
+  // Check if a nav item is the notifications link (user or admin)
+  const getNavBadge = (href: string): number => {
+    if (href === "/notifications" || href === "/admin/notifications") {
+      return unreadCount;
+    }
+    return 0;
+  };
+
   const renderNavItems = (items: NavItem[], collapsed: boolean) =>
     items.map((item) => {
       const isActive = pathname === item.href;
+      const badge = getNavBadge(item.href);
       return (
         <li key={item.href}>
           <Link
@@ -209,8 +239,27 @@ export default function Sidebar() {
                 : "text-gray-400 hover:bg-gray-800 hover:text-white"
             } ${collapsed ? "justify-center" : ""}`}
           >
-            <span className={`shrink-0 ${isActive ? "text-purple-400" : ""}`}>{item.icon}</span>
-            {!collapsed && <span className="flex-1 text-sm whitespace-nowrap">{item.name}</span>}
+            <span className={`shrink-0 relative ${isActive ? "text-purple-400" : ""}`}>
+              {item.icon}
+              {badge > 0 && collapsed && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 flex items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-gray-900 leading-none">
+                  {badge > 99 ? "99+" : badge}
+                </span>
+              )}
+            </span>
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-sm whitespace-nowrap">{item.name}</span>
+                {badge > 0 && (
+                  <span className="flex items-center gap-1 shrink-0">
+                    <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+                    </svg>
+                    <span className="text-xs font-bold text-amber-400">{badge > 99 ? "99+" : badge}</span>
+                  </span>
+                )}
+              </>
+            )}
           </Link>
         </li>
       );
@@ -347,7 +396,12 @@ export default function Sidebar() {
         {/* User section — same block as main nav */}
         {user && (
           <ul className="space-y-0.5 mt-0.5">
-            {renderNavItems(userNavItems, collapsed)}
+            {renderNavItems(
+              isAdminUser
+                ? userNavItems.filter((i) => i.href !== "/notifications")
+                : userNavItems,
+              collapsed,
+            )}
           </ul>
         )}
 
@@ -490,7 +544,7 @@ export default function Sidebar() {
       {/* Mobile menu button */}
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
+        className="lg:hidden fixed top-4 left-4 z-[60] p-2 bg-gray-800 rounded-lg text-white hover:bg-gray-700 transition-colors"
         aria-label="Toggle menu"
       >
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -504,7 +558,7 @@ export default function Sidebar() {
 
       {/* Mobile overlay */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 bg-black/50 z-40" onClick={() => setIsMobileMenuOpen(false)} />
+        <div className="lg:hidden fixed inset-0 bg-black/50 z-[55]" onClick={() => setIsMobileMenuOpen(false)} />
       )}
 
       {/* Playlist slide-out panel — positioned next to current sidebar width */}
@@ -592,7 +646,7 @@ export default function Sidebar() {
       {/* ── Mobile full sidebar ── */}
       <aside
         className={`
-          lg:hidden w-64 h-screen fixed left-0 top-0 flex flex-col z-50
+          lg:hidden w-64 h-screen fixed left-0 top-0 flex flex-col z-[60]
           transform transition-transform duration-300 ease-in-out
           ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
         `}

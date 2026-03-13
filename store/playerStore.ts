@@ -93,7 +93,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       playMode: restoredSettings.playMode,
       voiceFilter: restoredSettings.voiceFilter,
-      voiceLanguage: restoredSettings.voiceLanguage,
+      voiceLanguage: "en" as VoiceLanguage,
       voiceType: (restoredSettings as { voiceType?: VoiceType }).voiceType ?? "human",
       activePlaylist: "general",
       playlistFilter: "free",
@@ -510,6 +510,7 @@ export const usePlayerStore = create<PlayerState>()(
         return {
           ...currentState,
           savedTrackId: stored.savedTrackId ?? null,
+          activePlaylist: get("activePlaylist", currentState.activePlaylist),
           playlistFilter: get("playlistFilter", currentState.playlistFilter),
           searchQuery: get("searchQuery", currentState.searchQuery),
           bridgeFilterWith: get(

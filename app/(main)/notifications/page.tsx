@@ -23,6 +23,9 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
 
 const REASON_LABELS: Record<string, string> = {
   wrong_grid: "Неверно разложенный трек",
+  not_bachata: "Это не бачата",
+  low_quality: "Низкое качество записи",
+  other: "Иное",
 };
 
 export default function NotificationsPage() {

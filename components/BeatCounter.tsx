@@ -61,11 +61,14 @@ export default function BeatCounter({
   };
 
   const handleBackgroundClick = () => {
-    // Останавливаем трек и закрываем оверлей при клике на фон
-    if (onStop) {
-      onStop();
+    // Паузим трек и переключаем в inline-режим при клике на фон
+    if (onPause) {
+      onPause();
     }
     setIsFullscreenOverlayVisible(false);
+    if (onDisplayModeChange) {
+      onDisplayModeChange("inline");
+    }
   };
 
   return (
@@ -84,10 +87,10 @@ export default function BeatCounter({
                   : "text-purple-400"
             }`}
             style={{
-              fontSize: "21rem",
+              fontSize: "5.25rem",
               lineHeight: 1,
-              paddingTop: "2vh",
-              paddingBottom: "3vh",
+              paddingTop: "1vh",
+              paddingBottom: "1.5vh",
               textShadow:
                 isStopped || !isPlaying
                   ? "none"

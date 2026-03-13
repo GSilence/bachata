@@ -19,6 +19,7 @@ export default function ComplaintModal({
   onClose,
 }: ComplaintModalProps) {
   const { user } = useAuthStore();
+  const [reason, setReason] = useState("wrong_grid");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -40,7 +41,7 @@ export default function ComplaintModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          reason: "wrong_grid",
+          reason,
           message: message.trim(),
           trackInfo,
           trackId,
@@ -99,10 +100,14 @@ export default function ComplaintModal({
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-400 mb-1.5">Причина</label>
               <select
-                disabled
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 text-sm cursor-not-allowed"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 text-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent"
               >
-                <option>Неверно разложенный трек</option>
+                <option value="wrong_grid">Неверно разложенный трек</option>
+                <option value="not_bachata">Это не бачата</option>
+                <option value="low_quality">Низкое качество записи</option>
+                <option value="other">Иное</option>
               </select>
             </div>
 

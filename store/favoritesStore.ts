@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { toast } from "./toastStore";
 
 interface FavoritesState {
   favoriteIds: Set<number>;
@@ -35,16 +36,19 @@ export const useFavoritesStore = create<FavoritesState>()((set, get) => ({
     try {
       if (wasFav) {
         await fetch(`/api/playlists/favorites/tracks?trackId=${trackId}`, { method: "DELETE" });
+        toast.info("Трек убран из избранного");
       } else {
         await fetch("/api/playlists/favorites/tracks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ trackId }),
         });
+        toast.success("Трек добавлен в избранное");
       }
     } catch {
       // Rollback
       set({ favoriteIds });
+      toast.error("Ошибка при обновлении избранного");
     }
   },
 

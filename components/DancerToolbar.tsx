@@ -34,14 +34,12 @@ export default function DancerToolbar({
 }: DancerToolbarProps) {
   const voiceType = usePlayerStore((s) => s.voiceType);
   const voiceFilter = usePlayerStore((s) => s.voiceFilter);
-  const voiceLanguage = usePlayerStore((s) => s.voiceLanguage);
   const duration = usePlayerStore((s) => s.duration);
   const playUntilSeconds = usePlayerStore((s) => s.playUntilSeconds);
   const loopStartSeconds = usePlayerStore((s) => s.loopStartSeconds);
   const loopPauseSeconds = usePlayerStore((s) => s.loopPauseSeconds);
   const setVoiceType = usePlayerStore((s) => s.setVoiceType);
   const setVoiceFilter = usePlayerStore((s) => s.setVoiceFilter);
-  const setVoiceLanguage = usePlayerStore((s) => s.setVoiceLanguage);
   const setPlayMode = usePlayerStore((s) => s.setPlayMode);
   const setPlayUntilSeconds = usePlayerStore((s) => s.setPlayUntilSeconds);
   const setLoopStartSeconds = usePlayerStore((s) => s.setLoopStartSeconds);
@@ -60,13 +58,16 @@ export default function DancerToolbar({
   const [showHelp, setShowHelp] = useState(false);
   const [showSpeed, setShowSpeed] = useState(false);
   const [showLoop, setShowLoop] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const speedPanelRef = useRef<HTMLDivElement>(null);
   const loopPanelRef = useRef<HTMLDivElement>(null);
+  const previewPanelRef = useRef<HTMLDivElement>(null);
 
   const [loopStartInput, setLoopStartInput] = useState("");
   const [playUntilInput, setPlayUntilInput] = useState("");
   const [loopPauseInput, setLoopPauseInput] = useState("");
+  const [previewInput, setPreviewInput] = useState("");
 
   const sliderRef = useRef<HTMLDivElement>(null);
   const draggingLoopRef = useRef<"start" | "end" | null>(null);
@@ -93,6 +94,14 @@ export default function DancerToolbar({
       loopPauseSeconds == null ? "" : String(Math.round(loopPauseSeconds)),
     );
   }, [loopPauseSeconds]);
+  // Sync preview input when playUntilSeconds changes and no loop start (preview mode)
+  useEffect(() => {
+    if (loopStartSeconds == null && playUntilSeconds != null) {
+      setPreviewInput(String(Math.round(playUntilSeconds)));
+    } else if (loopStartSeconds != null || playUntilSeconds == null) {
+      setPreviewInput("");
+    }
+  }, [playUntilSeconds, loopStartSeconds]);
 
   // Scroll to panel when opened
   useEffect(() => {
@@ -105,6 +114,11 @@ export default function DancerToolbar({
       setTimeout(() => loopPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
     }
   }, [showLoop]);
+  useEffect(() => {
+    if (showPreview && previewPanelRef.current) {
+      setTimeout(() => previewPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+    }
+  }, [showPreview]);
 
   // Outside-click for filter menu
   useEffect(() => {
@@ -187,10 +201,6 @@ export default function DancerToolbar({
     const idx = VOICE_TYPES.indexOf(voiceType);
     setVoiceType(VOICE_TYPES[(idx + 1) % VOICE_TYPES.length]);
   };
-  const cycleLang = () => {
-    if (voiceType !== "human") return;
-    setVoiceLanguage(voiceLanguage === "en" ? "pt" : "en");
-  };
   const cycleBeatMode = () => {
     onBeatCounterModeChange(
       beatCounterMode === "inline" ? "fullscreen" : "inline",
@@ -205,8 +215,6 @@ export default function DancerToolbar({
         : "Хлопок";
   const beatModeLabel =
     beatCounterMode === "inline" ? "Счёт в строке" : "Полный экран";
-  const langActive = voiceType === "human";
-  const langLabel = voiceLanguage === "en" ? "Англ." : "Порт.";
 
   // Loop marker positions — always show handles (0% and 100% as defaults)
   const displayStartPct =
@@ -320,49 +328,6 @@ export default function DancerToolbar({
           </div>
           <span className="w-12 md:w-16 text-center text-sm md:text-base text-gray-500 group-hover:text-gray-300 transition-colors leading-tight">
             {voiceTypeLabel}
-          </span>
-        </button>
-
-        {/* Language toggle */}
-        <button
-          onClick={cycleLang}
-          disabled={!langActive}
-          title={langActive ? `Язык: ${langLabel}` : "Недоступно"}
-          className="flex flex-col items-center gap-2 group"
-        >
-          <div
-            className={`w-12 h-12 md:w-16 md:h-16 rounded-2xl transition-colors flex items-center justify-center ${
-              langActive
-                ? "bg-gray-700 group-hover:bg-gray-600 text-purple-400 group-hover:text-purple-300"
-                : "bg-gray-700/40 text-gray-600 cursor-not-allowed"
-            }`}
-          >
-            <svg className={iconCls} viewBox="0 0 24 24" fill="currentColor">
-              <text
-                x="1.5"
-                y="10"
-                fontSize="12"
-                fontFamily="sans-serif"
-                stroke="none"
-              >
-                文
-              </text>
-              <text
-                x="12"
-                y="18"
-                fontSize="13"
-                fontFamily="sans-serif"
-                fontWeight="600"
-                stroke="none"
-              >
-                A
-              </text>
-            </svg>
-          </div>
-          <span
-            className={`w-12 md:w-16 text-center text-sm md:text-base transition-colors leading-tight ${langActive ? "text-gray-500 group-hover:text-gray-300" : "text-gray-600"}`}
-          >
-            {langActive ? langLabel : "Язык"}
           </span>
         </button>
 
@@ -527,7 +492,7 @@ export default function DancerToolbar({
 
         {/* Speed toggle */}
         <button
-          onClick={() => { setShowSpeed(!showSpeed); setShowLoop(false); }}
+          onClick={() => { setShowSpeed(!showSpeed); setShowLoop(false); setShowPreview(false); }}
           title={`Скорость: ${Math.round(playbackRate * 100)}%`}
           className="flex flex-col items-center gap-2 group"
         >
@@ -546,13 +511,13 @@ export default function DancerToolbar({
           <span className={`w-12 md:w-16 text-center text-sm md:text-base transition-colors leading-tight ${
             showSpeed ? "text-gray-300" : playbackRate !== 1 ? "text-purple-400" : "text-gray-500 group-hover:text-gray-300"
           }`}>
-            {playbackRate !== 1 ? `${Math.round(playbackRate * 100)}%` : "Темп"}
+            {playbackRate !== 1 ? `${Math.round(playbackRate * 100)}%` : "Скорость"}
           </span>
         </button>
 
         {/* Loop toggle */}
         <button
-          onClick={() => { setShowLoop(!showLoop); setShowSpeed(false); }}
+          onClick={() => { setShowLoop(!showLoop); setShowSpeed(false); setShowPreview(false); }}
           title="Цикл"
           className="flex flex-col items-center gap-2 group"
         >
@@ -571,6 +536,34 @@ export default function DancerToolbar({
             showLoop ? "text-gray-300" : loopActive ? "text-purple-400" : "text-gray-500 group-hover:text-gray-300"
           }`}>
             Цикл
+          </span>
+        </button>
+
+        {/* Preview (play first N seconds) toggle */}
+        <button
+          onClick={() => { setShowPreview(!showPreview); setShowSpeed(false); setShowLoop(false); }}
+          title="Отрезок"
+          className="flex flex-col items-center gap-2 group"
+        >
+          <div className={`w-12 h-12 md:w-16 md:h-16 rounded-2xl transition-colors flex items-center justify-center ${
+            showPreview
+              ? "bg-gray-600 text-purple-300"
+              : playUntilSeconds != null && loopStartSeconds == null
+                ? "bg-purple-600/20 text-purple-400 group-hover:bg-gray-600 group-hover:text-purple-300"
+                : "bg-gray-700 group-hover:bg-gray-600 text-purple-400 group-hover:text-purple-300"
+          }`}>
+            <svg className={iconCls} fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7" />
+              <path strokeLinecap="round" d="M5 12h14" />
+              <line x1="20" y1="5" x2="20" y2="19" strokeWidth={2} strokeLinecap="round" />
+            </svg>
+          </div>
+          <span className={`w-12 md:w-16 text-center text-sm md:text-base transition-colors leading-tight ${
+            showPreview ? "text-gray-300"
+              : playUntilSeconds != null && loopStartSeconds == null ? "text-purple-400"
+              : "text-gray-500 group-hover:text-gray-300"
+          }`}>
+            Отрезок
           </span>
         </button>
       </div>
@@ -740,14 +733,72 @@ export default function DancerToolbar({
         </div>
       )}
 
+      {/* ── Preview panel (collapsible) ─────────────────────── */}
+      {showPreview && (
+        <div ref={previewPanelRef} className="mt-6 pt-4 border-t border-gray-700/50">
+          <div className="max-w-sm mx-auto">
+            <p className="text-sm text-gray-400 mb-3 text-center">
+              Воспроизводить первые N секунд от начала трека, затем переключать на следующий.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <input
+                type="number"
+                min={0}
+                max={999}
+                step={1}
+                placeholder="сек"
+                value={previewInput}
+                onChange={(e) => setPreviewInput(e.target.value)}
+                onBlur={() => {
+                  const v = previewInput.trim();
+                  if (!v) {
+                    setPlayUntilSeconds(null);
+                    setLoopStartSeconds(null);
+                    return;
+                  }
+                  const s = parseInt(v, 10);
+                  if (Number.isFinite(s) && s > 0) {
+                    setLoopStartSeconds(null);
+                    setPlayUntilSeconds(s);
+                    setPreviewInput(String(s));
+                  } else {
+                    setPlayUntilSeconds(null);
+                    setPreviewInput("");
+                  }
+                }}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                className={`${INPUT_CLS}`}
+                aria-label="Отрезок (сек)"
+              />
+              <span className="text-sm text-gray-500">сек</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPlayUntilSeconds(null);
+                  setLoopStartSeconds(null);
+                  setPreviewInput("");
+                }}
+                className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  playUntilSeconds != null && loopStartSeconds == null
+                    ? "bg-pink-400/20 text-white hover:bg-pink-400/30"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+                }`}
+              >
+                Сброс
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Help modal ─────────────────────────────────────────────── */}
       {showHelp && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm pt-16 md:pt-0"
           onClick={() => setShowHelp(false)}
         >
           <div
-            className="bg-gray-800 border border-gray-700 rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl"
+            className="bg-gray-800 border border-gray-700 rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-5">
@@ -805,46 +856,6 @@ export default function DancerToolbar({
                   <p className="text-gray-500 text-xs leading-relaxed">
                     Тип звукового сигнала для счёта. Голос озвучивает цифрами,
                     тарелка и хлопок дают ударный акцент.
-                  </p>
-                </div>
-              </div>
-
-              {/* Language */}
-              <div className="flex gap-3">
-                <div className="shrink-0 w-8 h-8 rounded-xl bg-gray-700 flex items-center justify-center text-purple-400">
-                  <svg
-                    className="w-5 h-5"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <text
-                      x="1.5"
-                      y="14"
-                      fontSize="12"
-                      fontFamily="sans-serif"
-                      stroke="none"
-                    >
-                      文
-                    </text>
-                    <text
-                      x="12"
-                      y="22"
-                      fontSize="13"
-                      fontFamily="sans-serif"
-                      fontWeight="600"
-                      stroke="none"
-                    >
-                      A
-                    </text>
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-white font-medium mb-0.5">
-                    Англ. / Порт. — Язык
-                  </p>
-                  <p className="text-gray-500 text-xs leading-relaxed">
-                    Язык озвучки (английский или португальский). Доступно только
-                    в режиме «Голос».
                   </p>
                 </div>
               </div>
@@ -987,8 +998,9 @@ export default function DancerToolbar({
                 <div>
                   <p className="text-white font-medium mb-0.5">Пожаловаться</p>
                   <p className="text-gray-500 text-xs leading-relaxed">
-                    Кнопка в правом верхнем углу плеера. Если трек не бачата
-                    или плохого качества — сообщите, и мы разберёмся.
+                    Кнопка в правом верхнем углу плеера. Если трек не бачата,
+                    неправильно разложен счёт или плохого качества —
+                    сообщите, и мы разберёмся.
                   </p>
                 </div>
               </div>

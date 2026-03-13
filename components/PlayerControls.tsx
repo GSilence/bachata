@@ -1,6 +1,8 @@
 "use client";
 
 import { usePlayerStore } from "@/store/playerStore";
+import { useAuthStore } from "@/store/authStore";
+import { useFavoritesStore } from "@/store/favoritesStore";
 import { audioEngine } from "@/lib/audioEngine";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WaveformBar from "@/components/WaveformBar";
@@ -88,6 +90,11 @@ export default function PlayerControls({
   const setPlayUntilSeconds = usePlayerStore((s) => s.setPlayUntilSeconds);
   const playMode = usePlayerStore((s) => s.playMode);
   const setPlayMode = usePlayerStore((s) => s.setPlayMode);
+
+  // ── Fav/Playlist (mobile only) ──
+  const user = useAuthStore((s) => s.user);
+  const isFav = useFavoritesStore((s) => s.favoriteIds.has(currentTrack?.id ?? -1));
+  const toggleFav = useFavoritesStore((s) => s.toggle);
 
   const [isDragging, setIsDragging] = useState(false);
   const [openVolume, setOpenVolume] = useState<"music" | "voice" | null>(null);
@@ -421,7 +428,7 @@ export default function PlayerControls({
       </div>
 
       {/* Controls row: transport centered, secondary controls below on mobile */}
-      <div className="flex flex-col items-center gap-2">
+      <div className="flex flex-col items-center gap-4 md:gap-2">
         {/* Main transport: Prev/Play/Stop/Next */}
         <div className="flex items-center w-full">
         {/* Left: Play mode (hidden on mobile, shown on md+) */}
@@ -433,11 +440,7 @@ export default function PlayerControls({
               : playMode === "random" ? "Перемешать"
               : "Повторить"
             }
-            className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
-              playMode === "sequential"
-                ? "text-gray-400 hover:text-white hover:bg-gray-700"
-                : "text-purple-400 hover:text-purple-300 hover:bg-gray-700"
-            }`}
+            className="w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors text-purple-400 hover:text-purple-300 hover:bg-gray-700"
           >
             {playMode === "sequential" && (
               /* По порядку: list arrows */
@@ -459,6 +462,32 @@ export default function PlayerControls({
             )}
           </button>
         </div>
+
+        {/* Mobile: Fav + Playlist (left of transport) */}
+        {user && (
+          <div className="flex md:hidden items-center gap-0.5 shrink-0">
+            <button
+              onClick={() => currentTrack && toggleFav(currentTrack.id)}
+              title={isFav ? "Убрать из избранного" : "В избранное"}
+              className={`w-[1.85rem] h-[1.85rem] flex items-center justify-center rounded-full transition-colors ${
+                isFav ? "text-pink-400" : "text-gray-600 hover:text-pink-400"
+              }`}
+            >
+              <svg className="w-[1.15rem] h-[1.15rem]" fill={isFav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => window.dispatchEvent(new Event("open-playlist-modal"))}
+              title="Добавить в плейлист"
+              className="w-[1.85rem] h-[1.85rem] flex items-center justify-center rounded-full text-gray-600 hover:text-purple-400 transition-colors"
+            >
+              <svg className="w-[1.15rem] h-[1.15rem]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {/* Center: transport buttons */}
         <div className="flex-1 flex justify-center items-center gap-2 sm:gap-3">
@@ -601,11 +630,7 @@ export default function PlayerControls({
               : playMode === "random" ? "Перемешать"
               : "Повторить"
             }
-            className={`w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors ${
-              playMode === "sequential"
-                ? "text-gray-400 hover:text-white hover:bg-gray-700"
-                : "text-purple-400 hover:text-purple-300 hover:bg-gray-700"
-            }`}
+            className="w-11 h-11 flex items-center justify-center rounded-lg border border-gray-600/50 bg-gray-800/50 transition-colors text-purple-400 hover:text-purple-300 hover:bg-gray-700"
           >
             {playMode === "sequential" && (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">

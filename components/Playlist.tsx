@@ -553,6 +553,17 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refetchTrigger]);
 
+  // Re-fetch when favoriteIds change while viewing favorites playlist
+  const favoriteIds = useFavoritesStore((s) => s.favoriteIds);
+  const favSizeRef = useRef(favoriteIds.size);
+  useEffect(() => {
+    if (favSizeRef.current === favoriteIds.size) { favSizeRef.current = favoriteIds.size; return; }
+    favSizeRef.current = favoriteIds.size;
+    if (activePlaylist === "favorites") {
+      doFetchRef.current?.(1, false);
+    }
+  }, [favoriteIds, activePlaylist]);
+
   // Load more pages
   const loadMore = useCallback(() => {
     if (isLoading || !hasMore) return;
@@ -948,7 +959,7 @@ export default function Playlist({ onTrackSelect }: PlaylistProps) {
       {/* Список треков — виртуализированный, заполняет остаток высоты */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-4 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
+        className="flex-1 min-h-0 md:min-h-[400px] overflow-y-auto px-4 pt-4 pb-4 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-700/50 [&::-webkit-scrollbar-thumb:hover]:bg-gray-600/70"
         data-block="playlist"
         onMouseEnter={() => { isUserHoveringRef.current = true; }}
         onMouseLeave={() => { isUserHoveringRef.current = false; }}

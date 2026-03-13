@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/store/authStore";
 import Sidebar from "@/components/Sidebar";
+import ToastContainer from "@/components/ToastContainer";
 
 export default function MainLayout({
   children,
@@ -42,6 +43,7 @@ export default function MainLayout({
       >
         {children}
       </main>
+      <ToastContainer />
     </div>
   );
 }

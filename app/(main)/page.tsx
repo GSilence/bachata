@@ -395,7 +395,7 @@ export default function PlaybackPage() {
                     </svg>
                   </button>
                 )}
-                <div className={`px-4 md:px-12 ${isAdminMode ? "py-10" : "pt-8 pb-4 md:py-24 md:py-28"}`}>
+                <div className={`px-4 md:px-12 ${isAdminMode ? "py-10" : "pt-8 pb-4 md:py-[4.5rem]"}`}>
                   {isClient ? (
                     <BeatCounter
                       currentBeat={currentBeat - 1}

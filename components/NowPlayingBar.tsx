@@ -4,7 +4,7 @@ import { usePlayerStore } from "@/store/playerStore";
 import { useAuthStore } from "@/store/authStore";
 import { useFavoritesStore } from "@/store/favoritesStore";
 import { usePlaylistsStore } from "@/store/playlistsStore";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export default function NowPlayingBar() {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
@@ -25,6 +25,13 @@ export default function NowPlayingBar() {
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateInput, setShowCreateInput] = useState(false);
   const [addedTo, setAddedTo] = useState<number | null>(null);
+
+  // Слушаем кастомное событие открытия модалки плейлиста (из мобильного PlayerControls)
+  const openPlaylistModal = useCallback(() => setShowPlaylistModal(true), []);
+  useEffect(() => {
+    window.addEventListener("open-playlist-modal", openPlaylistModal);
+    return () => window.removeEventListener("open-playlist-modal", openPlaylistModal);
+  }, [openPlaylistModal]);
 
   // Инициализируем / сбрасываем избранное и плейлисты при смене пользователя
   useEffect(() => {
@@ -101,7 +108,7 @@ export default function NowPlayingBar() {
 
         {/* Название + мета */}
         <div className="min-w-0 flex-1">
-          <div className="font-bold text-white text-[15px] md:text-[22px] leading-snug truncate" title={title}>
+          <div className="text-[14px] font-medium md:font-bold text-white md:text-[22px] leading-snug md:truncate" title={title}>
             {title}
           </div>
           {metaParts.length > 0 && (
@@ -118,7 +125,7 @@ export default function NowPlayingBar() {
 
         {/* Правая часть: лайк + плейлист (только для авторизованных) */}
         {user && (
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="hidden md:flex items-center gap-1 shrink-0">
             <button
               onClick={() => currentTrack && toggleFav(currentTrack.id)}
               title={isFav ? "Убрать из избранного" : "В избранное"}
